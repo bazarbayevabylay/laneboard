@@ -34,6 +34,8 @@ export interface CommandOutput {
   data: unknown;
   warnings: string[];
   human: string;
+  // Print nothing (the MCP server owns stdout).
+  silent?: boolean;
 }
 
 export interface CommandDef {

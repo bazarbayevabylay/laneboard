@@ -32,6 +32,8 @@ interface Case {
   readOnlyStore?: boolean;
   // Write deadline after the lock acquire (0 = every write finds the lock lost).
   lockMaxHoldMs?: number;
+  // Environment of the command (HOME is a temp directory under the case root when set to 'home').
+  env?: Record<string, string>;
 }
 
 const seed = async (e: Env): Promise<void> => {
@@ -116,6 +118,20 @@ const CASES: Case[] = [
   },
   { name: 'migrate', argv: ['migrate'] },
   { name: 'doctor', argv: ['doctor'], setup: seed },
+  { name: 'setup', argv: ['setup', 'claude-code'], env: { HOME: '<ROOT>/home' } },
+  {
+    name: 'setup-replace',
+    argv: ['setup', 'cursor'],
+    env: { HOME: '<ROOT>/home' },
+    setup: async (e) => {
+      fs.mkdirSync(path.join(e.root, '.cursor'));
+      fs.writeFileSync(path.join(e.root, '.cursor', 'mcp.json'), '{"mcpServers":{"laneboard":{"command":"npx"}}}\n');
+    },
+  },
+  { name: 'setup-remove', argv: ['setup', 'codex', '--remove'], env: { HOME: '<ROOT>/home' }, setup: async (e) => void (await e.run(['setup', 'codex'])) },
+  { name: 'setup-dry-run', argv: ['setup', 'opencode', '--dry-run'], env: { HOME: '<ROOT>/home' } },
+  { name: 'prime', argv: ['prime', '--as', 'dev-1'], setup: async (e) => void (await e.run(['create', 'Fix login', '--status', 'todo', '--assignee', 'dev-1', '--as', 'a'])) },
+  { name: 'prime-no-agent', argv: ['prime'], setup: seed },
   { name: 'help', argv: ['--help'], store: false },
   { name: 'help-command', argv: ['create', '--help'], store: false },
   { name: 'version', argv: ['--version'], store: false },
@@ -129,6 +145,7 @@ const CASES: Case[] = [
   { name: 'error-USAGE-dash-value', argv: ['create', 't', '--status', 'todo', '--description', '- a\n- b', '--as', 'a'], error: 'USAGE' },
   { name: 'error-UNKNOWN_OPTION', argv: ['create', 'x', '--stauts', 'todo', '--as', 'a'], error: 'UNKNOWN_OPTION' },
   { name: 'error-UNKNOWN_OPTION-dash-text', argv: ['comment', 'LB-1', '- item one', '--as', 'a'], error: 'UNKNOWN_OPTION', setup: seed },
+  { name: 'error-UNKNOWN_OPTION-double-dash-text', argv: ['comment', 'LB-1', '--- section', '--as', 'a'], error: 'UNKNOWN_OPTION', setup: seed },
   { name: 'error-UNKNOWN_OPTION-dash-title', argv: ['create', '-x', '--status', 'todo', '--as', 'a'], error: 'UNKNOWN_OPTION' },
   { name: 'error-INVALID_VALUE', argv: ['get', 'lb-1'], error: 'INVALID_VALUE', setup: seed },
   { name: 'error-INVALID_VALUE-field-type', argv: ['update', 'LB-1', '--field', 'priority=high', '--as', 'a'], error: 'INVALID_VALUE', setup: seed },
@@ -172,6 +189,17 @@ const CASES: Case[] = [
     },
   },
   { name: 'error-STORE_EXISTS', argv: ['init'], error: 'STORE_EXISTS' },
+  {
+    name: 'error-SETUP_UNPARSEABLE',
+    argv: ['setup', 'gemini'],
+    error: 'SETUP_UNPARSEABLE',
+    env: { HOME: '<ROOT>/home' },
+    setup: async (e) => {
+      fs.mkdirSync(path.join(e.root, '.gemini'));
+      fs.writeFileSync(path.join(e.root, '.gemini', 'settings.json'), '{ // comment\n}\n');
+    },
+  },
+  { name: 'error-INVALID_VALUE-harness', argv: ['setup', 'claude'], error: 'INVALID_VALUE', env: { HOME: '<ROOT>/home' } },
 ];
 
 // Replace machine-specific parts (temp path, timestamps) with stable tokens.
@@ -187,7 +215,9 @@ function normalize(text: string, root: string): string {
 async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result: CliRun; root: string }> {
   const root = tempDir();
   const dir = path.join(root, '.laneboard');
-  const env: Env = { root, dir, run: (argv, stdin) => cli(argv, { cwd: root, stdin }) };
+  const caseEnv = Object.fromEntries(Object.entries(c.env ?? {}).map(([k, v]) => [k, v.split('<ROOT>').join(root)]));
+  if (caseEnv.HOME) fs.mkdirSync(caseEnv.HOME, { recursive: true });
+  const env: Env = { root, dir, run: (argv, stdin) => cli(argv, { cwd: root, stdin, env: caseEnv }) };
   if (c.store !== false) expect((await env.run(['init'])).code).toBe(0);
   await c.setup?.(env);
   // `--json` goes before `--`: after it, it would be text.
@@ -196,7 +226,7 @@ async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result
   const lock = c.holdLock ? await acquireLock(dir) : undefined;
   if (c.readOnlyStore) fs.chmodSync(dir, 0o555);
   try {
-    const result = await cli(argv, { cwd: root, stdin: c.stdin, lockWaitMs: 200, lockMaxHoldMs: c.lockMaxHoldMs });
+    const result = await cli(argv, { cwd: root, stdin: c.stdin, env: caseEnv, lockWaitMs: 200, lockMaxHoldMs: c.lockMaxHoldMs });
     return { argv, result, root };
   } finally {
     if (c.readOnlyStore) fs.chmodSync(dir, 0o755);

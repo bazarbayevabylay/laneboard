@@ -2,6 +2,7 @@
 # Architecture boundary checks (ADR-0001 section 11):
 #   C1 file writes only in src/core/fsio.ts and src/setup/
 #   C2 src/core imports no facade (cli, mcp, board, setup, import)
+#   C4 nothing in src/mcp writes stdout (it belongs to the MCP protocol)
 # Usage: scripts/check-boundaries.sh [repo-root]   (exit 1 on a violation)
 set -u
 cd "${1:-.}" || exit 2
@@ -27,5 +28,14 @@ if [ -d src/core ]; then
   fi
 fi
 
-if [ "$fail" -eq 0 ]; then echo "boundaries ok (C1, C2)"; fi
+if [ -d src/mcp ]; then
+  c4=$(grep -rnE 'console\.log|process\.stdout\.write' src/mcp)
+  if [ -n "$c4" ]; then
+    echo "C4 violation: src/mcp writes stdout (reserved for the MCP protocol):"
+    echo "$c4"
+    fail=1
+  fi
+fi
+
+if [ "$fail" -eq 0 ]; then echo "boundaries ok (C1, C2, C4)"; fi
 exit "$fail"

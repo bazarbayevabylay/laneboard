@@ -12,8 +12,8 @@ export { DEFAULT_LIST_LIMIT, MAX_COMMENT_CHARS, parseLinkArg, suggestClosest } f
 export type { OpContext, OpResult, TaskView } from './ops/common.ts';
 export { CreateInput, createTask } from './ops/create.ts';
 export type { CreateInputT } from './ops/create.ts';
-export { EventsInput, GetInput, ListInput, getTask, listEvents, listTasks } from './ops/read.ts';
-export type { EventItem, EventsInputT, EventsResult, GetInputT, ListInputT, ListItem, ListResult } from './ops/read.ts';
+export { EventsInput, GetInput, ListInput, SummaryInput, getTask, listEvents, listTasks, taskSummary } from './ops/read.ts';
+export type { EventItem, EventsInputT, EventsResult, GetInputT, ListInputT, ListItem, ListResult, SummaryInputT, SummaryResult } from './ops/read.ts';
 export { ClaimInput, CommentInput, UpdateInput, claimTask, commentTask, updateTask } from './ops/update.ts';
 export type { ClaimInputT, CommentInputT, UpdateInputT } from './ops/update.ts';
 export { AttachInput, attachFile } from './ops/attach.ts';
@@ -22,3 +22,6 @@ export { ArchiveInput, DeleteInput, RestoreInput, archiveTasks, deleteTask, rest
 export type { ArchiveInputT, ArchiveResult, DeleteInputT, RestoreInputT } from './ops/archive.ts';
 export { DoctorInput, InitInput, doctor, initStore, migrateStore } from './ops/admin.ts';
 export type { DoctorCheck, DoctorInputT, DoctorResult, InitInputT, InitResult, MigrateResult } from './ops/admin.ts';
+export { agentRules, skillMarkdown } from './rules.ts';
+export { OPS } from './ops/registry.ts';
+export type { OpName } from './ops/registry.ts';

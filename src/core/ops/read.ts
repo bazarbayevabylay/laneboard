@@ -112,7 +112,13 @@ export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpRe
     return true;
   });
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
-  const items = matches.slice(offset, offset + limit).map(({ task, archived }) => ({
+  const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListItem(task, archived));
+  return { data: { items, scope, limit, offset, total: matches.length }, warnings };
+}
+
+// Explicit mapping of a task to a list item.
+function toListItem(task: TaskT, archived: boolean): ListItem {
+  return {
     id: task.id,
     title: task.title,
     status: task.status,
@@ -121,8 +127,7 @@ export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpRe
     updated_at: task.updated_at,
     rev: task.rev,
     archived,
-  }));
-  return { data: { items, scope, limit, offset, total: matches.length }, warnings };
+  };
 }
 
 export const EventsInput = z.strictObject({
@@ -181,4 +186,38 @@ export async function listEvents(ctx: OpContext, input: EventsInputT): Promise<O
   all.sort((a, b) => (a.at !== b.at ? (a.at < b.at ? 1 : -1) : b.seq - a.seq));
   const items = all.slice(0, limit).map((e) => ({ task_id: e.task_id, at: e.at, actor: e.actor, type: e.type, data: e.data }));
   return { data: { items, scope, limit, total: all.length }, warnings };
+}
+
+export const SummaryInput = z.strictObject({
+  // Whose active tasks to list; without it only the counts per status.
+  assignee: z.string().optional(),
+});
+export type SummaryInputT = z.infer<typeof SummaryInput>;
+
+export interface SummaryResult {
+  // Active tasks per configured status (in config order), then statuses no longer in config.
+  statuses: Array<{ status: string; count: number }>;
+  assignee: string | null;
+  // Active tasks of `assignee`, newest update first (empty without an assignee).
+  assigned: ListItem[];
+}
+
+// Session summary for `prime`: counts per status and the active tasks of one assignee (active.json only, lock-free).
+export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise<OpResult<SummaryResult>> {
+  const p = parseInput(SummaryInput, input);
+  if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
+  const warnings: string[] = [];
+  const { config, tasks } = await scopedTasks(ctx, 'active', warnings);
+  const counts = new Map<string, number>(config.statuses.map((st) => [st, 0]));
+  for (const { task } of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+  const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee);
+  assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
+  return {
+    data: {
+      statuses: [...counts].map(([status, count]) => ({ status, count })),
+      assignee: p.assignee ?? null,
+      assigned: assigned.map(({ task, archived }) => toListItem(task, archived)),
+    },
+    warnings,
+  };
 }

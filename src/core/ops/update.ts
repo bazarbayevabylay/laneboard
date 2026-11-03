@@ -172,15 +172,11 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const task = requireActiveTask(s, id);
       checkExpectedRev(task, false, p.expected_rev);
       if (task.assignee !== null && task.assignee !== actor) {
-        // The fix may be run blindly, so it never takes the task over; reassignment is only named in the message.
-        throw new LaneboardError(
-          'ALREADY_CLAIMED',
-          `task ${id} is already claimed by ${task.assignee}; do not take it over. Only if reassignment is intentional and agreed: laneboard update ${id} --assignee ${actor}`,
-          {
-            details: { assignee: task.assignee },
-            fix: `laneboard comment ${id} "<note for ${task.assignee}>" --as ${actor}`,
-          },
-        );
+        // The fix may be run blindly, so neither it nor the message names a takeover command.
+        throw new LaneboardError('ALREADY_CLAIMED', `task ${id} is already claimed by ${task.assignee}; do not take it over: reassignment is the orchestrator's decision`, {
+          details: { assignee: task.assignee },
+          fix: `laneboard comment ${id} "<note for ${task.assignee}>" --as ${actor}`,
+        });
       }
       const assignChange = task.assignee !== actor ? { from: task.assignee, to: actor } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;

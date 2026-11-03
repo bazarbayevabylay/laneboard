@@ -1,6 +1,7 @@
 // Output for the CLI: JSON envelopes, human text, and error fixes rebuilt from argv.
 import { ERRORS, toErrorObject } from '../core/index.ts';
-import type { DoctorResult, EventsResult, LaneboardError, ListResult, TaskView } from '../core/index.ts';
+import type { DoctorResult, EventsResult, LaneboardError, ListItem, ListResult, TaskView } from '../core/index.ts';
+import type { SetupResult } from '../setup/index.ts';
 
 // Quote one argv token for a copy-pasteable shell command.
 export function shellQuote(token: string): string {
@@ -76,6 +77,9 @@ export function errorText(err: LaneboardError, fix: string): string {
   const lines = [`error ${err.code}: ${err.message}`];
   if (err.allowed) lines.push(`  allowed: ${err.allowed.length ? err.allowed.join(', ') : '(none)'}`);
   lines.push(`  fix: ${fix}`);
+  // A snippet to add by hand (setup) is part of the fix, so human output shows it too.
+  const snippet = err.details?.snippet;
+  if (typeof snippet === 'string') lines.push('  snippet:', ...snippet.split('\n').map((l) => `    ${l}`));
   return `${lines.join('\n')}\n`;
 }
 
@@ -147,5 +151,57 @@ export function doctorText(r: DoctorResult): string {
   const lines = table(r.checks.map((c) => [c.ok ? 'ok' : c.fixed ? 'fixed' : 'FAIL', `${c.name}:`, c.message]));
   const problems = r.checks.filter((c) => !c.ok && !c.fixed).length;
   lines.push(r.healthy ? 'healthy' : `${problems} problem(s) found; see the messages above`);
+  return lines.join('\n');
+}
+
+// `prime` output is capped so a SessionStart hook stays small (ADR-0001 section 9).
+export const PRIME_MAX_CHARS = 4000;
+
+export interface PrimeData {
+  rules: string;
+  agent: string | null;
+  store_problem: string | null;
+  statuses: Array<{ status: string; count: number }>;
+  tasks: ListItem[];
+}
+
+// Rules, then the agent's active tasks (or counts and a hint), at most PRIME_MAX_CHARS characters.
+export function primeText(d: PrimeData): string {
+  const head = [d.rules, ''];
+  if (d.store_problem !== null) {
+    head.push(`laneboard store: ${d.store_problem}`);
+    return head.join('\n').slice(0, PRIME_MAX_CHARS);
+  }
+  head.push(`Active tasks per status: ${d.statuses.map((s) => `${s.status} ${s.count}`).join(', ') || 'none'}`);
+  if (d.agent === null) {
+    head.push('Set your name to see your tasks: export LANEBOARD_AGENT=<your-name> (or pass --as <your-name>).');
+    return head.join('\n').slice(0, PRIME_MAX_CHARS);
+  }
+  if (!d.tasks.length) {
+    head.push(`Your active tasks (${d.agent}): none. Find work: laneboard list --unassigned --json`);
+    return head.join('\n').slice(0, PRIME_MAX_CHARS);
+  }
+  head.push(`Your active tasks (${d.agent}), newest update first:`);
+  let text = head.join('\n');
+  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent} --json`;
+  for (const [i, t] of d.tasks.entries()) {
+    const line = `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
+    const left = d.tasks.length - i - 1;
+    // Keep room for the "N more" footer unless this is the last task.
+    if (text.length + line.length + (left ? more(left).length : 0) > PRIME_MAX_CHARS) return text + more(d.tasks.length - i);
+    text += line;
+  }
+  return text;
+}
+
+// Human setup report: one line per file, diffs of replaced values, notes.
+export function setupText(r: SetupResult): string {
+  const lines: string[] = [];
+  if (r.dry_run) lines.push('dry run: nothing was written');
+  for (const f of r.files) {
+    lines.push(`${f.result} ${f.path}${f.scope === 'global' ? ' (global file)' : ''}`);
+    for (const d of f.diff ?? []) lines.push(`    ${d}`);
+  }
+  for (const n of r.notes) lines.push(`next: ${n}`);
   return lines.join('\n');
 }

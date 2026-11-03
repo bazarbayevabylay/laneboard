@@ -183,9 +183,10 @@ describe('claim', () => {
     expect(again.data.rev).toBe(2);
     const err = await rejectsWith(claimTask(as(s, 'dev-2'), { id: 'LB-1' }), 'ALREADY_CLAIMED');
     expect(err.details).toEqual({ assignee: 'dev-1' });
-    // Agents run a fix as is, so it must never take the task over; reassignment is only named in the message.
+    // Agents run a fix as is, so neither the fix nor the message names a takeover command.
     expect(err.fix).toBe('laneboard comment LB-1 "<note for dev-1>" --as dev-2');
-    expect(err.message).toContain('intentional and agreed: laneboard update LB-1 --assignee dev-2');
+    expect(err.message).toBe("task LB-1 is already claimed by dev-1; do not take it over: reassignment is the orchestrator's decision");
+    expect(err.message).not.toContain('--assignee');
     await rejectsWith(claimTask(as(s, 'dev-1'), { id: 'LB-1', expected_rev: 1 }), 'REV_CONFLICT');
   });
 });

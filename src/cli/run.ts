@@ -134,6 +134,7 @@ export async function runCli(io: CliIo): Promise<number> {
         out.store = dir;
       },
     });
+    if (result.silent) return 0;
     return print(io, out, result.data, result.warnings, result.human);
   } catch (raw) {
     const err = flagMessage(toLaneboardError(raw), def);

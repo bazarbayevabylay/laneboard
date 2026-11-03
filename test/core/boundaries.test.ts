@@ -1,4 +1,4 @@
-// W1/C1 and C2 boundary checks: clean repo passes; planted violations fail.
+// W1/C1, C2 and C4 boundary checks: clean repo passes; planted violations fail.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,6 +51,15 @@ describe('check-boundaries.sh', () => {
     const r = check(tree({ ...allowed, 'src/core/transact.ts': "import fs from 'node:fs'; fs.renameSync('a', 'b');" }));
     expect(r.code).toBe(1);
     expect(r.out).toContain('src/core/transact.ts');
+  });
+
+  it('C4: stdout writes in src/mcp fail', () => {
+    for (const line of ["console.log('debug');", "process.stdout.write('x');"]) {
+      const r = check(tree({ ...allowed, 'src/mcp/server.ts': line }));
+      expect(r.code, line).toBe(1);
+      expect(r.out).toContain('C4 violation');
+    }
+    expect(check(tree({ ...allowed, 'src/mcp/server.ts': "process.stderr.write('ok');" }))).toMatchObject({ code: 0 });
   });
 
   it('C2: core importing a facade fails', () => {

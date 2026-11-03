@@ -1,0 +1,14 @@
+{
+  "name": "laneboard",
+  "description": "laneboard: task board & CLI for AI coding agents",
+  "owner": {
+    "name": "laneboard maintainers"
+  },
+  "plugins": [
+    {
+      "name": "laneboard",
+      "source": "./plugins/claude-code",
+      "description": "Agent rules skill, SessionStart hook (laneboard prime) and the laneboard MCP server. Needs the CLI: npm i -g laneboard"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# error-INVALID_VALUE-harness
+$ laneboard setup claude
+exit 2
+--- stdout
+
+--- stderr
+error INVALID_VALUE: unknown harness "claude"
+  allowed: claude-code, codex, cursor, gemini, opencode
+  fix: laneboard setup claude-code
+
+$ laneboard setup claude --json
+exit 2
+--- stdout
+{"ok":false,"store":null,"error":{"code":"INVALID_VALUE","message":"unknown harness \"claude\"","fix":"laneboard setup claude-code --json","allowed":["claude-code","codex","cursor","gemini","opencode"]}}
+--- stderr
+

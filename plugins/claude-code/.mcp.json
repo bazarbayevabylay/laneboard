@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "laneboard": {
+      "command": "laneboard",
+      "args": ["mcp"]
+    }
+  }
+}

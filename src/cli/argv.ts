@@ -68,7 +68,9 @@ export function parseError(err: unknown, command: string, args: readonly string[
   const known = Object.keys(options).map((o) => `--${o}`);
   const quoted = /'([^']+)'/.exec(message)?.[1] ?? '';
   if (e.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') {
-    const text = quoted.startsWith('--') ? undefined : splitArgv(args, options).positionals.find((t) => t.startsWith(quoted));
+    // `--stauts` is a mistyped option; `--- section` or `-- note` is text that starts with "--".
+    const optionLike = /^--[A-Za-z]/.test(quoted);
+    const text = optionLike ? undefined : splitArgv(args, options).positionals.find((t) => t.startsWith(quoted));
     if (text !== undefined && looksLikeText(text, known)) {
       return new LaneboardError('UNKNOWN_OPTION', `${JSON.stringify(text)} starts with "-", so it was read as an option; text that starts with "-" goes after --`, {
         fix: withTerminator(command, args, options, text),

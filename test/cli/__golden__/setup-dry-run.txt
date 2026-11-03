@@ -1,0 +1,16 @@
+# setup-dry-run
+$ laneboard setup opencode --dry-run
+exit 0
+--- stdout
+dry run: nothing was written
+created opencode.json
+created AGENTS.md
+--- stderr
+
+
+$ laneboard setup opencode --dry-run --json
+exit 0
+--- stdout
+{"ok":true,"store":null,"data":{"harness":"opencode","mode":"install","dry_run":true,"files":[{"path":"opencode.json","scope":"project","result":"created"},{"path":"AGENTS.md","scope":"project","result":"created"}],"notes":[]},"warnings":[]}
+--- stderr
+

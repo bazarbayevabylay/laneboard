@@ -1,0 +1,17 @@
+# setup
+$ laneboard setup claude-code
+exit 0
+--- stdout
+created .mcp.json
+created CLAUDE.md
+created .claude/settings.json
+next: start Claude Code in this directory and approve the project MCP server "laneboard" when asked
+--- stderr
+
+
+$ laneboard setup claude-code --json
+exit 0
+--- stdout
+{"ok":true,"store":null,"data":{"harness":"claude-code","mode":"install","dry_run":false,"files":[{"path":".mcp.json","scope":"project","result":"created"},{"path":"CLAUDE.md","scope":"project","result":"created"},{"path":".claude/settings.json","scope":"project","result":"created"}],"notes":["start Claude Code in this directory and approve the project MCP server \"laneboard\" when asked"]},"warnings":[]}
+--- stderr
+

@@ -1,5 +1,5 @@
 # laneboard — technical spec v0.1 (ADR-0001: two-JSON store behind one transact(), CLI-first, MCP + board as thin facades)
-Status: accepted 2026-11-03, S1 implemented (deltas in §14) · Links: none · Source: owner brief, install/storage research digests
+Status: accepted 2026-11-03, S1 and S2 implemented (deltas in §14) · Links: none · Source: owner brief, install/storage research digests
 Tagline: "Task board & CLI for AI coding agents". Scope: create, update, delete, archive, attach, comment, board. No workflow: statuses are a plain list.
 
 ## 0. Context
@@ -105,19 +105,19 @@ Global: `--json`, `--dir <path>`, `--as <actor>`. Actor for writes = `--as`, els
 | `get <id> [--events N]` (searches archive too; result has `"archived": bool`) | task_get |
 | `list [--status S]… [--assignee A | --unassigned] [--label L]… [--text Q] [--scope active|archive|all] [--limit N] [--offset N]` | task_list |
 | `update <id> [--title] [--description|--description-file] [--status S] [--assignee A | --unassign] [--add-label L] [--remove-label L] [--add-link k=ref] [--remove-link k=ref] [--field k=v] [--unset-field k] [--expected-rev N]` (≥1 change) | task_update |
-| `claim <id> [--status S] [--expected-rev N]` — assignee := actor; held by another → `ALREADY_CLAIMED` (fix: `comment`; `update --assignee` only in the message, for an intentional and agreed reassignment) | task_claim |
+| `claim <id> [--status S] [--expected-rev N]` — assignee := actor; held by another → `ALREADY_CLAIMED` (fix: `comment`; neither fix nor message names a takeover: reassignment is the orchestrator's decision) | task_claim |
 | `comment <id> (<text> | --file P|-)` | task_comment |
 | `attach <id> <path> [--name N]` / `attach <id> --remove <name>` | task_attach |
 | `archive <id>… [--expected-rev N]` / `archive --status S --updated-before <Nd> [--dry-run]` | task_archive |
 | `restore <id>` | task_restore |
 | `delete <id> --confirm <id> [--expected-rev N]` | task_delete |
 | `events [--task id] [--since ts] [--limit N] [--scope …]` | task_events |
-CLI-only: `init [--prefix P] [--statuses a,b,c]`, `setup <harness> [--remove] [--dry-run]`, `migrate`, `doctor [--fix] [--restore-backup]`, `board [--port N]`, `mcp`, `prime [--hook]`, `import markdown …` (S5), `--help`, `--version`.
+CLI-only: `init [--prefix P] [--statuses a,b,c]`, `setup <claude-code|codex|cursor|gemini|opencode> [--remove] [--dry-run]`, `migrate`, `doctor [--fix] [--restore-backup]`, `board [--port N]`, `mcp`, `prime [--hook]`, `import markdown …` (S5), `--help`, `--version`.
 - Archived tasks are read-only: update/claim/comment/attach on them → `TASK_ARCHIVED` (fix: `laneboard restore <id>`).
 - `list`: `--limit` default 20 (max `list_limit_max`), sorted `updated_at` desc; the envelope always states `scope/limit/offset/total`.
 - Output, human: one line per result (`LB-12 created (rev 1)`), aligned table for lists plus footer `20 of 57 shown (scope active); next: --offset 20`.
 - Output, `--json` (stdout only, one document, also on error; stderr empty): `{"ok":true,"store":"/abs/.laneboard","data":…,"warnings":[]}`; task = full Task + `archived`; list items = `{id,title,status,assignee,labels,updated_at,rev}`. Error: `{"ok":false,"store":…,"error":{"code","message","fix","allowed"?,"details"?}}`.
-- Error registry `Record<ErrorCode,{exit,http,fix}>` in `src/core/errors.ts`: 0 ok · 1 `INTERNAL` · 2 `USAGE`, `UNKNOWN_OPTION` (with closest option), `INVALID_VALUE`, `UNKNOWN_STATUS` (allowed list), `UNKNOWN_FIELD` (declared list), `ACTOR_REQUIRED` · 3 `TASK_NOT_FOUND` (fix: `list --scope all --text`), `ATTACHMENT_NOT_FOUND` · 4 `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` · 5 `LOCK_TIMEOUT`, `LOCK_LOST` (write deadline passed, nothing written; fix: retry) · 6 `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS` (init into an existing or non-empty directory; §14).
+- Error registry `Record<ErrorCode,{exit,http,fix}>` in `src/core/errors.ts`: 0 ok · 1 `INTERNAL` · 2 `USAGE`, `UNKNOWN_OPTION` (with closest option), `INVALID_VALUE`, `UNKNOWN_STATUS` (allowed list), `UNKNOWN_FIELD` (declared list), `ACTOR_REQUIRED` · 3 `TASK_NOT_FOUND` (fix: `list --scope all --text`), `ATTACHMENT_NOT_FOUND` · 4 `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` · 5 `LOCK_TIMEOUT`, `LOCK_LOST` (write deadline passed, nothing written; fix: retry) · 6 `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS` (init into an existing or non-empty directory; §14), `SETUP_UNPARSEABLE` (§9).
 ```
 $ laneboard update LB-12 --status doing --as dev-1
 error UNKNOWN_STATUS: "doing" is not a configured status
@@ -126,18 +126,19 @@ error UNKNOWN_STATUS: "doing" is not a configured status
 ```
 A concrete value is suggested only for an obvious typo (`in-progress` → `in_progress`); see §14.
 - Options that are not repeatable in the table above (everything except `--label`, `--link`, `--field`, `--add-*`, `--remove-*`, `--unset-field`, list `--status`) may appear once: a repeat → `USAGE` (`--status is given 2 times`), never "last one wins".
-- Text that starts with `-` (a Markdown list item, `-1 …`): positionals go after `--` (`laneboard comment LB-1 --as me -- "- item"`), option values use `--opt=value` (`--description="- a"`). Otherwise `UNKNOWN_OPTION`/`USAGE` with that exact command as `fix`.
+- Text that starts with `-` or `--` (a Markdown list item, `-1 …`, `--- section`): positionals go after `--` (`laneboard comment LB-1 --as me -- "- item"`), option values use `--opt=value` (`--description="- a"`). Otherwise `UNKNOWN_OPTION`/`USAGE` with that exact command as `fix`.
 
-## 6. MCP (`laneboard mcp`, stdio, SDK `McpServer.registerTool` + `StdioServerTransport`, verified in sdk@1.30.0 `dist/esm/server/mcp.d.ts`)
+## 6. MCP (`laneboard mcp`, stdio, SDK `Server` + `setRequestHandler(tools/list, tools/call)` + `StdioServerTransport`, sdk@1.32.1; why not `McpServer.registerTool`: §14)
 - 11 tools, same names/params as §5 (snake_case: `expected_rev`, `description`, `add_labels`…): task_create, task_get, task_list, task_update, task_claim, task_comment, task_attach (`path` | `remove`), task_archive (`ids` | `status`+`updated_before`, `dry_run`), task_restore, task_delete (`confirm_id`), task_events. Status changes only via task_update.
 - Every write tool requires `actor` (one MCP process serves a session and all its subagents, so env cannot identify the caller).
-- Result: `structuredContent` = CLI `data`; `content[0].text` = same JSON. Error: `isError: true`, same error object as CLI. Inputs are zod `.strict()`: unknown keys rejected.
+- Result: `structuredContent` = CLI `data`; `content[0].text` = same JSON; warnings (if any) as `content[1].text` `{"warnings":[…]}`. Error: `isError: true`, same error object as CLI in `structuredContent` and `content[0].text`. Inputs are zod `.strict()`: unknown keys rejected (`USAGE`). Fix differs from the CLI only where the CLI fix names CLI syntax: `ACTOR_REQUIRED` (pass `actor`) and generic `USAGE` (the tool's parameter list); CLI fixes rebuilt from argv stay core fixes in MCP.
 - Server `instructions` = Agent rules (§7), ≤4 096 chars (Claude Code start-up limit [mcp]). stdout belongs to the protocol: nothing else writes it (C4). Responses capped by `limit`; Claude Code warns >10k tokens [mcp].
 
-## 7. Agent rules (skill body, `prime` output, MCP instructions; one source `src/core/agent-rules.md`)
+## 7. Agent rules (skill body, `prime` output, MCP instructions; one source `src/core/agent-rules.md`, copied to `dist/core/` by `build`; the text below is a mirror)
 ```
-1. Use only `laneboard` commands (or task_* tools). Never read-modify-write .laneboard/*.json by hand.
-2. Always pass `--json` and `--as <your-name>` (or set LANEBOARD_AGENT).
+laneboard agent rules (task board & CLI for AI coding agents):
+1. Use only `laneboard` commands (or the task_* MCP tools). Never read-modify-write .laneboard/*.json by hand.
+2. Always pass `--json` and `--as <your-name>` (or set LANEBOARD_AGENT). MCP write tools take `actor`.
 3. Start work: `laneboard claim <ID> --status <status> --as <you> --json`.
 4. Change anything: `laneboard update <ID> ... --expected-rev <rev from your last read>`.
 5. REV_CONFLICT: run `laneboard get <ID> --json`, re-apply your change on the new rev. Never retry blindly.
@@ -148,7 +149,7 @@ A concrete value is suggested only for an obvious typo (`in-progress` → `in_pr
 10. Done tasks: `laneboard archive <ID>`. Find old ones: `laneboard list --scope all --text <q>`.
 11. Ids are exact, e.g. LB-12. Store not found: export LANEBOARD_DIR=<abs>/.laneboard.
 12. Every error has `fix`: run it or adapt it. Exit codes: 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store.
-13. Text starting with "-": options first, then `--`, then the text (`laneboard comment <ID> --as <you> -- "- item"`); option values as `--description="- item"`.
+13. Text starting with "-" or "--" (list items, "--- section"): options first, then `--`, then the text (`laneboard comment <ID> --as <you> -- "- item"`); option values as `--description="- item"`.
 ```
 
 ## 8. Board (`laneboard board`, Vue 3 SPA built by Vite into `dist/board/`, served by `node:http`)
@@ -160,30 +161,31 @@ A concrete value is suggested only for an obvious typo (`in-progress` → `in_pr
 - UI: columns = `config.statuses` (+ unknown-status column); drag card → PATCH with `expected_rev`, 409 → toast + refetch; card panel: edit title/description/assignee/labels/links/fields, comment, upload/download/remove attachment, archive; archive view with search and restore; delete asks to type the id.
 
 ## 9. setup and Claude Code plugin
-`laneboard setup <claude|codex|cursor|gemini|opencode> [--remove] [--dry-run]`, run in project root. Writes only our key or a marked block (`<!-- laneboard:start -->…<!-- laneboard:end -->`, TOML `# laneboard:start/end`). Instruction block = 3 lines: what laneboard is, "run `laneboard prime` for rules", `LANEBOARD_AGENT`.
+`laneboard setup <claude-code|codex|cursor|gemini|opencode> [--remove] [--dry-run]`, run in project root (names: §14). Writes only our key or a marked block (`<!-- laneboard:start -->…<!-- laneboard:end -->`, TOML `# laneboard:start/end`). Instruction block = 3 lines: what laneboard is, "run `laneboard prime` for rules", `LANEBOARD_AGENT`.
 | Harness | MCP entry | Instructions | Hook | Source |
 |---|---|---|---|---|
-| claude | `.mcp.json` → `mcpServers.laneboard {command:"laneboard",args:["mcp"]}` | `CLAUDE.md` block | `.claude/settings.json` SessionStart `laneboard prime --hook` | [mcp][hooks][memory] |
+| claude-code | `.mcp.json` → `mcpServers.laneboard {command:"laneboard",args:["mcp"]}` | `CLAUDE.md` block | `.claude/settings.json` SessionStart `laneboard prime --hook` | [mcp][hooks][memory] |
 | codex | `~/.codex/config.toml` `[mcp_servers.laneboard]` command/args (project file only for trusted projects; output says "global file") | `AGENTS.md` block | none in v1 | [codex-mcp][agents-md] |
-| cursor | `.cursor/mcp.json` → `mcpServers.laneboard` | `AGENTS.md` block | none in v1 | [cursor-mcp][cursor-rules] |
+| cursor | `.cursor/mcp.json` → `mcpServers.laneboard {type:"stdio",command,args}` (`type` listed as required [cursor-mcp]) | `AGENTS.md` block | none in v1 | [cursor-mcp][cursor-rules] |
 | gemini | `.gemini/settings.json` → `mcpServers.laneboard` | `GEMINI.md` block | none in v1 | [gemini-mcp][gemini-md] |
-| opencode | `opencode.json` → `mcp.laneboard {type:"local",command:["laneboard","mcp"]}` (`enabled` key: VERIFY) | `AGENTS.md` block | none in v1 | [opencode-mcp][opencode-rules] |
-- Idempotent: second run reports `unchanged` per file, bytes identical. Existing different value → replaced, printed as a diff. First modification of a pre-existing file writes `<file>.laneboard.bak` once.
-- Rollback: `--remove` deletes our key/block; deletes a file only if we created it and it is now empty (`{}` / blank). Unparseable JSON (JSONC comments) → `SETUP_UNPARSEABLE` (exit 6), no write, prints the snippet to add by hand.
-- Claude Code: plugin and `setup claude` both register MCP → use one; `setup claude` warns if the plugin cache has laneboard (VERIFY path).
+| opencode | `opencode.json` → `mcp.laneboard {type:"local",command:["laneboard","mcp"],enabled:true}` (`enabled` optional, no documented default, so written explicitly [opencode-mcp]) | `AGENTS.md` block | none in v1 | [opencode-mcp][opencode-rules] |
+- Idempotent: second run reports `unchanged` per file, bytes identical (a file that already holds the same entry is not rewritten). Existing different value → replaced, printed as a diff. First modification of a pre-existing file writes `<file>.laneboard.bak` once. Every file is planned (parsed) before any write.
+- Rollback: `--remove` deletes our key/block; when the rest equals the `.bak` it writes the `.bak` bytes back and deletes the `.bak` (`restored`: original bytes); deletes a file only if we created it (no `.bak`) and it is now empty (`{}` / blank), plus its directory if empty. Unparseable JSON (JSONC comments), a broken marker block, or a Codex `[mcp_servers.laneboard]` outside our block → `SETUP_UNPARSEABLE` (exit 6), no write, `details.snippet` to add by hand (human output prints it).
+- Claude Code: plugin and `setup claude-code` both register MCP → use one; `setup claude-code` warns if `<plugins root>/cache/<any marketplace>/laneboard` exists; plugins root = `CLAUDE_CODE_PLUGIN_CACHE_DIR`, else `$CLAUDE_CONFIG_DIR/plugins`, else `~/.claude/plugins` [loading][env-vars].
 Plugin (same repo; marketplace = repo) [plugins][marketplace][components]:
 ```
 .claude-plugin/marketplace.json   {"name":"laneboard","owner":{"name":"laneboard maintainers"},
-                                   "plugins":[{"name":"laneboard","source":"./plugins/claude-code","description":"…"}]}   (fields: VERIFY)
-plugins/claude-code/.claude-plugin/plugin.json   {"name":"laneboard","version":"<= package.json>","description":"…","license":"MIT"}
+                                   "plugins":[{"name":"laneboard","source":"./plugins/claude-code","description":"…"}]}   (required: name, owner.name, plugins[].name/source [marketplace]; + top-level description)
+plugins/claude-code/.claude-plugin/plugin.json   {"name":"laneboard","version":"<= package.json>","description":"…","author":{"name":…},"repository","license":"MIT","keywords"}
 plugins/claude-code/.mcp.json     {"mcpServers":{"laneboard":{"command":"laneboard","args":["mcp"]}}}
 plugins/claude-code/hooks/hooks.json  {"hooks":{"SessionStart":[{"matcher":"startup|resume|clear|compact",
   "hooks":[{"type":"command","command":"command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'"}]}]}}
-plugins/claude-code/skills/laneboard/SKILL.md   frontmatter name/description (VERIFY) + Agent rules
+plugins/claude-code/skills/laneboard/SKILL.md   frontmatter `name`, `description` (quoted; no `<>`, ≤1 536 chars [skills]) + Agent rules; generated by `npm run gen:skill`
+plugins/claude-code/README.md   what the plugin does, CLI prerequisite (the plugin directory check wants a README)
 ```
 - Install: `/plugin marketplace add bazarbayevabylay/laneboard` → `/plugin install laneboard@laneboard`. Plugin cannot install the binary (npm source skips install scripts [marketplace]) → `npm i -g laneboard` is a documented prerequisite (Q2).
 - `prime --hook`: Agent rules + tasks assigned to `LANEBOARD_AGENT` (non-archived, `updated_at` desc); unset → rules + counts per status + "set LANEBOARD_AGENT". ≤4 000 chars, truncated with `… N more: laneboard list --assignee <a>`. SessionStart stdout becomes context [hooks]; MCP is not ready at SessionStart, so the hook is a command, not a tool call [hooks].
-- Test: `plugin.json.version === package.json.version`; release script bumps both.
+- Test: `plugin.json.version === package.json.version`; release script bumps both. `claude plugin validate plugins/claude-code` and `claude plugin validate .` (marketplace) pass, also with `--strict` (Claude Code 2.1.317, temp HOME).
 
 ## 10. Repo and package
 ```
@@ -191,14 +193,14 @@ src/core/   schema.ts errors.ts agent-rules.md config.ts store.ts fsio.ts lock.t
 src/cli/    main.ts commands/*.ts format.ts
 src/mcp/    server.ts tools.ts
 src/board/  server/{http,api,sse,watch,security}.ts  ui/{index.html,main.ts,App.vue,components/}
-src/setup/  index.ts harnesses/{claude,codex,cursor,gemini,opencode}.ts json-key.ts md-block.ts toml-block.ts
+src/setup/  index.ts files.ts harnesses/{common,claude-code,codex,cursor,gemini,opencode}.ts json-key.ts md-block.ts toml-block.ts
 src/import/ markdown.ts
 schema/  plugins/claude-code/  .claude-plugin/marketplace.json  scripts/check-boundaries.sh  test/{core,cli,mcp,setup,board,import,usability}
 .github/workflows/ci.yml  README.md  README.ru.md  CHANGELOG.md  LICENSE  .nvmrc
 ```
 - Direction: cli/mcp/board/setup/import → `src/core/index.ts`; core imports none of them (C2).
 - package.json: `"type":"module"`, `bin: {"laneboard":"dist/cli/main.js"}`, `files: ["dist","schema","README.md","README.ru.md","LICENSE"]`, `engines.node: ">=22"` (Node 20 EOL 2026-04-30, nodejs.org/en/about/previous-releases).
-- Runtime deps: `@modelcontextprotocol/sdk` ^1.30 (MCP protocol); `zod` (SDK peer `^3.25 || ^4`, reused for all validation and JSON Schema generation — `z.toJSONSchema` needs v4: VERIFY); `proper-lockfile` ^4.1.2 (Node has no flock; deps graceful-fs, retry, signal-exit); `yaml` (S5 import only, lazy-loaded). Not used: express/commander/chokidar/busboy → `node:http`, `parseArgs`, `fs.watch`, raw-body upload.
+- Runtime deps: `@modelcontextprotocol/sdk` 1.32.1 (MCP protocol); `zod` 4.6.7 (SDK peer `^3.25 || ^4`, reused for all validation and JSON Schema generation — `z.toJSONSchema` is v4 API, used since S1); `proper-lockfile` ^4.1.2 (Node has no flock; deps graceful-fs, retry, signal-exit); `yaml` (S5 import only, lazy-loaded). Not used: express/commander/chokidar/busboy → `node:http`, `parseArgs`, `fs.watch`, raw-body upload.
 - Dev deps: typescript, @types/node, @types/proper-lockfile, vitest, vite, @vitejs/plugin-vue, vue, @playwright/test (S4 e2e only).
 - Tests: vitest for everything (TS + Vue without extra tooling). CI (GitHub Actions): ubuntu-latest + macos-latest × Node 22, 24: `npm ci`, `npm run typecheck`, `npm run check:boundaries`, `npm run check:schema`, `npm test`, `npm run build`, `npm pack --dry-run`. Windows not in CI (Q4).
 - Code, comments, README in English; README.ru.md mirrors README sections (test compares heading count). License: MIT (Q3).
@@ -208,7 +210,7 @@ Repo is empty, so each check is created in S1/S2; red-control run on a planted t
 - C1 Writes only in fsio/setup — `! grep -rnE '\b(writeFile|writeFileSync|rename|renameSync|appendFile|appendFileSync|copyFile|copyFileSync|unlink|unlinkSync|rmSync|createWriteStream)\b' src --include='*.ts' | grep -vE '^src/(core/fsio\.ts|setup/)'` — planted: 1/0.
 - C2 Core does not import facades — `! grep -rnE "from ['\"][^'\"]*(\.\./)+(cli|mcp|board|setup|import)/" src/core` — planted: 1/0.
 - C3 Exactly 11 MCP tools, every core op exposed or listed CLI-only — `Record<OpName, McpTool | "cli-only">` (typecheck) + `listTools().length === 11` e2e.
-- C4 Nothing writes stdout in MCP code — `! grep -rnE 'console\.log|process\.stdout\.write' src/mcp` — planted: 1/0.
+- C4 Nothing writes stdout in MCP code — `! grep -rnE 'console\.log|process\.stdout\.write' src/mcp` — in `scripts/check-boundaries.sh` since S2; planted: 1/0 (`test/core/boundaries.test.ts`).
 - C5 Every error code has exit, http, fix — `Record<ErrorCode,…>` typecheck + test iterating the registry asserting non-empty `fix`.
 - C6 Board bound to loopback — test asserts `server.address().address === "127.0.0.1"`; requests without token / foreign Origin / foreign Host → 403.
 - C7 No env-triggered fault hooks in the package — `! grep -rnE 'CRASH|FAULT' dist --include='*.js' | grep -i 'process\.env'`; faults reach core only via the `opts.faults` argument from test fixtures.
@@ -218,7 +220,7 @@ Repo is empty, so each check is created in S1/S2; red-control run on a planted t
 S1 core + CLI (~70 turns). Files: package.json, tsconfig, .nvmrc, src/core, src/cli, schema, scripts, test/core, test/cli, ci.yml, LICENSE.
 DoD: `npm ci && npm run typecheck && npm run check:boundaries && npm run check:schema && npm test && npm run build; echo $?` → 0, covering W1–W11, C1, C2, C5, C8, CLI golden outputs (human + json) for every command and every error code; smoke `T=$(mktemp -d) && cd "$T" && laneboard init && laneboard create "x" --status todo --as a --json` → `"id":"LB-1"`, then `laneboard update LB-1 --status doing --as a; echo $?` → 2 with `allowed`.
 S2 MCP + setup + plugin (~70). Files: src/mcp, src/setup, plugins/, .claude-plugin/, test/mcp, test/setup.
-DoD: `npm test -- test/mcp test/setup; echo $?` → 0: SDK client over stdio lists exactly 11 tools and calls each; CLI/MCP parity (same `data` for same op on cloned stores); per harness in temp HOME+cwd: run twice → `unchanged` + identical bytes, `--remove` → original (deep-equal JSON, identical md); `prime --hook` ≤4 000 chars; `claude plugin validate plugins/claude-code` (VERIFY command) exit 0; record `npm i --omit=dev` footprint in the PR (R5).
+DoD: `npm test -- test/mcp test/setup; echo $?` → 0: SDK client over stdio lists exactly 11 tools and calls each; CLI/MCP parity (same `data` for same op on cloned stores); per harness in temp HOME+cwd: run twice → `unchanged` + identical bytes, `--remove` → original (deep-equal JSON, identical md); `prime --hook` ≤4 000 chars; `claude plugin validate plugins/claude-code` exit 0 (command exists [marketplace]); record `npm i --omit=dev` footprint (R5, §13).
 S3 agent usability test (~60). Before any board work.
 Setup: temp store, `PATH` wrapper logging argv/exit/error code to JSONL (no product change); 3 fresh subagents get only SKILL.md and `laneboard prime`, no repo access.
 Scenarios: create; claim; change status; attach file; archive; find in archive; REV_CONFLICT from a parallel edit (harness edits between read and write); wrong inputs (bad status, bad id, unknown flag, unknown field, missing actor).
@@ -235,15 +237,15 @@ DoD: fixture of 5 files → import creates 5, re-import creates 0 and skips 5; `
 | # | Question / risk | Until answered |
 |---|---|---|
 | Q1 (answered: hard delete, `confirm_id`, active and archive) | Delete: hard delete (record + attachments, nothing left) or tombstone in archive.json for audit? May agents delete active tasks via MCP? | hard delete, `confirm_id` required, active and archive |
-| Q2 (answered: global install) | Plugin needs `npm i -g laneboard` (plugin cannot install binaries). Alternative: `npx -y laneboard@<ver>` in `.mcp.json`/hook pins versions but needs network and adds start-up latency (npx in plugin `.mcp.json`: VERIFY). | global install, hook prints install hint |
+| Q2 (answered: global install) | Plugin needs `npm i -g laneboard` (plugin cannot install binaries). Alternative: `npx -y laneboard@<ver>` in `.mcp.json`/hook pins versions but needs network and adds start-up latency (not needed after the answer; note [loading]: Claude Code installs a cached plugin's Node.js dependencies and puts plugin `bin/` on the Bash PATH, so a later version could ship the CLI inside the plugin). | global install, hook prints install hint |
 | Q3 (answered: MIT) | License MIT (as Backlog.md, beads) or Apache-2.0 (patent grant)? | MIT |
 | Q4 (answered: macOS + Linux only; `os` in package.json, CI matrix) | Windows in v1? rename over a file open in another process can fail there; no CI coverage planned. | macOS + Linux only, documented |
 | R6 | The mtime lock cannot stop a holder that pauses inside the write itself (after its last deadline check, a window of milliseconds); proper-lockfile has no fencing token. | accepted for v1; the deadline check runs before every file write |
-| R5 | SDK 1.30 pulls express, hono, jose, ajv… for a stdio-only server; proper-lockfile's 10 s stale window stalls writers after a crash. | measure in S2; if footprint is unacceptable, bundle with esbuild or switch to own JSON-RPC (new ADR) |
+| R5 | SDK pulls express, hono, jose, ajv… for a stdio-only server; proper-lockfile's 10 s stale window stalls writers after a crash. Measured in S2 (`npm i --omit=dev` of the packed tarball, Node 22, macOS): 27.5 MB / 100 packages with SDK 1.32.1 vs 8.5 MB / 6 packages for S1 deps (zod 8.3 MB, SDK 6.2 MB, hono 2.9 MB); `npm audit` 0. | accepted for v1 (global install once per machine); if it becomes a problem, bundle with esbuild or switch to own JSON-RPC (new ADR) |
 
-Sources (accessed 2026-11-03): [plugins] code.claude.com/docs/en/plugins · [components] …/plugins/components.md · [marketplace] …/plugins/marketplace-reference.md · [hooks] …/hooks.md · [mcp] …/mcp.md · [memory] …/memory.md · [codex-mcp] developers.openai.com/codex/mcp (→ learn.chatgpt.com/docs/extend/mcp) · [agents-md] learn.chatgpt.com/docs/agent-configuration/agents-md · [cursor-mcp] cursor.com/docs/context/mcp · [cursor-rules] cursor.com/docs/context/rules · [gemini-mcp] geminicli.com/docs/tools/mcp-server · [gemini-md] geminicli.com/docs/cli/gemini-md · [opencode-mcp] opencode.ai/docs/mcp-servers · [opencode-rules] opencode.ai/docs/rules · MCP SDK: npm @modelcontextprotocol/sdk 1.30.0 type definitions · proper-lockfile 4.1.2 `lib/lockfile.js`.
+Sources (accessed 2026-11-03): [plugins] code.claude.com/docs/en/plugins · [skills] …/skills.md · [loading] …/plugins/loading.md · [env-vars] …/env-vars.md · [plugin-marketplaces] …/plugin-marketplaces.md (`claude plugin validate`) · [components] …/plugins/components.md · [marketplace] …/plugins/marketplace-reference.md · [hooks] …/hooks.md · [mcp] …/mcp.md · [memory] …/memory.md · [codex-mcp] developers.openai.com/codex/mcp (→ learn.chatgpt.com/docs/extend/mcp) · [agents-md] learn.chatgpt.com/docs/agent-configuration/agents-md · [cursor-mcp] cursor.com/docs/context/mcp · [cursor-rules] cursor.com/docs/context/rules · [gemini-mcp] geminicli.com/docs/tools/mcp-server · [gemini-md] geminicli.com/docs/cli/gemini-md · [opencode-mcp] opencode.ai/docs/mcp-servers · [opencode-rules] opencode.ai/docs/rules · MCP SDK: npm @modelcontextprotocol/sdk 1.30.0 type definitions · proper-lockfile 4.1.2 `lib/lockfile.js`.
 
-## 14. S1 implementation deltas (what the code does where this spec was silent or different)
+## 14. Implementation deltas, S1 and S2 (what the code does where this spec was silent or different)
 - Schema: `schema/*.json` is generated by `z.toJSONSchema` and is the reference; it differs in form from the §2 sketch (no `$defs`, nullable as a type list, no `uniqueItems` on labels — core de-duplicates labels and links instead).
 - Config value formats: `prefix` `^[A-Z][A-Z0-9]{0,9}$`; each status `^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, non-empty and unique; field keys `^[a-z][a-z0-9_]{0,39}$`; `fields.<k>.description` optional.
 - New error code `STORE_EXISTS` (exit 6, http 409). `init` writes under the lock in the target dir, config.json last; target = `--dir`, else `LANEBOARD_DIR`, else `<cwd>/.laneboard` (no walk-up).
@@ -258,3 +260,13 @@ Sources (accessed 2026-11-03): [plugins] code.claude.com/docs/en/plugins · [com
 - CLI: `src/cli/run.ts` holds the in-process runner (`runCli(io)`), `main.ts` is the bin wrapper; tests drive the runner in-process and the real process via `node src/cli/main.ts`.
 - Tooling: tests and scripts run TypeScript directly through Node type stripping (development needs Node ≥22.18; the published package is compiled and needs ≥22). Runtime deps in S1: `zod`, `proper-lockfile` only (MCP SDK arrives in S2, `yaml` in S5). `npm install` with npm 10.9 (Node 22) crashes on the vitest 5 peer tree (arborist `edgesOut`); the lockfile was produced with npm 11; `npm ci` works with both.
 - Not in S1: `src/core/agent-rules.md`, `prime`, `setup`, `mcp`, `board`, `import` (S2–S5).
+
+### S2 deltas
+- MCP uses the SDK's low-level `Server` (the SDK marks it for advanced use) instead of `McpServer.registerTool`: `McpServer` validates arguments with the zod schema itself and returns plain text `Input validation error: …` (sdk 1.32.1 `dist/esm/server/mcp.js` `validateToolInput`), which loses the error object with `fix`. tools/list publishes `z.toJSONSchema(<core op input>, {io:'input'})` (+ `actor` for writes, minus `field_args`); tools/call passes arguments to the same core op as the CLI, so validation and errors are identical. `Record<OpName, ToolDef | 'cli-only'>` over `OPS` (`src/core/ops/registry.ts`) is the C3 typecheck. Tool annotations: `readOnlyHint` on reads, `destructiveHint` on delete.
+- Harness names follow the S2 task: `claude-code` (not `claude`), `codex`, `cursor`, `gemini`, `opencode`. `claude`, `claudecode`, `gemini-cli`, `codex-cli` are not aliases: they fail with `INVALID_VALUE` whose fix is the right name. AGENTS.md is shared by codex, cursor and opencode: one block; `--remove` for one of them removes it for all.
+- New core read op `taskSummary` (CLI-only, for `prime`): counts per status of active tasks plus the assignee's active tasks, lock-free (active.json only).
+- `prime [--hook]`: rules, counts per status, then the agent's active tasks (`--as`, else `LANEBOARD_AGENT`) or a hint to set the name; human output ≤ 4 000 chars for both forms (`... N more: laneboard list --assignee <a> --json`). No store → rules + `STORE_NOT_FOUND` line, exit 0. `--hook` never fails on store errors (one line instead); `--hook --json` → `USAGE`. `--json` returns `{rules, agent, store_problem, statuses, tasks}` without the cap.
+- `mcp [--dir]`: the store is resolved on every call (discovery as in the CLI); the process ends when stdin closes.
+- Setup writes with `fs.writeFileSync` in place (keeps symlinked dotfiles), not tmp+rename; files are harness config, not the store.
+- `SKILL.md` is generated from `agent-rules.md` (`npm run gen:skill`; `npm run check:skill` and a test fail on drift).
+- `--` text: `comment LB-1 "--- section"` → `UNKNOWN_OPTION` whose fix moves the text after `--` (only `--<letter>…` is treated as a mistyped option).

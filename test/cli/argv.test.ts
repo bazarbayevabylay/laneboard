@@ -70,6 +70,9 @@ describe('text that starts with "-" (M4)', () => {
     [['create', '-x', '--status', 'todo', '--as', 'a'], 'laneboard create --status todo --as a --json -- -x'],
     [['create', 't', '--status', 'todo', '--description', '- a\n- b', '--as', 'a'], "laneboard create t --status todo '--description=- a\n- b' --as a --json"],
     [['update', 'LB-1', '--title', '-x thing', '--as', 'a'], "laneboard update LB-1 '--title=-x thing' --as a --json"],
+    [['comment', 'LB-1', '--- section', '--as', 'a'], "laneboard comment LB-1 --as a --json -- '--- section'"],
+    [['comment', 'LB-1', '-- note for b', '--as', 'a'], "laneboard comment LB-1 --as a --json -- '-- note for b'"],
+    [['create', '--- t', '--status', 'todo', '--as', 'a'], "laneboard create --status todo --as a --json -- '--- t'"],
   ])('%j: the fix is the working command', async (argv, fix) => {
     const { run } = await seeded();
     const err = await errorOf(run, argv);
@@ -83,6 +86,13 @@ describe('text that starts with "-" (M4)', () => {
     const { run } = await seeded();
     const err = await errorOf(run, ['update', 'LB-1', '--status', '--as', 'a']);
     expect(err).toMatchObject({ code: 'USAGE', message: '--status needs a value', fix: 'laneboard update LB-1 --status <value> --as a --json' });
+  });
+
+  it('a double-dash typo of an option is still treated as an option', async () => {
+    const { run } = await seeded();
+    const err = await errorOf(run, ['create', 'x', '--stauts', 'todo', '--as', 'a']);
+    expect(err.code).toBe('UNKNOWN_OPTION');
+    expect(err.fix).toBe('laneboard create x --status todo --as a --json');
   });
 
   it('a single-dash typo of an option is still treated as an option', async () => {
