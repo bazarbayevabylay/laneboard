@@ -24,7 +24,7 @@ export const EDIT_HOOK_COMMAND = 'command -v laneboard >/dev/null 2>&1 && lanebo
 export const EDIT_HOOK_MATCHER = 'Edit|Write';
 
 // A path as one shell word (single-quoted when it holds anything but safe characters).
-function shellWord(value: string): string {
+export function shellWord(value: string): string {
   return /^[A-Za-z0-9_\-.,:/=@+%]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 

@@ -1,22 +1,32 @@
 // Claude Code: .mcp.json, CLAUDE.md block, in .claude/settings.json the SessionStart hook and the PostToolUse edit reminder, and the
 // store pin plus the default agent name as `env` (LANEBOARD_DIR, LANEBOARD_DEFAULT_AGENT): code.claude.com/docs/en/mcp, /hooks,
 // /memory, /settings (`env` is set "for every session and its subprocesses").
-// The env goes into .claude/settings.local.json (kept out of git, so no machine path is committed) when Claude Code reads that file
-// from this folder: the folder is the root of its own git repository, or there is no repository (or it is the home directory).
-// In a folder inside another repository Claude Code reads the local file at the repository root, which would pin the parent's store,
-// so there the env stays in .claude/settings.json (code.claude.com/docs/en/settings, "Where Claude Code keeps the local file").
+// The env goes into .claude/settings.local.json (no machine path is committed) when Claude Code reads that file from this folder:
+// the folder is the root of its own git repository, or there is no repository (or it is the home directory). In a folder inside
+// another repository Claude Code reads the local file at the repository root, and that file wins over the folder's own settings
+// (code.claude.com/docs/en/settings, "Where Claude Code keeps the local file", "Settings precedence"): there the env stays in
+// .claude/settings.json, and a repository root that holds other boards keeps its env in settings.json too, so its pin never reaches them.
+// A local file setup writes is kept out of git by a marked block in the repository's .git/info/exclude (Claude Code itself only
+// excludes the file when it writes it first).
 import fs from 'node:fs';
 import path from 'node:path';
-import { defaultAgentBase, LaneboardError } from '../../core/index.ts';
+import { defaultAgentBase, isLiveBoard, LaneboardError, readRegistry } from '../../core/index.ts';
+import { readText } from '../files.ts';
 import type { TextEdit } from '../files.ts';
 import { jsonEdit, jsonEdits, jsonValueAt } from '../json-key.ts';
 import type { JsonOwned } from '../json-key.ts';
 import { blockEdit, MD_MARKERS } from '../md-block.ts';
-import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, MCP_ARGS, MCP_COMMAND, PRIME_HOOK_COMMAND } from './common.ts';
+import type { Markers } from '../md-block.ts';
+import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, MCP_ARGS, MCP_COMMAND, PRIME_HOOK_COMMAND, shellWord } from './common.ts';
 import type { Harness, HarnessContext } from './common.ts';
 
 const SETTINGS = '.claude/settings.json';
 const LOCAL_SETTINGS = '.claude/settings.local.json';
+const GIT_EXCLUDE = '.git/info/exclude';
+// gitignore syntax: `#` starts a comment, so the markers are comments.
+const EXCLUDE_MARKERS: Markers = { start: '# laneboard:start', end: '# laneboard:end' };
+// The same pattern Claude Code adds to the global excludes for this file.
+const EXCLUDE_BODY = '# .claude/settings.local.json holds this machine\'s store path and your name (laneboard setup claude-code)\n**/.claude/settings.local.json';
 const ENV_DIR = ['env', 'LANEBOARD_DIR'];
 const ENV_AGENT = ['env', 'LANEBOARD_DEFAULT_AGENT'];
 
@@ -65,6 +75,55 @@ export function localSettingsHere(c: HarnessContext): boolean {
   return root === c.cwd && fs.statSync(path.join(root, '.git')).isDirectory();
 }
 
+// Another live board of the machine registry inside this folder (a nested project): every session in it would get our pin
+// from a local file at a repository root, so the env must not go there.
+function nestedBoard(c: HarnessContext): string | undefined {
+  let entries: Array<{ path: string }>;
+  try {
+    entries = readRegistry(c.home);
+  } catch {
+    // A broken registry is reported when setup registers the board; here it only means "no nested board known".
+    return undefined;
+  }
+  return entries.map((e) => e.path).find((p) => p !== c.storeDir && !path.relative(c.cwd, p).startsWith('..') && isLiveBoard(p));
+}
+
+// Where setup writes the env: the local file when Claude Code reads it from this folder and, at a repository root, no other board
+// lives inside the repository; else .claude/settings.json.
+export function envInLocalFile(c: HarnessContext): boolean {
+  if (!localSettingsHere(c)) return false;
+  // Outside a repository, or with the home directory as its root, Claude Code reads the local file of the session folder only.
+  const root = gitRoot(c.cwd);
+  return root !== c.cwd || root === c.home || nestedBoard(c) === undefined;
+}
+
+// The repository's exclude file when the local file we write lies in a repository with a `.git` directory, else undefined.
+function excludeFile(c: HarnessContext): string | undefined {
+  const root = gitRoot(c.cwd);
+  if (root === undefined || !fs.statSync(path.join(root, '.git')).isDirectory()) return undefined;
+  return path.join(root, GIT_EXCLUDE);
+}
+
+// SETUP_CONFLICT when the repository root's local file pins another store: Claude Code applies it to every session in the
+// repository above this folder's .claude/settings.json, so a pin written here would never take effect.
+function checkRootPin(c: HarnessContext): void {
+  const root = gitRoot(c.cwd);
+  if (root === undefined || root === c.cwd || root === c.home) return;
+  const file = path.join(root, LOCAL_SETTINGS);
+  const dir = envString(readText(file), ENV_DIR);
+  if (dir === undefined || path.resolve(c.cwd, dir) === c.storeDir) return;
+  const init = isLiveBoard(c.storeDir) ? '' : 'laneboard init --name <name> --description "<whose project, what work>" && ';
+  throw new LaneboardError(
+    'SETUP_CONFLICT',
+    `${file} sets env.LANEBOARD_DIR to ${dir}; Claude Code reads that file in every folder of the repository and it wins over ${SETTINGS} here, so sessions in this folder would use ${dir}, not ${c.storeDir}; nothing was written`,
+    {
+      details: { file, value: dir },
+      // Setup at the root moves its env into its settings.json once this folder's board is in the registry.
+      fix: `${init}cd ${shellWord(root)} && laneboard setup claude-code && cd ${shellWord(c.cwd)} && laneboard setup claude-code`,
+    },
+  );
+}
+
 // A string value at an env key of a settings text.
 function envString(text: string | null, keys: string[]): string | undefined {
   const value = jsonValueAt(text, keys);
@@ -99,6 +158,7 @@ function settingsEdit(file: string, c: HarnessContext, parts: { hooks: boolean; 
   return {
     add(text) {
       if (!parts.env) checkPin(file, text, c);
+      if (parts.env && parts.hooks) checkRootPin(c);
       return jsonEdits(file, [...(parts.hooks ? HOOK_PARTS : []), ...(parts.env ? envParts(file, text, c) : [])]).add(text);
     },
     strip: (text) => any.strip(text),
@@ -136,11 +196,23 @@ export const claudeCode: Harness = {
     {
       path: 'CLAUDE.md',
       scope: 'project',
-      edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, localSettingsHere(c) ? 'settings-local-env' : 'settings-env')),
+      edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, envInLocalFile(c) ? 'settings-local-env' : 'settings-env')),
     },
-    // Hooks always; the env too when the local file is not read from this folder.
-    { path: SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: true, env: !localSettingsHere(c) }) },
-    { path: LOCAL_SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: false, env: true }), applies: localSettingsHere },
+    // Hooks always; the env too when it does not go to the local file.
+    { path: SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: true, env: !envInLocalFile(c) }) },
+    { path: LOCAL_SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: false, env: true }), applies: envInLocalFile },
+    // The local file stays out of git (it holds a machine path and the user's name).
+    {
+      path: GIT_EXCLUDE,
+      scope: 'project',
+      edit: (f) => blockEdit(f, EXCLUDE_MARKERS, EXCLUDE_BODY),
+      // At the repository root it is ./.git/info/exclude; with the home directory as the root, the one there.
+      moved: (c) => {
+        const file = excludeFile(c);
+        return file === path.join(c.cwd, GIT_EXCLUDE) ? undefined : file;
+      },
+      applies: (c) => envInLocalFile(c) && excludeFile(c) !== undefined,
+    },
   ],
   notes: ['start Claude Code in this directory and approve the project MCP server "laneboard" when asked'],
   warnings(c) {

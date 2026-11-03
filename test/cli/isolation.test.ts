@@ -85,8 +85,8 @@ describe('nested agent folders', () => {
     const store = path.join(parent, '.laneboard');
     const warning =
       `using store ${store} (prefix PARENT) found in a parent directory, but ${third} looks like a separate project (it has CLAUDE.md); ` +
-      'unless this folder is part of that project, find its own board with laneboard boards --json (pin it: export LANEBOARD_DIR=<its path>), ' +
-      'or create one: laneboard init --name <name> --description "<whose project, what work>"';
+      'unless this folder is part of that project, find its own board with laneboard boards --json and pass --dir <its path> on every command, ' +
+      'or create one in this folder: laneboard init --name <name> --description "<whose project, what work>", then laneboard prime';
     const json = JSON.parse((await cli(['create', 'stray', '--status', 'todo', '--as', 'dev', '--json'], { cwd: third })).stdout);
     expect(json).toMatchObject({ ok: true, store, prefix: 'PARENT', data: { id: 'PARENT-1' } });
     expect(json.warnings).toEqual([warning]);
@@ -111,15 +111,30 @@ describe('nested agent folders', () => {
     expect((await cli(['list'], { cwd: deep })).stderr).toBe('');
   });
 
-  it('a pinned store (LANEBOARD_DIR, as setup writes it, or --dir) is explicit: no warning', async () => {
+  it('--dir is explicit for one command: no warning', async () => {
     const { parent, third } = await nested();
     const store = path.join(parent, '.laneboard');
-    for (const run of [
-      () => cli(['list', '--json'], { cwd: third, env: { LANEBOARD_DIR: store } }),
-      () => cli(['list', '--json', '--dir', store], { cwd: third }),
-    ]) {
-      expect(JSON.parse((await run()).stdout)).toMatchObject({ ok: true, store, prefix: 'PARENT', warnings: [] });
-    }
+    expect(JSON.parse((await cli(['list', '--json', '--dir', store], { cwd: third })).stdout)).toMatchObject({ ok: true, store, prefix: 'PARENT', warnings: [] });
+  });
+
+  it('LANEBOARD_DIR set for a parent folder (the root local settings file reaches every folder of a repository) warns in a separate project folder', async () => {
+    const { parent, child, third, deep } = await nested();
+    const store = path.join(parent, '.laneboard');
+    const env = { LANEBOARD_DIR: store };
+    // A folder with its own store: the warning names it and the --dir to use.
+    const own = JSON.parse((await cli(['list', '--json'], { cwd: child, env })).stdout);
+    expect(own).toMatchObject({ ok: true, store, prefix: 'PARENT' });
+    expect(own.warnings).toEqual([
+      `using store ${store} (prefix PARENT) from LANEBOARD_DIR (set for a parent folder), but ${child} looks like a separate project ` +
+        `(it has its own store ${path.join(child, '.laneboard')}); unless this folder is part of that project, pass --dir ${path.join(child, '.laneboard')} on every command`,
+    ]);
+    // A separate project folder without a store: the same advice as for a store found by walking up.
+    expect(JSON.parse((await cli(['list', '--json'], { cwd: third, env })).stdout).warnings[0]).toContain('from LANEBOARD_DIR (set for a parent folder), but');
+    // The pinned project itself and its plain subfolders stay silent, and so does a pin to a store outside cwd's ancestors.
+    for (const cwd of [parent, deep]) expect(JSON.parse((await cli(['list', '--json'], { cwd, env })).stdout).warnings).toEqual([]);
+    expect(JSON.parse((await cli(['list', '--json'], { cwd: third, env: { LANEBOARD_DIR: path.join(child, '.laneboard') } })).stdout).warnings).toEqual([]);
+    const mcp = await callTool('task_list', {}, { cwd: child, env });
+    expect(JSON.parse(mcp.content[1]?.text ?? '{}').warnings).toEqual(own.warnings);
   });
 
   it('error envelopes name the store and prefix too', async () => {

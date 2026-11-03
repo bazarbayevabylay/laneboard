@@ -26,6 +26,21 @@ describe('default agent name', () => {
     expect(resolveActor(undefined, {})).toEqual({});
   });
 
+  it('a name equal to this session\'s default name (copied from prime into --as, or set as LANEBOARD_AGENT) is still "default" (live test S2c)', async () => {
+    const own = 'claude-code@Test-Person:1a2b3c4d';
+    expect(resolveActor(own, session(A))).toEqual({ actor: own, actorSource: 'default' });
+    expect(resolveActor(undefined, { ...session(A), LANEBOARD_AGENT: own })).toEqual({ actor: own, actorSource: 'default' });
+    // Another session's default name, or the base without the session part, is a name of its own.
+    expect(resolveActor(own, session(B))).toEqual({ actor: own, actorSource: 'explicit' });
+    expect(resolveActor('claude-code@Test-Person', session(A))).toEqual({ actor: 'claude-code@Test-Person', actorSource: 'explicit' });
+    const s = await newStore();
+    expect((await cli(['create', 'copied name', '--status', 'todo', '--assignee', own, '--as', own, '--json'], { cwd: s.root, env: session(A) })).code).toBe(0);
+    expect(readStore(s.dir, 'active').tasks[0]?.events).toMatchObject([{ actor: own, actor_source: 'default' }]);
+    const mcp = await callTool('task_comment', { id: 'LB-1', text: 'step', actor: own }, { cwd: s.root, env: session(A) });
+    expect(mcp.isError).toBeFalsy();
+    expect(readStore(s.dir, 'active').tasks[0]?.events).toMatchObject([{ actor_source: 'default' }, { actor: own, actor_source: 'default', type: 'commented' }]);
+  });
+
   it('inside Claude Code without setup (plugin only) the base is claude-code@<user>; without a session id the base alone', () => {
     expect(defaultAgentName({ CLAUDE_CODE_SESSION_ID: B, USER: 'tester' })).toBe('claude-code@tester:9f8e7d6c');
     expect(defaultAgentName({ LANEBOARD_DEFAULT_AGENT: 'codex@tester' })).toBe('codex@tester');

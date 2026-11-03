@@ -50,7 +50,7 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   STORE_NOT_FOUND: {
     exit: 6,
     http: 500,
-    fix: 'find this project\'s board: laneboard boards --json (then export LANEBOARD_DIR=<its path>); none for this project: laneboard init --name <name> --description "<whose project, what work>"',
+    fix: 'find this project\'s board: laneboard boards --json, then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description "<whose project, what work>", then laneboard prime',
   },
   STORE_INVALID: { exit: 6, http: 500, fix: 'laneboard doctor; to roll back to the previous good version: laneboard doctor --restore-backup' },
   STORE_TOO_NEW: { exit: 6, http: 500, fix: 'upgrade laneboard: npm i -g laneboard@latest' },

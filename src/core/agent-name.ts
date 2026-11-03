@@ -87,9 +87,10 @@ export function defaultAgentName(env: Record<string, string | undefined>): strin
 }
 
 // Name for a write: explicit (--as / MCP actor, then LANEBOARD_AGENT), else the default name, else none (ACTOR_REQUIRED on write).
+// A given name equal to this session's default name is still the default (agents copy it from `prime` into --as).
 export function resolveActor(explicit: string | undefined, env: Record<string, string | undefined>): ResolvedActor {
   const given = explicit !== undefined && explicit !== '' ? explicit : env.LANEBOARD_AGENT || undefined;
-  if (given !== undefined) return { actor: given, actorSource: 'explicit' };
   const fallback = defaultAgentName(env);
+  if (given !== undefined) return { actor: given, actorSource: given === fallback ? 'default' : 'explicit' };
   return fallback === undefined ? {} : { actor: fallback, actorSource: 'default' };
 }

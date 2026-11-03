@@ -61,7 +61,7 @@ What `setup` writes:
 
 | Harness | MCP server entry | Instructions | Store pin |
 |---|---|---|---|
-| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (in a folder inside another git repository: `.claude/settings.json`), plus SessionStart and PostToolUse hooks in `.claude/settings.json` |
+| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json`, kept out of git by a block in `.git/info/exclude` (in a folder inside another git repository, or at a repository root that holds other boards: `.claude/settings.json`), plus SessionStart and PostToolUse hooks in `.claude/settings.json` |
 | codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<store>` in the instructions; the entry forwards `LANEBOARD_DIR` (`env_vars`) |
 | cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
@@ -163,7 +163,7 @@ laneboard update DEMO-2 --title "Release notes" --expected-rev 3 --json
 | 3 | not found | `TASK_NOT_FOUND`, `ATTACHMENT_NOT_FOUND` | `laneboard list --scope all --text <words>` |
 | 4 | conflict | `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` | `REV_CONFLICT`: re-apply your change on `error.details.task` with its rev; `ALREADY_CLAIMED`: do not take over, comment |
 | 5 | busy | `LOCK_TIMEOUT`, `LOCK_LOST` | retry the same command once |
-| 6 | store | `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS`, `STORE_READ_ONLY`, `SETUP_*` | `STORE_NOT_FOUND`: find your board with `laneboard boards --json`; none for this project: `init --name <name> --description "<…>"` (3.4) |
+| 6 | store | `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS`, `STORE_READ_ONLY`, `SETUP_*` | `STORE_NOT_FOUND`: find your board with `laneboard boards --json` and pass `--dir <its path>` on every command; none for this project: `init --name <name> --description "<…>"`, then `laneboard prime` (3.4) |
 
 ### 2.4 MCP tools
 
@@ -194,7 +194,7 @@ LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=bbbb2222 laneboar
 export LANEBOARD_AGENT=dev-1
 ```
 
-Subagents of one session share its default name: give each its own `--as`. Codex, Cursor, Gemini CLI and OpenCode get no default name
+Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`. Codex, Cursor, Gemini CLI and OpenCode get no default name
 (they expose no session id, and one shared name would merge parallel sessions again), so pass `--as` there.
 
 ## 3. Configure
@@ -237,7 +237,7 @@ The first match wins, and every `--json` reply names it in `store` and `prefix`.
 |---|---|
 | 1 | `--dir <path to .laneboard>` |
 | 2 | `LANEBOARD_DIR` |
-| 3 | `.laneboard/` in the current directory or a parent; a parent's store adds a warning when a project marker (`.git`, `.claude`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) lies between, because then it is another project's board |
+| 3 | `.laneboard/` in the current directory or a parent; a parent's store adds a warning when a project marker (`.git`, `.claude`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) lies between, because then it may be another project's board (a git worktree of the same repository, such as Claude Code's `.claude/worktrees/<name>`, is the same project); `~/.laneboard` is the machine's registry, never a store |
 
 ### 3.3 Several agents, several stores
 
@@ -252,7 +252,9 @@ laneboard comment DEMO-5 "I can take the CSV part" --as dev-1 --json
 ```
 
 Each project (or agent folder) gets its own store and setup; `--dir` pins a store that is not `./.laneboard`.
-Folders nested inside another project need their own `init`, or they would find the parent's store.
+Folders nested inside another project need their own `init`, or they would find the parent's store. A `LANEBOARD_DIR` set for the
+parent (Claude Code reads the repository root's `.claude/settings.local.json` in every folder of the repository) warns there too, and
+`setup claude-code` in the nested folder refuses such a root pin with the commands that move it to the root's `.claude/settings.json`.
 
 ```sh
 mkdir -p services/billing

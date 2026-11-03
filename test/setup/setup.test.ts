@@ -1,5 +1,6 @@
 // `laneboard setup <harness>` in a temp HOME + project: second run unchanged with identical bytes, --remove restores the original bytes,
 // unparseable files are never written, dry run writes nothing.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -180,7 +181,9 @@ describe('setup details', () => {
     const inSub = { run: (argv: string[], env: Record<string, string> = {}) => cli(argv, { cwd: sub, env: { HOME: s.home, ...env } }) };
     const plain = JSON.parse((await inSub.run(['setup', 'gemini', '--json'])).stdout);
     expect(plain.data.store).toBe(path.join(sub, '.laneboard'));
-    expect(plain.warnings).toContain(`no laneboard store at ${path.join(sub, '.laneboard')} yet: run laneboard init in ${sub}, or run setup again with --dir <the project's .laneboard>`);
+    expect(plain.warnings).toContain(
+      `no laneboard store at ${path.join(sub, '.laneboard')} yet: in ${sub} run laneboard init --name <name> --description "<whose project, what work>", then laneboard prime; or run setup again with --dir <the project's .laneboard>`,
+    );
     expect(fs.readFileSync(path.join(sub, 'GEMINI.md'), 'utf8')).toContain(`LANEBOARD_DIR=${path.join(sub, '.laneboard')} laneboard`);
     const parent = path.join(s.cwd, '.laneboard');
     const flagged = JSON.parse((await inSub.run(['setup', 'gemini', '--dir', parent, '--json'])).stdout);
@@ -637,7 +640,7 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect(r.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: 'laneboard setup claude-code --dir ../other/.laneboard' });
   });
 
-  it('settings.local.json at the root of a git repository; settings.json in a folder inside another repository (its local file is the root one)', async () => {
+  it('settings.local.json at the root of a git repository (kept out of git by .git/info/exclude); settings.json in a folder inside another repository', async () => {
     const root = tempDir();
     const home = tempDir();
     fs.mkdirSync(path.join(root, '.git'));
@@ -647,10 +650,78 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect((await run(root)).code).toBe(0);
     expect(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.local.json'), 'utf8')).env).toEqual({ LANEBOARD_DIR: path.join(root, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
     expect(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')).env).toBeUndefined();
+    expect(fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8')).toContain('\n**/.claude/settings.local.json\n# laneboard:end');
+    // No root pin in the way: a nested folder gets its env in its own settings.json.
+    fs.rmSync(path.join(root, '.claude', 'settings.local.json'));
     expect((await run(nested)).code).toBe(0);
     expect(fs.existsSync(path.join(nested, '.claude', 'settings.local.json'))).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env).toEqual({ LANEBOARD_DIR: path.join(nested, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
     expect(fs.readFileSync(path.join(nested, 'CLAUDE.md'), 'utf8')).toContain('(LANEBOARD_DIR is set for this project in .claude/settings.json)');
+  });
+
+  it("a nested project whose repository root's settings.local.json pins the root's store: SETUP_CONFLICT (that file wins in every folder); the fix moves the root's env to its settings.json", async () => {
+    const root = tempDir();
+    const home = tempDir();
+    fs.mkdirSync(path.join(root, '.git'));
+    const nested = path.join(root, 'agent-b');
+    fs.mkdirSync(nested);
+    const env = { HOME: home, USER: 'tester' };
+    expect((await cli(['init', '--description', 'orchestrator'], { cwd: root, env })).code).toBe(0);
+    expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
+    const rootLocal = path.join(root, '.claude', 'settings.local.json');
+    expect(JSON.parse(fs.readFileSync(rootLocal, 'utf8')).env.LANEBOARD_DIR).toBe(path.join(root, '.laneboard'));
+    // Without its own store yet: the fix creates it first.
+    const early = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
+    expect(early.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: rootLocal, value: path.join(root, '.laneboard') } });
+    expect(early.error.fix).toBe(`laneboard init --name <name> --description "<whose project, what work>" && cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code`);
+    expect(fs.existsSync(path.join(nested, '.claude'))).toBe(false);
+    expect((await cli(['init', '--description', 'agent b'], { cwd: nested, env })).code).toBe(0);
+    const refused = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
+    expect(refused.error.fix).toBe(`cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code`);
+    // Run as the fix says: the root sees agent-b's board in the registry, so its env leaves the local file for its settings.json.
+    const again = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout);
+    expect(again.ok).toBe(true);
+    expect(fs.existsSync(rootLocal)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')).env).toEqual({ LANEBOARD_DIR: path.join(root, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
+    expect(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8')).toContain('(LANEBOARD_DIR is set for this project in .claude/settings.json)');
+    expect(fs.existsSync(path.join(root, '.git', 'info', 'exclude'))).toBe(false);
+    expect((await cli(['setup', 'claude-code'], { cwd: nested, env })).code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(nested, '.laneboard'));
+    // A third run at the root keeps the layout (idempotent).
+    expect(JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout).data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+  });
+
+  it('git root = HOME: Claude Code reads the local file of the session folder, so the env goes there and the exclude goes to HOME/.git/info/exclude', async () => {
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, '.git'));
+    const proj = path.join(home, 'proj');
+    fs.mkdirSync(proj);
+    const r = await cli(['setup', 'claude-code', '--json'], { cwd: proj, env: { HOME: home, USER: 'tester' } });
+    expect(r.code, r.stdout).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.local.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(proj, '.laneboard'));
+    expect(JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8')).env).toBeUndefined();
+    expect(JSON.parse(r.stdout).data.files.map((f: { path: string }) => f.path)).toContain('~/.git/info/exclude');
+    expect(fs.readFileSync(path.join(home, '.git', 'info', 'exclude'), 'utf8')).toContain('**/.claude/settings.local.json');
+  });
+
+  it('git does not see the settings.local.json setup writes (real git, no global excludes); --remove gives .git/info/exclude back byte for byte', async () => {
+    const proj = tempDir();
+    const home = tempDir();
+    const gitEnv = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig'), GIT_CONFIG_NOSYSTEM: '1', XDG_CONFIG_HOME: path.join(home, '.config') };
+    fs.writeFileSync(gitEnv.GIT_CONFIG_GLOBAL, '');
+    execFileSync('git', ['init', '-q'], { cwd: proj, env: gitEnv });
+    const exclude = path.join(proj, '.git', 'info', 'exclude');
+    const original = fs.readFileSync(exclude, 'utf8');
+    const r = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: proj, env: { HOME: home, USER: 'tester' } })).stdout);
+    expect(r.data.files.find((f: { path: string }) => f.path === '.git/info/exclude')?.result).toBe('updated');
+    // The backup sits inside .git, so there is no "add it to .gitignore" advice for it.
+    expect(r.warnings.filter((w: string) => w.includes('exclude.laneboard.bak'))).toEqual(['wrote .git/info/exclude.laneboard.bak (your file before setup; setup --remove restores it)']);
+    const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: proj, env: gitEnv, encoding: 'utf8' });
+    expect(status).toContain('.claude/settings.json');
+    expect(status).not.toContain('settings.local.json');
+    expect((await cli(['setup', 'claude-code', '--remove'], { cwd: proj, env: { HOME: home } })).code).toBe(0);
+    expect(fs.readFileSync(exclude, 'utf8')).toBe(original);
+    expect(fs.existsSync(`${exclude}.laneboard.bak`)).toBe(false);
   });
 
   it('a default name the user already set is kept', async () => {

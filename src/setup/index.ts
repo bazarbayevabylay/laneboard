@@ -91,13 +91,30 @@ function otherUsers(harness: Harness, f: HarnessFile, c: HarnessContext): string
     .map((h) => h.name);
 }
 
+// Does this harness file hold our part now? An unreadable or unparseable file counts as no (install does not touch a file that does not apply).
+function ownsNow(f: HarnessFile, c: HarnessContext): boolean {
+  const { file, shown } = locate(f, c);
+  try {
+    const text = readText(file);
+    return text !== null && f.edit(shown, c).owns(text);
+  } catch {
+    // Cannot read or parse it: leave it alone, as before this file stopped applying.
+    return false;
+  }
+}
+
+// Inside a `.git` directory (the exclude file): never committed, so its backup needs no gitignore advice.
+function inGitDir(file: string): boolean {
+  return file.split(path.sep).includes('.git');
+}
+
 // Warnings about backups (written or left behind) and shared files kept for another harness.
 function planWarnings(plan: readonly PlannedFile[], users: ReadonlyMap<string, string[]>): string[] {
   const out: string[] = [];
   for (const p of plan) {
     const bak = `${p.shown}.laneboard.bak`;
     if (p.backup !== undefined) {
-      out.push(`wrote ${bak} (your file before setup; setup --remove restores it)${p.scope === 'project' ? '; do not commit it: add *.laneboard.bak to .gitignore' : ''}`);
+      out.push(`wrote ${bak} (your file before setup; setup --remove restores it)${p.scope === 'project' && !inGitDir(p.file) ? '; do not commit it: add *.laneboard.bak to .gitignore' : ''}`);
     }
     if (p.result === 'kept') {
       const names = users.get(p.file) ?? [];
@@ -117,10 +134,13 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir) };
   const roots = [cwd, home];
   const users = new Map<string, string[]>();
-  // A file that does not apply here (Claude Code's local settings in a folder inside another repository) is not written; --remove still checks it.
-  const files = input.remove ? harness.files : harness.files.filter((f) => f.applies?.(context) ?? true);
+  // A file that does not apply here (Claude Code's local settings in a folder inside another repository) is not written, and our part
+  // is taken out of it when an earlier setup put it there (the env moved to another file); --remove also takes it out of such a file.
+  const applies = (f: HarnessFile): boolean => f.applies?.(context) ?? true;
+  const files = harness.files.filter((f) => applies(f) || ownsNow(f, context));
   const plan = files.map((f) => {
     const { file, shown, moved } = locate(f, context);
+    if (!input.remove && !applies(f)) return planRemove(file, shown, f.scope, f.edit(shown, context));
     // A directory the harness was pointed to (CODEX_HOME) is the user's, never removed.
     if (moved) roots.push(path.dirname(file));
     if (input.remove) {
@@ -138,7 +158,9 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const warnings = [...planWarnings(plan, users), ...(input.remove ? [] : (harness.warnings?.(context) ?? []))];
   // The pin is written either way (init may follow), but a pin to nothing makes every laneboard command fail until then.
   if (!input.remove && !fs.existsSync(path.join(context.storeDir, 'config.json'))) {
-    warnings.push(`no laneboard store at ${context.storeDir} yet: run laneboard init in ${cwd}, or run setup again with --dir <the project's .laneboard>`);
+    warnings.push(
+      `no laneboard store at ${context.storeDir} yet: in ${cwd} run laneboard init --name <name> --description "<whose project, what work>", then laneboard prime; or run setup again with --dir <the project's .laneboard>`,
+    );
   }
   return {
     registered,

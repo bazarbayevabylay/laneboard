@@ -102,15 +102,46 @@ describe('prime', () => {
     const r = await cli(['prime', '--edit-hook'], { cwd: agentB, env: { LANEBOARD_AGENT: 'dev-b' } });
     expect(r.code).toBe(0);
     const text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string;
+    // A heuristic, so worded like the warning ("looks like", "unless"), not as a fact (review S2c).
     expect(text).toBe(
-      `laneboard: ${agentB} has no laneboard store of its own; the store found above it, ${s.dir} (prefix LB), belongs to another project (this folder has CLAUDE.md). ` +
-        'Tasks for this folder do not go there; `laneboard boards --json` lists the boards on this machine with their descriptions.',
+      `laneboard: the store in use, ${s.dir} (prefix LB), looks like another project's: ${agentB} has CLAUDE.md and no laneboard store of its own. ` +
+        'Unless this folder is part of that project, its tasks belong on its own board; `laneboard boards --json` lists the boards on this machine with their descriptions.',
     );
     expect(text).not.toMatch(/create|claim/);
     // A plain subfolder of the same project (no marker in between) still gets the normal reminder.
     const sub = path.join(s.root, 'src');
     fs.mkdirSync(sub);
     expect((await cli(['prime', '--edit-hook'], { cwd: sub, env: { LANEBOARD_AGENT: 'dev-b' } })).stdout).toContain('no task is in progress for dev-b');
+  });
+
+  it('--edit-hook in a Claude Code worktree of the project (.claude/worktrees/<name>, .git file and CLAUDE.md): the normal reminder, no foreign-store note', async () => {
+    const s = await newStore();
+    fs.mkdirSync(path.join(s.root, '.git', 'worktrees', 'feat'), { recursive: true });
+    const tree = path.join(s.root, '.claude', 'worktrees', 'feat');
+    fs.mkdirSync(path.join(tree, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), 'gitdir: ../../../.git/worktrees/feat\n');
+    fs.writeFileSync(path.join(tree, 'CLAUDE.md'), 'Project rules (checked out).\n');
+    for (const cwd of [tree, path.join(tree, 'src')]) {
+      const r = await cli(['prime', '--edit-hook'], { cwd, env: { LANEBOARD_AGENT: 'dev-w' } });
+      expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toContain('no task is in progress for dev-w');
+      expect(JSON.parse((await cli(['list', '--json'], { cwd })).stdout).warnings).toEqual([]);
+    }
+    // The same layout whose .git file points to another repository is a separate project.
+    const other = tempDir();
+    fs.mkdirSync(path.join(other, '.git', 'worktrees', 'feat'), { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${path.join(other, '.git', 'worktrees', 'feat')}\n`);
+    expect(JSON.parse((await cli(['prime', '--edit-hook'], { cwd: tree, env: { LANEBOARD_AGENT: 'dev-w' } })).stdout).hookSpecificOutput.additionalContext).toContain('looks like another project');
+  });
+
+  it('--edit-hook with LANEBOARD_DIR of a parent project in a folder with its own store: names that store, never asks for a task in the pinned one', async () => {
+    const s = await newStore();
+    const agentB = path.join(s.root, 'agent-b');
+    fs.mkdirSync(agentB);
+    expect((await cli(['init', '--description', 'agent b'], { cwd: agentB })).code).toBe(0);
+    const r = await cli(['prime', '--edit-hook'], { cwd: agentB, env: { LANEBOARD_AGENT: 'dev-b', LANEBOARD_DIR: s.dir } });
+    const text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string;
+    expect(text).toContain(`looks like another project's: ${agentB} has its own store ${path.join(agentB, '.laneboard')}.`);
+    expect(text).not.toMatch(/create|claim/);
   });
 
   it('--edit-hook cannot be combined with --json or --hook', async () => {
@@ -136,15 +167,19 @@ describe('prime', () => {
     const cwd = tempDir();
     const hook = await cli(['prime', '--hook'], { cwd });
     expect(hook.code).toBe(0);
+    // The plugin hook runs in every project of the user: one neutral line, no task rule (owner's decision, S2d).
     expect(hook.stdout).toBe(
-      `laneboard: no .laneboard directory in ${cwd} or any parent (STORE_NOT_FOUND); find this project's board: laneboard boards --json (pick it by description and path, then export LANEBOARD_DIR=<its path>); ` +
-        'none for this project: laneboard init --name <name> --description "<whose project, what work>" in its root\n',
+      `laneboard: no board found (no .laneboard directory in ${cwd} or any parent). If the user wants to track work here with laneboard: ` +
+        'laneboard init --name <name> --description "<whose project, what work>" in the project root, then laneboard prime.\n',
     );
+    expect(hook.stdout).not.toMatch(/MANDATORY|create|claim|task/i);
     const plain = await cli(['prime'], { cwd });
     expect(plain.code).toBe(0);
     expect(plain.stdout).toContain(agentRules());
     expect(plain.stdout).toContain('laneboard store: STORE_NOT_FOUND');
-    expect(plain.stdout).toContain('find this project\'s board: laneboard boards --json');
+    expect(plain.stdout).toContain('find this project\'s board: laneboard boards --json (pick it by description and path), then pass --dir <its path> on every command');
+    expect(plain.stdout).toContain('"<whose project, what work>", then laneboard prime');
+    expect(plain.stdout).not.toContain('export LANEBOARD_DIR');
     expect(plain.stdout).toContain('laneboard init --name <name> --description "<whose project, what work>"');
     // A bare init (no name, no description) is never suggested.
     expect(plain.stdout).not.toMatch(/laneboard init(?! --(name|dir))/);

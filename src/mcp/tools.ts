@@ -201,7 +201,7 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     const args = rawArgs ?? {};
     if (typeof args !== 'object' || Array.isArray(args)) throw new LaneboardError('USAGE', 'arguments must be an object');
     const { actor: who, input } = splitArgs(entry.def, args as Record<string, unknown>);
-    store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd });
+    store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd, home: env.env.HOME || undefined });
     // Same order as the CLI: the actor parameter, LANEBOARD_AGENT, then the session's default name (recorded as such on events).
     const named = entry.def.write ? resolveActor(who, env.env) : {};
     const ctx: OpContext = { store, ...named, lockWaitMs: env.lockWaitMs };
@@ -209,7 +209,7 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     const result = await op(ctx, input);
     // Same notice as the CLI: a store found in a parent directory may belong to another project.
     const prefix = storePrefix(store.dir);
-    const parent = parentStoreWarning(store, env.cwd, prefix);
+    const parent = parentStoreWarning(store, env.cwd, prefix, env.env.HOME || undefined);
     const warnings = parent ? [parent, ...result.warnings] : result.warnings;
     // The CLI envelope's store, prefix and warnings, next to the data (structuredContent stays the CLI `data`).
     const content = [

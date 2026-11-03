@@ -28,7 +28,13 @@ describe('agent rules (src/core/agent-rules.md)', () => {
   it('at most 15 lines; name what the usability test showed agents had to guess (create, rev after writes, details.task, final status, commented)', () => {
     const rules = agentRules();
     expect(rules.split('\n').length).toBeLessThanOrEqual(15);
-    expect(rules).toContain('`laneboard create "<title>" --status <status> --assignee <you> --as <you> --json`');
+    expect(rules).toContain('`laneboard create "<title>" --status <status> --assignee <your name> --json`');
+    // --as only with a name of the agent's own (rules 3 and 4 agree; S2d): no template forces a made-up --as.
+    expect(rules).toContain('add `--as <name>` only for a name of your own');
+    expect(rules).not.toContain('--as <you>');
+    // A board found with boards --json is used with --dir on every command: an export does not outlive one Bash call (S2d).
+    expect(rules).toContain('then pass `--dir <path>` on every command');
+    expect(rules).not.toContain('export LANEBOARD_DIR');
     expect(rules).toContain('rev from your last read or write');
     expect(rules).toContain('`--description` replaces the whole text');
     expect(rules).toContain('`error.details.task`');
@@ -39,7 +45,7 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     expect(rules).toContain('`laneboard init --name <name> --description "<whose project, what work>"`');
     expect(rules).not.toContain('unless the user asks');
     // An agent without a name is told that its writes use the session's default name.
-    expect(rules).toContain("without them writes use the session's default name");
+    expect(rules).toContain("without `--as` and LANEBOARD_AGENT writes use the session's default name");
   });
 
   it('rule 1 makes task tracking mandatory for any work, also when nobody asks for tasks and the board is empty (usability test 03.11)', () => {

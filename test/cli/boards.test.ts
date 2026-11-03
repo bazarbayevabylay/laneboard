@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { age } from '../../src/cli/board-view.ts';
 import { runCli } from '../../src/cli/run.ts';
 import { createTask, resolveBoard, transact } from '../../src/core/index.ts';
+import { callTool } from '../../src/mcp/tools.ts';
 import { cleanupTemp, cli, readStore, rejectsWith, tempDir } from '../helpers.ts';
 import type { CliRun } from '../helpers.ts';
 
@@ -126,6 +127,32 @@ describe('board registry', () => {
     fs.mkdirSync(underHome);
     const r = JSON.parse((await m.run(underHome, ['list', '--json'])).stdout);
     expect(r.error.code).toBe('STORE_NOT_FOUND');
+  });
+
+  it('an empty ~/.laneboard (a first init that failed inside the registry lock) is still the registry, not a broken store', async () => {
+    const m = machine();
+    const old = m.project('old');
+    // A store made without HOME, then a first registered init into it: STORE_EXISTS inside the registry lock leaves ~/.laneboard empty.
+    expect((await cli(['init', '--description', 'old'], { cwd: old, env: { HOME: '' } })).code).toBe(0);
+    expect(JSON.parse((await m.run(old, ['init', '--description', 'again', '--json'])).stdout).error.code).toBe('STORE_EXISTS');
+    expect(fs.readdirSync(path.join(m.home, '.laneboard'))).toEqual([]);
+    const fresh = path.join(m.home, 'code', 'fresh');
+    fs.mkdirSync(fresh, { recursive: true });
+    const r = JSON.parse((await m.run(fresh, ['list', '--json'])).stdout);
+    expect(r).toMatchObject({ ok: false, store: null, error: { code: 'STORE_NOT_FOUND' } });
+    expect((await m.run(fresh, ['prime', '--hook'])).stdout).toMatch(/^laneboard: no board found \(no \.laneboard directory in /);
+    const mcp = await callTool('task_list', {}, { cwd: fresh, env: { HOME: m.home } });
+    expect(JSON.parse(mcp.content[0]?.text ?? '{}').code).toBe('STORE_NOT_FOUND');
+  });
+
+  it('init in HOME is refused at once: ~/.laneboard is the registry (it would wait on its own lock); nothing is created', async () => {
+    const m = machine();
+    const started = Date.now();
+    const r = JSON.parse((await m.run(m.home, ['init', '--description', 'home', '--json'])).stdout);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(r.error).toMatchObject({ code: 'STORE_EXISTS', message: `${path.join(m.home, '.laneboard')} is this machine's board registry (laneboard boards), so no board can be created there` });
+    expect(r.error.fix).toBe(`create the board in the project's own folder: mkdir -p ${path.join(m.home, '<project>')} && cd ${path.join(m.home, '<project>')} && laneboard init --name <name> --description "<whose project, what work>"`);
+    expect(fs.existsSync(path.join(m.home, '.laneboard'))).toBe(false);
   });
 });
 

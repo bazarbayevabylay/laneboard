@@ -12,7 +12,8 @@ export const setup: CommandDef = {
   summary:
     'Register the laneboard MCP server and instruction block for a harness (run in the project root); --remove rolls it back. ' +
     'The project is pinned to its store: --dir, else LANEBOARD_DIR, else ./.laneboard (Claude Code: env LANEBOARD_DIR and the default agent name in .claude/settings.local.json, ' +
-    'or .claude/settings.json in a folder inside another git repository; others: in the instructions). An existing board is added to the machine registry.',
+    'kept out of git by .git/info/exclude; or .claude/settings.json in a folder inside another git repository and at a repository root that holds other boards; others: in the instructions). ' +
+    'An existing board is added to the machine registry.',
   options: { remove: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },
   args: { min: 1, max: 1 },
   async run(c) {

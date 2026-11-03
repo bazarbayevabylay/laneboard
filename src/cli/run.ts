@@ -30,6 +30,7 @@ export function version(): string {
 // Top-level help text.
 export function globalHelp(): string {
   return [
+    'Agents: start with `laneboard prime` - it prints the rules, your board and the command that creates your task.',
     'laneboard <command> [options] - task board & CLI for AI coding agents',
     '',
     'Commands:',
@@ -37,7 +38,7 @@ export function globalHelp(): string {
     '',
     'Global options (every command):',
     '  --json         print one JSON document on stdout, also on errors',
-    '  --dir <path>   store directory (.laneboard); else LANEBOARD_DIR; else search up from cwd',
+    '  --dir <path>   store directory (.laneboard); else LANEBOARD_DIR; else search up from cwd (pass it on every command to use another board)',
     '  --as <actor>   who is writing; else LANEBOARD_AGENT; else the session default name (LANEBOARD_DEFAULT_AGENT, Claude Code session)',
     `  --board <b>    open another board read-only by prefix, name or path (${READ_COMMANDS().join(', ')})`,
     '  --help, -h     usage of a command: laneboard <command> --help',
@@ -124,6 +125,7 @@ export async function runCli(io: CliIo): Promise<number> {
       dir: typeof values.dir === 'string' ? values.dir : undefined,
       envDir: io.env.LANEBOARD_DIR,
       cwd: io.cwd,
+      home: io.env.HOME || undefined,
     };
     const board = typeof values.board === 'string' ? values.board : undefined;
     // Another board is opened only to read it: a write never reaches it (transact refuses read-only stores too).
@@ -151,8 +153,8 @@ export async function runCli(io: CliIo): Promise<number> {
       },
     });
     if (result.silent) return 0;
-    // A store found in a parent directory may be another project's: every result says so (prime prints it in its text).
-    const parent = out.ref ? parentStoreWarning(out.ref, io.cwd, storePrefix(out.ref.dir)) : undefined;
+    // A store found in a parent directory (or pinned for one) may be another project's: every result says so (prime prints it in its text).
+    const parent = out.ref ? parentStoreWarning(out.ref, io.cwd, storePrefix(out.ref.dir), io.env.HOME || undefined) : undefined;
     const warnings = parent && (out.json || !result.storeWarningInText) ? [parent, ...result.warnings] : result.warnings;
     return print(io, out, result.data, warnings, result.human);
   } catch (raw) {

@@ -51,10 +51,10 @@ export function readRegistry(home: string): BoardEntry[] {
   try {
     json = JSON.parse(raw);
   } catch (err) {
-    throw new LaneboardError('STORE_INVALID', `${file} is not valid JSON: ${(err as Error).message}`, { fix: `fix the JSON in ${file}, or delete it (init and setup add each board again)` });
+    throw new LaneboardError('STORE_INVALID', `${file} is not valid JSON: ${(err as Error).message}`, { fix: `fix the JSON in ${file}, or delete it (laneboard setup <harness> or laneboard config --name <name> in each project adds its board again)` });
   }
   const parsed = Registry.safeParse(json);
-  if (!parsed.success) throw new LaneboardError('STORE_INVALID', `${file} is not a laneboard board registry`, { fix: `fix ${file}, or delete it (init and setup add each board again)` });
+  if (!parsed.success) throw new LaneboardError('STORE_INVALID', `${file} is not a laneboard board registry`, { fix: `fix ${file}, or delete it (laneboard setup <harness> or laneboard config --name <name> in each project adds its board again)` });
   return parsed.data.boards;
 }
 

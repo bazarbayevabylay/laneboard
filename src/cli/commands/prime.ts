@@ -1,15 +1,22 @@
 // laneboard prime
 import path from 'node:path';
-import { agentRules, LaneboardError, parentStoreWarning, resolveActor, separateProjectMarker, taskSummary, toLaneboardError } from '../../core/index.ts';
-import type { ActorSource, OpContext, SummaryResult } from '../../core/index.ts';
+import { agentRules, foreignStore, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
+import type { ActorSource, ForeignStore, OpContext, SummaryResult } from '../../core/index.ts';
 import { primeText } from '../format.ts';
 import type { PrimeData } from '../format.ts';
 import { flag } from './args.ts';
 import type { CommandDef, CommandOutput } from './types.ts';
 
-// What an agent does when no store is found: find this project's board, else create it (agent rule 12).
+// What an agent does when no store is found: find this project's board, else create it (agent rule 12). `--dir` on every command,
+// not `export`: each Bash call of an agent is a new shell, and the MCP server never sees an export.
 const NO_STORE_FIX =
-  'find this project\'s board: laneboard boards --json (pick it by description and path, then export LANEBOARD_DIR=<its path>); none for this project: laneboard init --name <name> --description "<whose project, what work>" in its root';
+  'find this project\'s board: laneboard boards --json (pick it by description and path), then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description "<whose project, what work>", then laneboard prime';
+
+// SessionStart line where no board is found. The plugin hook runs in every project of the user, most of them without laneboard:
+// a neutral fact and how to start if the user wants it, never a task rule (owner's decision, S2d).
+function noBoardLine(message: string): string {
+  return `laneboard: no board found (${message}). If the user wants to track work here with laneboard: laneboard init --name <name> --description "<whose project, what work>" in the project root, then laneboard prime.`;
+}
 
 // Claude Code PostToolUse output: text added to Claude's context next to the tool result (code.claude.com/docs/en/hooks).
 // It states facts, not orders: imperative out-of-band text can trigger prompt-injection defenses (same page, "Add context for Claude").
@@ -26,24 +33,26 @@ function editReminder(summary: SummaryResult, store: string, agent: string | und
   );
 }
 
-// Note after an edit in a folder that looks like its own project while the store found above belongs to another one.
-function foreignStoreNote(store: string, prefix: string, cwd: string, marker: string): string {
+// Note after an edit in a folder that looks like its own project while the store in use may belong to another one (a heuristic,
+// so it is worded like the warning: "looks like", "unless").
+function foreignStoreNote(store: string, prefix: string, cwd: string, foreign: ForeignStore): string {
+  const why = foreign.ownStore ? `has its own store ${foreign.ownStore}` : `has ${foreign.marker} and no laneboard store of its own`;
   return hookContext(
-    `laneboard: ${path.resolve(cwd)} has no laneboard store of its own; the store found above it, ${store} (prefix ${prefix}), belongs to another project (this folder has ${marker}). ` +
-      'Tasks for this folder do not go there; `laneboard boards --json` lists the boards on this machine with their descriptions.',
+    `laneboard: the store in use, ${store} (prefix ${prefix}), looks like another project's: ${path.resolve(cwd)} ${why}. ` +
+      'Unless this folder is part of that project, its tasks belong on its own board; `laneboard boards --json` lists the boards on this machine with their descriptions.',
   );
 }
 
 // `prime --edit-hook`: a note, or nothing at all (a task is in progress, no store, any error); it never fails a tool call.
-async function editHook(op: () => OpContext, agent: string | undefined, cwd: string): Promise<CommandOutput> {
+async function editHook(op: () => OpContext, agent: string | undefined, cwd: string, home: string | undefined): Promise<CommandOutput> {
   const quiet: CommandOutput = { data: null, warnings: [], human: '', silent: true };
   try {
     const ctx = op();
     const r = await taskSummary(ctx, { assignee: agent });
     if (r.data.in_progress > 0) return quiet;
     // Never nudge towards another project's store: name the situation instead of asking for a task there.
-    const marker = ctx.store.found === 'parent' ? separateProjectMarker(ctx.store.dir, cwd) : undefined;
-    if (marker !== undefined) return { data: null, warnings: [], human: foreignStoreNote(ctx.store.dir, r.data.prefix, cwd, marker), storeWarningInText: true };
+    const foreign = foreignStore(ctx.store, cwd, home);
+    if (foreign !== undefined) return { data: null, warnings: [], human: foreignStoreNote(ctx.store.dir, r.data.prefix, cwd, foreign), storeWarningInText: true };
     return { data: null, warnings: [], human: editReminder(r.data, ctx.store.dir, agent), storeWarningInText: true };
   } catch {
     // A hook must not disturb the session: no store, a broken store or a bad name all mean "say nothing".
@@ -70,7 +79,7 @@ export const prime: CommandDef = {
     const agentSource: ActorSource | null = named.actorSource ?? null;
     // A default name says little in the hook: an agent that passed its own --as owns its task under that name, so the reminder
     // looks at anybody's work in progress then (a session without a task is not reminded while another one has one).
-    if (edit) return editHook(c.op, agentSource === 'default' ? undefined : agent, c.io.cwd);
+    if (edit) return editHook(c.op, agentSource === 'default' ? undefined : agent, c.io.cwd, c.io.env.HOME || undefined);
     const rules = agentRules();
     let summary: SummaryResult | undefined;
     let ctx: OpContext | undefined;
@@ -86,7 +95,7 @@ export const prime: CommandDef = {
       const err = toLaneboardError(raw);
       // No store yet is a normal state for prime; in a hook every error becomes a line, so a session never starts with a failed hook.
       if (err.code !== 'STORE_NOT_FOUND' && !hook) throw err;
-      if (err.code === 'STORE_NOT_FOUND') noStore = `laneboard: ${err.message} (STORE_NOT_FOUND); ${NO_STORE_FIX}`;
+      if (err.code === 'STORE_NOT_FOUND') noStore = noBoardLine(err.message);
       problem = `${err.code}: ${err.message}; fix: ${noStore ? NO_STORE_FIX : err.fix}`;
     }
     const data: PrimeData = {
@@ -97,7 +106,7 @@ export const prime: CommandDef = {
       description: summary?.description ?? null,
       store: summary && ctx ? ctx.store.dir : null,
       prefix: summary?.prefix ?? null,
-      store_warning: (summary && ctx && parentStoreWarning(ctx.store, c.io.cwd, summary.prefix)) || null,
+      store_warning: (summary && ctx && parentStoreWarning(ctx.store, c.io.cwd, summary.prefix, c.io.env.HOME || undefined)) || null,
       store_problem: problem ?? null,
       statuses: summary?.statuses ?? [],
       first_status: summary?.first_status ?? null,
@@ -106,7 +115,7 @@ export const prime: CommandDef = {
       tasks: summary?.assigned ?? [],
       in_progress: summary?.in_progress ?? 0,
     };
-    // The plugin hook runs in every session of every project: where laneboard is not used it prints one line, not the rules.
+    // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     const human = hook && noStore ? noStore : primeText(data);
     return { data, warnings, human, storeWarningInText: true };
   },

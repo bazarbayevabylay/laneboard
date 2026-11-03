@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { buildConfig, configPath, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
 import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
-import { freePrefix, registerStore, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
+import { freePrefix, registerStore, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
 import type { ConfigT, FileKind } from '../schema.ts';
 import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, serializeStoreFile, STORE_DIR_NAME, storeFilePath, validateStoreJson } from '../store.ts';
@@ -111,6 +111,12 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   }
   if (unique(statuses).length !== statuses.length) {
     throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`, { fix: `list each status once: --statuses ${unique(statuses).join(',')}` });
+  }
+  // `<home>/.laneboard` is the machine's board registry (with its own lock): a board there would lock itself out and hide the registry.
+  if (opts.home !== undefined && path.resolve(target) === registryDir(path.resolve(opts.home))) {
+    throw new LaneboardError('STORE_EXISTS', `${target} is this machine's board registry (laneboard boards), so no board can be created there`, {
+      fix: `create the board in the project's own folder: mkdir -p ${path.join(opts.home, '<project>')} && cd ${path.join(opts.home, '<project>')} && laneboard init --name <name> --description "<whose project, what work>"`,
+    });
   }
   const outer = enclosingStore(target);
   if (outer) throw new LaneboardError('STORE_EXISTS', `${target} is inside the store ${outer}`, { fix: `run laneboard init in the project folder, not inside ${outer}` });
