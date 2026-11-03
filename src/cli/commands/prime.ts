@@ -116,7 +116,8 @@ export const prime: CommandDef = {
       in_progress: summary?.in_progress ?? 0,
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
-    const human = hook && noStore ? noStore : primeText(data);
+    // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).
+    const human = hook && noStore ? noStore : primeText(data, ctx?.store.found === 'dir' ? ctx.store.dir : undefined);
     return { data, warnings, human, storeWarningInText: true };
   },
 };

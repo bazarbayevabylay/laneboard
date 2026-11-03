@@ -86,7 +86,8 @@ describe('nested agent folders', () => {
     const warning =
       `using store ${store} (prefix PARENT) found in a parent directory, but ${third} looks like a separate project (it has CLAUDE.md); ` +
       'unless this folder is part of that project, find its own board with laneboard boards --json and pass --dir <its path> on every command, ' +
-      'or create one in this folder: laneboard init --name <name> --description "<whose project, what work>", then laneboard prime';
+      `or create one: laneboard init --dir ${path.join(third, '.laneboard')} --name <name> --description "<whose project, what work>", ` +
+      `then pass --dir ${path.join(third, '.laneboard')} on every command, starting with laneboard prime`;
     const json = JSON.parse((await cli(['create', 'stray', '--status', 'todo', '--as', 'dev', '--json'], { cwd: third })).stdout);
     expect(json).toMatchObject({ ok: true, store, prefix: 'PARENT', data: { id: 'PARENT-1' } });
     expect(json.warnings).toEqual([warning]);
@@ -97,9 +98,13 @@ describe('nested agent folders', () => {
     const prime = await cli(['prime', '--as', 'dev'], { cwd: third });
     expect(prime.stdout).toContain(`\nStore: ${store} (prefix PARENT) - parent: test board\nwarning: ${warning}\n`);
     expect(prime.stderr).toBe('');
+    // Under that warning prime asks for no task in the store in use (as the edit hook): no create or claim command for it.
+    expect(prime.stdout).toContain("\nYou have no task in progress. The store above looks like another project's: create your task on this folder's own board (see the warning).\n");
+    expect(prime.stdout).not.toMatch(/Create one now|Given a task id|laneboard create "<short title/);
     expect(JSON.parse((await cli(['prime', '--as', 'dev', '--json'], { cwd: third })).stdout)).toMatchObject({ warnings: [warning], data: { store_warning: warning } });
     const hook = await cli(['prime', '--hook'], { cwd: third, env: { LANEBOARD_AGENT: 'dev' } });
     expect(hook.stdout).toContain(`warning: ${warning}`);
+    expect(hook.stdout).not.toMatch(/Create one now|Given a task id|laneboard create "<short title/);
     const mcp = await callTool('task_list', {}, { cwd: third, env: {} });
     expect(mcp.content[1]?.text).toBe(JSON.stringify({ store, prefix: 'PARENT', warnings: [warning] }));
   });
@@ -133,8 +138,70 @@ describe('nested agent folders', () => {
     // The pinned project itself and its plain subfolders stay silent, and so does a pin to a store outside cwd's ancestors.
     for (const cwd of [parent, deep]) expect(JSON.parse((await cli(['list', '--json'], { cwd, env })).stdout).warnings).toEqual([]);
     expect(JSON.parse((await cli(['list', '--json'], { cwd: third, env: { LANEBOARD_DIR: path.join(child, '.laneboard') } })).stdout).warnings).toEqual([]);
+    // cwd's own store named through a symlink (HOME=/var/... on macOS, cwd /private/var/...) is the same store: silent.
+    const link = path.join(tempDir(), 'link');
+    fs.symlinkSync(parent, link);
+    expect(JSON.parse((await cli(['list', '--json'], { cwd: child, env: { LANEBOARD_DIR: path.join(link, 'agent-2', '.laneboard') } })).stdout).warnings).toEqual([]);
     const mcp = await callTool('task_list', {}, { cwd: child, env });
     expect(JSON.parse(mcp.content[1]?.text ?? '{}').warnings).toEqual(own.warnings);
+  });
+
+  it("LANEBOARD_DIR of a parent folder, separate project without a store: the warning's commands create and use its own board; a bare init says LANEBOARD_DIR is in the way", async () => {
+    const { parent, third } = await nested();
+    const store = path.join(parent, '.laneboard');
+    const own = path.join(third, '.laneboard');
+    const env = { LANEBOARD_DIR: store };
+    const warning: string = JSON.parse((await cli(['list', '--json'], { cwd: third, env })).stdout).warnings[0];
+    expect(warning).toContain(
+      `or create one: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`,
+    );
+    // Rule 12's bare init takes LANEBOARD_DIR, the parent's store: STORE_EXISTS names that and offers this folder's board only.
+    const bare = JSON.parse((await cli(['init', '--name', 'third', '--description', 'b work', '--json'], { cwd: third, env })).stdout);
+    expect(bare.error).toMatchObject({
+      code: 'STORE_EXISTS',
+      message: `LANEBOARD_DIR points to ${store}, which already holds a board (LANEBOARD_DIR may be set for a parent folder, e.g. by its .claude/settings.local.json)`,
+      fix: `to create the board of ${third}: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`,
+    });
+    // In the pinned project itself the same init is a plain STORE_EXISTS (offering ./.laneboard again would loop).
+    expect(JSON.parse((await cli(['init', '--description', 'again', '--json'], { cwd: parent, env })).stdout).error.message).toBe(`a store already exists at ${store}`);
+    // The commands as written (placeholders filled): init, prime, then the create line prime prints, all with --dir.
+    const init = JSON.parse((await cli(['init', '--dir', own, '--name', 'third', '--description', 'b work', '--json'], { cwd: third, env })).stdout);
+    expect(init).toMatchObject({ ok: true, store: own, prefix: 'THIRD', data: { next: `laneboard prime --dir ${own}` } });
+    const prime = await cli(['prime', '--dir', own, '--as', 'dev'], { cwd: third, env });
+    expect(prime.stdout).toContain(`\n  laneboard create "<short title of your work>" --status todo --assignee dev --as dev --dir ${own} --json\n`);
+    expect(prime.stdout).toContain(`Given a task id instead: laneboard claim <ID> --as dev --dir ${own} --json`);
+    const made = JSON.parse((await cli(['create', 'b work', '--status', 'todo', '--assignee', 'dev', '--as', 'dev', '--dir', own, '--json'], { cwd: third, env })).stdout);
+    expect(made).toMatchObject({ ok: true, store: own, prefix: 'THIRD', data: { id: 'THIRD-1' }, warnings: [] });
+    expect(readStore(store, 'active').tasks).toEqual([]);
+  });
+
+  it('a pin to a store outside the repository (setup claude-code --dir ~/boards/...) warns in a nested project with its own store; the edit hook asks for no task there', async () => {
+    const pinned = path.join(tempDir(), 'boards', 'orch', '.laneboard');
+    const root = folder('orch');
+    fs.mkdirSync(path.join(root, '.git'));
+    const agentB = folder('agentB', root);
+    fs.writeFileSync(path.join(agentB, 'CLAUDE.md'), 'Agent B instructions.\n');
+    const sub = folder('src', agentB);
+    expect((await cli(['init', '--dir', pinned, '--name', 'orch', '--description', 'o'], { cwd: root })).code).toBe(0);
+    expect((await cli(['init', '--name', 'agentb', '--description', 'b'], { cwd: agentB })).code).toBe(0);
+    const own = path.join(agentB, '.laneboard');
+    const env = { LANEBOARD_DIR: pinned };
+    const hook = await cli(['prime', '--edit-hook'], { cwd: agentB, env: { ...env, CLAUDE_CODE_SESSION_ID: 'abcd1234' } });
+    const note: string = JSON.parse(hook.stdout).hookSpecificOutput.additionalContext;
+    expect(note).toBe(
+      `laneboard: the store in use, ${pinned} (prefix ORCH), looks like another project's: ${agentB} has its own store ${own}. ` +
+        'Unless this folder is part of that project, its tasks belong on its own board; `laneboard boards --json` lists the boards on this machine with their descriptions.',
+    );
+    const warning =
+      `using store ${pinned} (prefix ORCH) from LANEBOARD_DIR, but ${agentB} looks like a separate project (it has its own store ${own}); ` +
+      `unless this folder is part of that project, pass --dir ${own} on every command`;
+    expect(JSON.parse((await cli(['create', 'agentB work', '--status', 'todo', '--as', 'b', '--json'], { cwd: agentB, env })).stdout).warnings).toEqual([warning]);
+    // A plain subfolder of agentB: the same own store, found by walking up.
+    expect(JSON.parse((await cli(['list', '--json'], { cwd: sub, env })).stdout).warnings[0]).toContain(`(it has its own store ${own})`);
+    const mcp = await callTool('task_list', {}, { cwd: agentB, env });
+    expect(JSON.parse(mcp.content[1]?.text ?? '{}').warnings).toEqual([warning]);
+    // The pinned project's root has no store of its own: silent.
+    expect(JSON.parse((await cli(['list', '--json'], { cwd: root, env })).stdout).warnings).toEqual([]);
   });
 
   it('error envelopes name the store and prefix too', async () => {

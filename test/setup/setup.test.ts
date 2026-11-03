@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { readRegistry } from '../../src/core/index.ts';
 import { HARNESS_NAMES } from '../../src/setup/index.ts';
 import { cleanupTemp, cli, tempDir } from '../helpers.ts';
 
@@ -689,6 +690,56 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(nested, '.laneboard'));
     // A third run at the root keeps the layout (idempotent).
     expect(JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout).data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+  });
+
+  it("the root's local pin in a nested board missing from the registry (made before it or under another HOME): the conflict fix still ends in one round", async () => {
+    const root = tempDir();
+    const home = tempDir();
+    fs.mkdirSync(path.join(root, '.git'));
+    const nested = path.join(root, 'agent-b');
+    fs.mkdirSync(nested);
+    const env = { HOME: home, USER: 'tester' };
+    expect((await cli(['init', '--description', 'orchestrator'], { cwd: root, env })).code).toBe(0);
+    expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
+    expect((await cli(['init', '--description', 'agent b'], { cwd: nested, env: { HOME: tempDir() } })).code).toBe(0);
+    const refused = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
+    expect(refused.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code` });
+    // The refusal registered agent-b's board, so the fix's root setup moves the root's env out of the local file.
+    expect(readRegistry(home).map((e) => e.path)).toContain(path.join(nested, '.laneboard'));
+    expect(fs.existsSync(path.join(nested, '.claude'))).toBe(false);
+    expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
+    expect(fs.existsSync(path.join(root, '.claude', 'settings.local.json'))).toBe(false);
+    expect((await cli(['setup', 'claude-code'], { cwd: nested, env })).code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(nested, '.laneboard'));
+  });
+
+  it("a plain subfolder pinned to the root's own store (--dir ../.laneboard, or LANEBOARD_DIR from the root's local file) is no conflict", async () => {
+    const root = tempDir();
+    const home = tempDir();
+    fs.mkdirSync(path.join(root, '.git'));
+    const sub = path.join(root, 'docs');
+    fs.mkdirSync(sub);
+    const env = { HOME: home, USER: 'tester' };
+    expect((await cli(['init', '--description', 'orchestrator'], { cwd: root, env })).code).toBe(0);
+    expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
+    const store = path.join(root, '.laneboard');
+    const r = await cli(['setup', 'claude-code', '--dir', '../.laneboard', '--json'], { cwd: sub, env });
+    expect(r.code, r.stdout).toBe(0);
+    expect(JSON.parse(r.stdout).data.store).toBe(store);
+    expect((await cli(['setup', 'claude-code', '--json'], { cwd: sub, env: { ...env, LANEBOARD_DIR: store } })).code).toBe(0);
+  });
+
+  it('git root = HOME reached through a symlink (HOME=/var/..., cwd /private/var/...) is still HOME: the env goes to the local file of the session folder', async () => {
+    const real = tempDir();
+    const link = path.join(tempDir(), 'home-link');
+    fs.symlinkSync(real, link);
+    fs.mkdirSync(path.join(real, '.git'));
+    const proj = path.join(real, 'proj');
+    fs.mkdirSync(proj);
+    const r = await cli(['setup', 'claude-code', '--json'], { cwd: proj, env: { HOME: link, USER: 'tester' } });
+    expect(r.code, r.stdout).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.local.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(proj, '.laneboard'));
+    expect(JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8')).env).toBeUndefined();
   });
 
   it('git root = HOME: Claude Code reads the local file of the session folder, so the env goes there and the exclude goes to HOME/.git/info/exclude', async () => {

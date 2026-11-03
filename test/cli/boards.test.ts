@@ -154,6 +154,39 @@ describe('board registry', () => {
     expect(r.error.fix).toBe(`create the board in the project's own folder: mkdir -p ${path.join(m.home, '<project>')} && cd ${path.join(m.home, '<project>')} && laneboard init --name <name> --description "<whose project, what work>"`);
     expect(fs.existsSync(path.join(m.home, '.laneboard'))).toBe(false);
   });
+
+  it('HOME through a symlink (macOS /var -> /private/var, NFS homes) is the same folder: the empty registry is no store, init in HOME is refused at once', async () => {
+    const real = tempDir();
+    const link = path.join(tempDir(), 'home-link');
+    fs.symlinkSync(real, link);
+    // The process cwd is the physical path, HOME the symlinked spelling.
+    const env = { HOME: link };
+    const old = path.join(real, 'code', 'old');
+    const fresh = path.join(real, 'code', 'fresh');
+    fs.mkdirSync(old, { recursive: true });
+    fs.mkdirSync(fresh, { recursive: true });
+    expect((await cli(['init', '--description', 'old'], { cwd: old, env: { HOME: '' } })).code).toBe(0);
+    expect(JSON.parse((await cli(['init', '--description', 'again', '--json'], { cwd: old, env })).stdout).error.code).toBe('STORE_EXISTS');
+    expect(fs.readdirSync(path.join(real, '.laneboard'))).toEqual([]);
+    expect(JSON.parse((await cli(['list', '--json'], { cwd: fresh, env })).stdout)).toMatchObject({ ok: false, store: null, error: { code: 'STORE_NOT_FOUND' } });
+    const mcp = await callTool('task_list', {}, { cwd: fresh, env });
+    expect(JSON.parse(mcp.content[0]?.text ?? '{}').code).toBe('STORE_NOT_FOUND');
+    // Without the same-folder check the registry lock is taken twice: LOCK_TIMEOUT after the whole wait.
+    const started = Date.now();
+    const r = JSON.parse((await cli(['init', '--description', 'home', '--json'], { cwd: real, env, lockWaitMs: 3000 })).stdout);
+    expect(Date.now() - started).toBeLessThan(2500);
+    expect(r.error).toMatchObject({ code: 'STORE_EXISTS', message: `${path.join(real, '.laneboard')} is this machine's board registry (laneboard boards), so no board can be created there` });
+    expect(fs.readdirSync(path.join(real, '.laneboard'))).toEqual([]);
+    // A fresh HOME without ~/.laneboard yet: the missing folder is compared through its existing parent.
+    const realFresh = tempDir();
+    const linkFresh = path.join(tempDir(), 'fresh-link');
+    fs.symlinkSync(realFresh, linkFresh);
+    const first = Date.now();
+    const f = JSON.parse((await cli(['init', '--description', 'home', '--json'], { cwd: realFresh, env: { HOME: linkFresh }, lockWaitMs: 3000 })).stdout);
+    expect(Date.now() - first).toBeLessThan(2500);
+    expect(f.error.code).toBe('STORE_EXISTS');
+    expect(fs.existsSync(path.join(realFresh, '.laneboard'))).toBe(false);
+  });
 });
 
 describe('--board opens another board read-only', () => {

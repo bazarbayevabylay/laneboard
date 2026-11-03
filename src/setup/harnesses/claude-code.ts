@@ -10,7 +10,7 @@
 // excludes the file when it writes it first).
 import fs from 'node:fs';
 import path from 'node:path';
-import { defaultAgentBase, isLiveBoard, LaneboardError, readRegistry } from '../../core/index.ts';
+import { defaultAgentBase, isLiveBoard, LaneboardError, readRegistry, samePath } from '../../core/index.ts';
 import { readText } from '../files.ts';
 import type { TextEdit } from '../files.ts';
 import { jsonEdit, jsonEdits, jsonValueAt } from '../json-key.ts';
@@ -70,7 +70,7 @@ function gitRoot(cwd: string): string | undefined {
 // Does Claude Code read .claude/settings.local.json from this folder (so the env can live there)?
 export function localSettingsHere(c: HarnessContext): boolean {
   const root = gitRoot(c.cwd);
-  if (root === undefined || root === c.home) return true;
+  if (root === undefined || samePath(root, c.home)) return true;
   // A worktree or submodule has a `.git` file: Claude Code uses the main checkout's local file then.
   return root === c.cwd && fs.statSync(path.join(root, '.git')).isDirectory();
 }
@@ -94,7 +94,7 @@ export function envInLocalFile(c: HarnessContext): boolean {
   if (!localSettingsHere(c)) return false;
   // Outside a repository, or with the home directory as its root, Claude Code reads the local file of the session folder only.
   const root = gitRoot(c.cwd);
-  return root !== c.cwd || root === c.home || nestedBoard(c) === undefined;
+  return root !== c.cwd || samePath(root, c.home) || nestedBoard(c) === undefined;
 }
 
 // The repository's exclude file when the local file we write lies in a repository with a `.git` directory, else undefined.
@@ -108,17 +108,18 @@ function excludeFile(c: HarnessContext): string | undefined {
 // repository above this folder's .claude/settings.json, so a pin written here would never take effect.
 function checkRootPin(c: HarnessContext): void {
   const root = gitRoot(c.cwd);
-  if (root === undefined || root === c.cwd || root === c.home) return;
+  if (root === undefined || root === c.cwd || samePath(root, c.home)) return;
   const file = path.join(root, LOCAL_SETTINGS);
   const dir = envString(readText(file), ENV_DIR);
-  if (dir === undefined || path.resolve(c.cwd, dir) === c.storeDir) return;
+  if (dir === undefined || samePath(path.resolve(c.cwd, dir), c.storeDir)) return;
   const init = isLiveBoard(c.storeDir) ? '' : 'laneboard init --name <name> --description "<whose project, what work>" && ';
   throw new LaneboardError(
     'SETUP_CONFLICT',
     `${file} sets env.LANEBOARD_DIR to ${dir}; Claude Code reads that file in every folder of the repository and it wins over ${SETTINGS} here, so sessions in this folder would use ${dir}, not ${c.storeDir}; nothing was written`,
     {
       details: { file, value: dir },
-      // Setup at the root moves its env into its settings.json once this folder's board is in the registry.
+      // Setup at the root moves its env into its settings.json once this folder's board is in the registry (setup here registers
+      // a live board when it refuses with this error; the init of the fix registers a new one).
       fix: `${init}cd ${shellWord(root)} && laneboard setup claude-code && cd ${shellWord(c.cwd)} && laneboard setup claude-code`,
     },
   );
@@ -133,7 +134,7 @@ function envString(text: string | null, keys: string[]): string | undefined {
 // SETUP_CONFLICT when the file already pins another store: the user's own LANEBOARD_DIR is never overwritten.
 function checkPin(file: string, text: string | null, c: HarnessContext): void {
   const dir = envString(text, ENV_DIR);
-  if (dir === undefined || path.resolve(c.cwd, dir) === c.storeDir) return;
+  if (dir === undefined || samePath(path.resolve(c.cwd, dir), c.storeDir)) return;
   throw new LaneboardError('SETUP_CONFLICT', `${file} sets env.LANEBOARD_DIR to ${dir}, not to ${c.storeDir}; setup does not overwrite your value`, {
     details: { file, value: dir },
     fix: `laneboard setup claude-code --dir ${dir}`,

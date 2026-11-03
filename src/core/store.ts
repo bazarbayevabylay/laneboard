@@ -26,9 +26,10 @@ export const PROJECT_MARKERS = ['.git', '.claude', 'CLAUDE.md', 'AGENTS.md', 'GE
 
 // Is `dir` the machine's board registry, not a store? It has no config.json and is `<home>/.laneboard` (an init that failed
 // before its first write can leave that folder empty) or holds boards.json (the registry of another home).
+// HOME may reach the same folder through a symlink (macOS /var -> /private/var, NFS homes), so both sides are canonical.
 function isRegistryDir(dir: string, home: string | undefined): boolean {
   if (fs.existsSync(path.join(dir, 'config.json'))) return false;
-  return (home !== undefined && home !== '' && dir === path.join(path.resolve(home), STORE_DIR_NAME)) || fs.existsSync(path.join(dir, 'boards.json'));
+  return (home !== undefined && home !== '' && samePath(dir, path.join(home, STORE_DIR_NAME))) || fs.existsSync(path.join(dir, 'boards.json'));
 }
 
 export interface DiscoveryInput {
@@ -79,14 +80,18 @@ function walkUp(cwd: string, home: string | undefined): StoreRef | undefined {
   }
 }
 
-// `p` with symlinks resolved (macOS /var -> /private/var), or as given when it does not exist.
-function realPath(p: string): string {
-  try {
-    return fs.realpathSync(p);
-  } catch {
-    // A path that does not exist cannot be resolved: compare it as written.
-    return p;
-  }
+// `p` absolute with symlinks resolved (macOS /var -> /private/var); for a path that does not exist yet, its nearest existing
+// parent is resolved and the missing rest kept as written. Every comparison with HOME, cwd or a store path goes through it.
+export function canonicalPath(p: string): string {
+  const abs = path.resolve(p);
+  let existing = abs;
+  while (!fs.existsSync(existing) && path.dirname(existing) !== existing) existing = path.dirname(existing);
+  return path.join(fs.realpathSync(existing), path.relative(existing, abs));
+}
+
+// Do `a` and `b` name the same folder (symlinks resolved)?
+export function samePath(a: string, b: string): boolean {
+  return canonicalPath(a) === canonicalPath(b);
 }
 
 // Is `inner` the folder `outer` or inside it?
@@ -117,21 +122,22 @@ function worktreeRepo(folder: string): string | undefined {
 // First project marker between cwd (included) and the folder that holds the store (excluded), as a path relative to cwd.
 // A git worktree of the store's repository (Claude Code puts them in `<project>/.claude/worktrees/`) is that project, not another one.
 export function separateProjectMarker(storeDir: string, cwd: string): string | undefined {
-  const owner = realPath(path.dirname(storeDir));
+  const owner = canonicalPath(path.dirname(storeDir));
   const start = path.resolve(cwd);
-  for (let current = start; realPath(current) !== owner && path.dirname(current) !== current; current = path.dirname(current)) {
+  for (let current = start; canonicalPath(current) !== owner && path.dirname(current) !== current; current = path.dirname(current)) {
     const repo = worktreeRepo(current);
-    if (repo !== undefined && isWithin(owner, realPath(repo))) return undefined;
+    if (repo !== undefined && isWithin(owner, canonicalPath(repo))) return undefined;
     const marker = PROJECT_MARKERS.find((m) => fs.existsSync(path.join(current, m)));
     if (marker) return path.relative(start, path.join(current, marker));
   }
   return undefined;
 }
 
-// A store that may be another project's: what made it look so, or undefined. Either it was found in a parent directory, or
-// LANEBOARD_DIR names a store whose project folder holds cwd (a pin set for a parent folder reaches its subfolders: Claude Code reads
-// the repository root's .claude/settings.local.json in every folder of the repository); and a project marker lies between.
-// `ownStore` is a nearer store of cwd's own that the pin hides.
+// A store that may be another project's: what made it look so, or undefined. Either LANEBOARD_DIR hides a store of cwd's own
+// (`ownStore`: walking up from cwd finds it, wherever the pinned store lies), or the store was found in a parent directory or
+// LANEBOARD_DIR names a store whose project folder holds cwd, and a project marker lies between. A pin set for a parent folder
+// reaches its subfolders: Claude Code reads the repository root's .claude/settings.local.json in every folder of the repository,
+// also when it pins a store outside the repository (setup claude-code --dir ~/boards/<project>/.laneboard).
 export interface ForeignStore {
   marker: string;
   ownStore?: string;
@@ -139,15 +145,23 @@ export interface ForeignStore {
 
 // Signs that the store in use belongs to another project than cwd (see ForeignStore); undefined when there are none.
 export function foreignStore(ref: StoreRef, cwd: string, home?: string): ForeignStore | undefined {
-  const owner = path.dirname(ref.dir);
-  const here = realPath(path.resolve(cwd));
-  const pinnedAbove = ref.found === 'env' && here !== realPath(owner) && isWithin(here, realPath(owner));
-  if (ref.found !== 'parent' && !pinnedAbove) return undefined;
-  // A store of its own below the pinned project is the clearest sign (walking up would have found it).
-  const near = pinnedAbove ? walkUp(cwd, home) : undefined;
-  if (near !== undefined && near.dir !== ref.dir && isWithin(near.dir, owner)) return { marker: path.relative(path.resolve(cwd), near.dir), ownStore: near.dir };
+  if (ref.found === 'env') {
+    // A store of cwd's own is the clearest sign; a store walking up finds behind a project marker is another project's, not cwd's.
+    const near = walkUp(cwd, home);
+    if (near !== undefined && !samePath(near.dir, ref.dir) && separateProjectMarker(near.dir, cwd) === undefined) {
+      return { marker: path.relative(path.resolve(cwd), near.dir), ownStore: near.dir };
+    }
+  }
+  if (ref.found !== 'parent' && !pinnedAbove(ref, cwd)) return undefined;
   const marker = separateProjectMarker(ref.dir, cwd);
   return marker === undefined ? undefined : { marker };
+}
+
+// Does LANEBOARD_DIR name a store whose project folder holds cwd (a pin set for a parent folder)?
+function pinnedAbove(ref: StoreRef, cwd: string): boolean {
+  const here = canonicalPath(cwd);
+  const owner = canonicalPath(path.dirname(ref.dir));
+  return ref.found === 'env' && here !== owner && isWithin(here, owner);
 }
 
 // Warning for a store that looks like another project's (a project marker lies between, see foreignStore): a nested agent folder
@@ -155,12 +169,14 @@ export function foreignStore(ref: StoreRef, cwd: string, home?: string): Foreign
 export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | null, home?: string): string | undefined {
   const foreign = foreignStore(ref, cwd, home);
   if (foreign === undefined) return undefined;
-  const how = ref.found === 'env' ? 'from LANEBOARD_DIR (set for a parent folder)' : 'found in a parent directory';
+  const how = ref.found === 'parent' ? 'found in a parent directory' : pinnedAbove(ref, cwd) ? 'from LANEBOARD_DIR (set for a parent folder)' : 'from LANEBOARD_DIR';
   const own = foreign.ownStore;
   const it = own ? `it has its own store ${own}` : `it has ${foreign.marker}`;
+  // A new board goes to the folder of the marker, and by --dir: a bare init would take LANEBOARD_DIR, the store in use.
+  const created = path.join(path.dirname(path.resolve(cwd, foreign.marker)), STORE_DIR_NAME);
   const fix = own
     ? `pass --dir ${own} on every command`
-    : 'find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one in this folder: laneboard init --name <name> --description "<whose project, what work>", then laneboard prime';
+    : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${created} --name <name> --description "<whose project, what work>", then pass --dir ${created} on every command, starting with laneboard prime`;
   return `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} ${how}, but ${path.resolve(cwd)} looks like a separate project (${it}); unless this folder is part of that project, ${fix}`;
 }
 

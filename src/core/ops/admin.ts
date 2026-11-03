@@ -8,7 +8,7 @@ import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, write
 import { freePrefix, registerStore, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
 import type { ConfigT, FileKind } from '../schema.ts';
-import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, serializeStoreFile, STORE_DIR_NAME, storeFilePath, validateStoreJson } from '../store.ts';
+import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, samePath, serializeStoreFile, STORE_DIR_NAME, storeFilePath, validateStoreJson } from '../store.ts';
 import type { HeldLock, LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
@@ -38,6 +38,21 @@ export interface InitResult {
 export interface InitOptions extends LockOptions {
   // Home directory of the machine registry (`<home>/.laneboard/boards.json`); without it nothing is registered.
   home?: string;
+  // The folder init runs in, set when the target came from LANEBOARD_DIR (not --dir). That variable may be a pin set for a parent
+  // folder (Claude Code applies the repository root's local settings in every folder), so an existing board there is not offered.
+  envCwd?: string;
+}
+
+// STORE_EXISTS for a target that already holds a board. From LANEBOARD_DIR, the fix creates this folder's own board by --dir:
+// a bare init would take LANEBOARD_DIR again.
+function storeExists(target: string, envCwd: string | undefined): LaneboardError {
+  const own = envCwd === undefined ? undefined : path.join(path.resolve(envCwd), STORE_DIR_NAME);
+  if (own === undefined || samePath(own, target)) {
+    return new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${target}), or pass --dir <another empty directory>` });
+  }
+  return new LaneboardError('STORE_EXISTS', `LANEBOARD_DIR points to ${target}, which already holds a board (LANEBOARD_DIR may be set for a parent folder, e.g. by its .claude/settings.local.json)`, {
+    fix: `to create the board of ${path.dirname(own)}: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`,
+  });
 }
 
 // Validate a board name or description with its schema; INVALID_VALUE names the option.
@@ -113,7 +128,7 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
     throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`, { fix: `list each status once: --statuses ${unique(statuses).join(',')}` });
   }
   // `<home>/.laneboard` is the machine's board registry (with its own lock): a board there would lock itself out and hide the registry.
-  if (opts.home !== undefined && path.resolve(target) === registryDir(path.resolve(opts.home))) {
+  if (opts.home !== undefined && samePath(target, registryDir(opts.home))) {
     throw new LaneboardError('STORE_EXISTS', `${target} is this machine's board registry (laneboard boards), so no board can be created there`, {
       fix: `create the board in the project's own folder: mkdir -p ${path.join(opts.home, '<project>')} && cd ${path.join(opts.home, '<project>')} && laneboard init --name <name> --description "<whose project, what work>"`,
     });
@@ -124,9 +139,7 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   const create = async (): Promise<void> => {
     ensureDir(target);
     await withLock({ dir: target }, opts, (lock) => {
-      if (fs.existsSync(configPath(target))) {
-        throw new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${target}), or pass --dir <another empty directory>` });
-      }
+      if (fs.existsSync(configPath(target))) throw storeExists(target, opts.envCwd);
       const other = fs.readdirSync(target).filter((n) => n !== 'lock');
       if (other.length) throw new LaneboardError('STORE_EXISTS', `${target} is not empty (${other.slice(0, 3).join(', ')})`);
       const now = new Date().toISOString();

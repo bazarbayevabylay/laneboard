@@ -1,10 +1,23 @@
 // laneboard setup
 import path from 'node:path';
-import { initTarget, registerStore, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
+import { initTarget, LaneboardError, registerStore, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
 import { HARNESS_NAMES, runSetup } from '../../setup/index.ts';
 import { setupText } from '../format.ts';
 import { flag } from './args.ts';
 import type { CommandDef } from './types.ts';
+
+// Add the board at `storeDir` to the machine registry; a warning with the fix when that fails, else undefined.
+async function register(home: string, storeDir: string, lockWaitMs: number | undefined): Promise<string | undefined> {
+  try {
+    await registerStore(home, storeDir, { lockWaitMs });
+    return undefined;
+  } catch (raw) {
+    // The harness files are written already (or setup refused for another reason): a broken store or registry must not turn
+    // that into this failure: say what to fix.
+    const err = toLaneboardError(raw);
+    return `the board was not added to the machine registry (laneboard boards): ${err.message}; fix: ${err.fix}`;
+  }
+}
 
 export const setup: CommandDef = {
   name: 'setup',
@@ -20,21 +33,24 @@ export const setup: CommandDef = {
     // Like init, the pin never walks up: a store in a parent directory belongs to another project unless --dir names it.
     const storeDir = initTarget(c.discovery);
     c.setStore(storeDir);
-    const r = runSetup({ harness: c.positionals[0] ?? '', remove: flag(c.values, 'remove'), dryRun: flag(c.values, 'dry-run'), cwd: c.io.cwd, env: c.io.env, storeDir });
-    // The pinned board joins the machine registry (laneboard boards), so other agents can tell it apart by its description.
+    const remove = flag(c.values, 'remove');
+    const dryRun = flag(c.values, 'dry-run');
     const home = c.io.env.HOME;
-    if (r.registered && home) {
-      try {
-        await registerStore(home, storeDir, { lockWaitMs: c.io.lockWaitMs });
-      } catch (raw) {
-        // The harness files are written already; a broken store or registry must not turn that into a failure: say what to fix.
-        const err = toLaneboardError(raw);
-        r.warnings.push(`the board was not added to the machine registry (laneboard boards): ${err.message}; fix: ${err.fix}`);
-      }
+    let r: ReturnType<typeof runSetup>;
+    try {
+      r = runSetup({ harness: c.positionals[0] ?? '', remove, dryRun, cwd: c.io.cwd, env: c.io.env, storeDir });
+    } catch (raw) {
+      // SETUP_CONFLICT for a repository root's pin: its fix runs setup at the root, which finds this folder's board only in the
+      // registry. Register the board first (a board made before the registry or under another HOME is missing there), then refuse.
+      if (raw instanceof LaneboardError && raw.code === 'SETUP_CONFLICT' && home && !remove && !dryRun) await register(home, storeDir, c.io.lockWaitMs);
+      throw raw;
     }
+    // The pinned board joins the machine registry (laneboard boards), so other agents can tell it apart by its description.
+    const failed = r.registered && home ? await register(home, storeDir, c.io.lockWaitMs) : undefined;
+    if (failed !== undefined) r.warnings.push(failed);
     const fromEnv = c.discovery.dir === undefined && c.discovery.envDir ? c.discovery.envDir : undefined;
     // LANEBOARD_DIR may be left over from another project's session: say where the pin came from.
-    if (fromEnv !== undefined && !flag(c.values, 'remove') && storeDir !== path.join(path.resolve(c.io.cwd), STORE_DIR_NAME)) {
+    if (fromEnv !== undefined && !remove && storeDir !== path.join(path.resolve(c.io.cwd), STORE_DIR_NAME)) {
       r.warnings.push(`the store pin comes from LANEBOARD_DIR=${fromEnv} in your environment, not ./.laneboard; to pin another store run setup again with --dir <path>`);
     }
     return { data: r.data, warnings: r.warnings, human: setupText(r.data) };

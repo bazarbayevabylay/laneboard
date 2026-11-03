@@ -215,10 +215,14 @@ function fit(line: string, room: number): string {
   return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
 }
 
-// What to do when the agent has no task in progress: the exact create command (and how to keep a name without one).
-function noTaskText(d: PrimeData): string {
+// What to do when the agent has no task in progress: the exact create command (and how to keep a name without one); `dir` is
+// passed on as --dir. Under a warning that the store looks like another project's, no command for that store (as the edit hook).
+function noTaskText(d: PrimeData, dir: string): string {
+  if (d.store_warning !== null) {
+    return "You have no task in progress. The store above looks like another project's: create your task on this folder's own board (see the warning).";
+  }
   const name = d.agent === null ? '<your-name>' : shellQuote(d.agent);
-  const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name} --as ${name} --json`;
+  const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name} --as ${name}${dir} --json`;
   if (d.agent === null) {
     return [
       'You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:',
@@ -228,24 +232,26 @@ function noTaskText(d: PrimeData): string {
   }
   if (d.agent_source === 'default') {
     // The default name is used without --as, so commands copied from here stay "default" in the task events.
-    const plain = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name} --json`;
+    const plain = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${dir} --json`;
     return [
       `You have no task in progress. Your name is the session default ${d.agent} (writes use it without --as; pick your own with --as <name> or LANEBOARD_AGENT). Create one now:`,
       plain,
-      'Given a task id instead: laneboard claim <ID> --json',
+      `Given a task id instead: laneboard claim <ID>${dir} --json`,
     ].join('\n');
   }
-  return ['You have no task in progress. Create one now:', create, `Given a task id instead: laneboard claim <ID> --as ${name} --json`].join('\n');
+  return ['You have no task in progress. Create one now:', create, `Given a task id instead: laneboard claim <ID> --as ${name}${dir} --json`].join('\n');
 }
 
 // Rules, store, statuses (final one named), fields, then the agent's tasks or the command to create one; at most PRIME_MAX_CHARS characters.
-export function primeText(d: PrimeData): string {
+// `storeDir`: the store was named by --dir, so the printed commands carry it.
+export function primeText(d: PrimeData, storeDir?: string): string {
   const head = `${d.rules}\n`;
   if (d.store_problem !== null) return fit(`${head}\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
-  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'} --json`;
+  const dir = storeDir === undefined ? '' : ` --dir ${shellQuote(storeDir)}`;
+  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'}${dir} --json`;
   const listed = d.agent !== null && d.tasks.length > 0;
   // Without a name the agent's own tasks are unknown, so the create command is always shown.
-  const closing = [d.agent === null || d.in_progress === 0 ? noTaskText(d) : '', listed ? `Your active tasks (${d.agent}), newest update first:` : ''].filter(Boolean).join('\n');
+  const closing = [d.agent === null || d.in_progress === 0 ? noTaskText(d, dir) : '', listed ? `Your active tasks (${d.agent}), newest update first:` : ''].filter(Boolean).join('\n');
   const board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
   const store = [`Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})${board}`, ...(d.store_warning ? [`warning: ${d.store_warning}`] : [])].join('\n');
   // Status and field lines share what is left after the rules, the store, the closing lines and the longest footer.

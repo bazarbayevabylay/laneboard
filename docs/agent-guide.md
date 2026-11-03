@@ -253,8 +253,11 @@ laneboard comment DEMO-5 "I can take the CSV part" --as dev-1 --json
 
 Each project (or agent folder) gets its own store and setup; `--dir` pins a store that is not `./.laneboard`.
 Folders nested inside another project need their own `init`, or they would find the parent's store. A `LANEBOARD_DIR` set for the
-parent (Claude Code reads the repository root's `.claude/settings.local.json` in every folder of the repository) warns there too, and
-`setup claude-code` in the nested folder refuses such a root pin with the commands that move it to the root's `.claude/settings.json`.
+parent (Claude Code reads the repository root's `.claude/settings.local.json` in every folder of the repository) warns there too:
+in a folder with a project marker under the pinned project, and in a folder with its own store wherever the pinned store lies
+(also `setup --dir ~/boards/...`). With that variable set, create the nested board with `init --dir <folder>/.laneboard` and pass
+that `--dir` on every command. `setup claude-code` in the nested folder refuses such a root pin with the commands that move it to the
+root's `.claude/settings.json`.
 
 ```sh
 mkdir -p services/billing
