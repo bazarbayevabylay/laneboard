@@ -2,8 +2,8 @@
 import { loadConfig } from './config.ts';
 import { LaneboardError } from './errors.ts';
 import { removeOrphanTmp, writeFileAtomic } from './fsio.ts';
-import { acquireLock, LOCK_WAIT_MS } from './lock.ts';
-import type { HeldLock } from './lock.ts';
+import { acquireLock } from './lock.ts';
+import type { HeldLock, LockOptions } from './lock.ts';
 import { STORE_SCHEMA, STORE_VERSION } from './schema.ts';
 import type { ConfigT, FileKind, StoreFileT } from './schema.ts';
 import { backupPath, contentSha, dedupeFiles, readStoreFile, serializeStoreFile, storeFilePath } from './store.ts';
@@ -16,9 +16,8 @@ export interface Faults {
   at: FaultPoint;
 }
 
-export interface TransactOptions {
+export interface TransactOptions extends LockOptions {
   faults?: Faults;
-  lockWaitMs?: number;
   // Sink for warnings (checksum mismatch, repaired duplicates).
   warnings?: string[];
 }
@@ -29,6 +28,8 @@ export interface State {
   readonly now: string;
   readonly active: StoreFileT;
   readonly archive: StoreFileT;
+  // Throw LOCK_LOST before a write of the callback's own (an attachment file) when the lock is too old.
+  assertLockHeld(): void;
   // Run after the files are written, still under the lock (e.g. remove an attachment file).
   onCommit(fn: () => void): void;
 }
@@ -36,8 +37,8 @@ export interface State {
 const STORE_FILE_MODE = 0o444;
 
 // Run `fn` while holding the store lock, releasing it on every path.
-export async function withLock<T>(store: StoreRef, waitMs: number | undefined, fn: (lock: HeldLock) => Promise<T> | T): Promise<T> {
-  const lock = await acquireLock(store.dir, waitMs ?? LOCK_WAIT_MS);
+export async function withLock<T>(store: StoreRef, opts: LockOptions, fn: (lock: HeldLock) => Promise<T> | T): Promise<T> {
+  const lock = await acquireLock(store.dir, opts);
   try {
     return await fn(lock);
   } finally {
@@ -64,9 +65,8 @@ export function commitFiles(storeDir: string, files: LoadedFile[], opts: CommitO
   const gained = (f: LoadedFile): boolean => f.data.tasks.some((t) => !f.beforeIds.has(t.id));
   changed.sort((a, b) => Number(gained(b)) - Number(gained(a)));
   changed.forEach((file, index) => {
-    if (opts.lock.isCompromised()) {
-      throw new LaneboardError('LOCK_TIMEOUT', 'the store lock was lost before writing (heartbeat missed the stale window); nothing more was written');
-    }
+    // A holder that stalled may have lost the lock to a stale takeover: never write over its new owner (W2).
+    opts.lock.assertHeld(index > 0 ? changed.slice(0, index).map((f) => `${f.kind}.json`).join(', ') : undefined);
     if (index > 0) maybeFault(opts.faults, 'between_files');
     file.data.rev += 1;
     file.data.updated_at = opts.now;
@@ -92,7 +92,7 @@ function loadForWrite(storeDir: string, kinds: readonly FileKind[], warnings: st
 }
 
 // Expose only the declared files to the callback.
-function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: Array<() => void>): State {
+function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: Array<() => void>, lock: HeldLock): State {
   const pick = (kind: FileKind): StoreFileT => {
     const file = files.find((f) => f.kind === kind);
     if (!file) throw new Error(`transact: ${kind}.json was not declared in files`);
@@ -110,13 +110,14 @@ function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: Ar
     onCommit: (fn) => {
       hooks.push(fn);
     },
+    assertLockHeld: () => lock.assertHeld(),
   };
 }
 
 // The only mutation path for CLI, MCP, board and import: every call reads fresh files (W3).
 export async function transact<T>(store: StoreRef, spec: { files: readonly FileKind[] }, fn: (s: State) => T, opts: TransactOptions = {}): Promise<T> {
   const warnings = opts.warnings ?? [];
-  return withLock(store, opts.lockWaitMs, (lock) => {
+  return withLock(store, opts, (lock) => {
     // Orphans can only come from crashed writers, because live writers hold this lock (W4).
     removeOrphanTmp(store.dir);
     const config = loadConfig(store.dir);
@@ -129,7 +130,7 @@ export async function transact<T>(store: StoreRef, spec: { files: readonly FileK
       if (repaired.length) warnings.push(`repaired duplicate ids across active.json and archive.json: ${repaired.join(', ')}`);
     }
     const hooks: Array<() => void> = [];
-    const result = fn(buildState(config, now, files, hooks));
+    const result = fn(buildState(config, now, files, hooks, lock));
     commitFiles(store.dir, files, { now, lock, faults: opts.faults });
     for (const hook of hooks) hook();
     return result;
@@ -146,7 +147,7 @@ export interface StoreView {
 // Read config and both files under the lock.
 export async function readBoth(store: StoreRef, opts: TransactOptions = {}): Promise<StoreView> {
   const warnings = opts.warnings ?? [];
-  return withLock(store, opts.lockWaitMs, () => {
+  return withLock(store, opts, () => {
     const config = loadConfig(store.dir);
     const active = readStoreFile(store.dir, 'active', warnings).data;
     const archive = readStoreFile(store.dir, 'archive', warnings).data;

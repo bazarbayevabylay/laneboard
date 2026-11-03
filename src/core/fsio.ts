@@ -72,11 +72,3 @@ export function removeFile(file: string): void {
 export function removeDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
-
-// Move a file aside under a new name in the same directory (keeps a broken store file for inspection).
-export function moveAside(file: string, newName: string): string {
-  const dest = path.join(path.dirname(file), newName);
-  fs.renameSync(file, dest);
-  fsyncDir(path.dirname(file));
-  return dest;
-}

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { ERRORS, LaneboardError, resolveStore, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { StoreRef } from '../core/index.ts';
+import { jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
 import { cliFix, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
@@ -36,6 +37,8 @@ export function globalHelp(): string {
     '  --as <actor>   who is writing; else LANEBOARD_AGENT (required for writes)',
     '  --help, -h     usage of a command: laneboard <command> --help',
     '  --version      print the version',
+    '  --             end of options: text that starts with "-" goes after it',
+    '                 (laneboard comment LB-1 --as me -- "- item"); option values: --description="- item"',
     '',
     'Exit codes: 0 ok, 1 internal, 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store',
   ].join('\n');
@@ -43,23 +46,23 @@ export function globalHelp(): string {
 
 // Help text of one command.
 function commandHelp(def: CommandDef): string {
-  return [`laneboard ${def.usage}`, '', def.summary, '', 'Global options: --json, --dir <path>, --as <actor>, --help'].join('\n');
+  return [
+    `laneboard ${def.usage}`,
+    '',
+    def.summary,
+    '',
+    'Global options: --json, --dir <path>, --as <actor>, --help',
+    'Text that starts with "-": after -- (options first), or as --option=<value>.',
+  ].join('\n');
 }
 
-// Map a parseArgs error to UNKNOWN_OPTION or USAGE.
-function parseError(err: unknown, def: CommandDef): LaneboardError {
-  const e = err as { code?: string; message?: string };
-  const message = e.message ?? String(err);
-  if (e.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') {
-    const option = /'([^']+)'/.exec(message)?.[1] ?? '';
-    const known = Object.keys({ ...GLOBAL_OPTIONS, ...def.options }).map((o) => `--${o}`);
-    const suggestion = suggestClosest(option.split('=')[0] ?? option, known);
-    return new LaneboardError('UNKNOWN_OPTION', `unknown option ${option} for ${def.name}`, {
-      allowed: known,
-      input: suggestion ? { field: 'option', value: option, suggestion } : { field: 'option', value: option },
-    });
+// Strict parse of a command's argv; parse errors become UNKNOWN_OPTION or USAGE with a rebuilt fix.
+function parseStrict(command: string, args: string[], options: OptionSpec) {
+  try {
+    return parseArgs({ args, options, allowPositionals: true, strict: true, tokens: true });
+  } catch (err) {
+    throw parseError(err, command, args, options);
   }
-  return new LaneboardError('USAGE', message.split('\n')[0] ?? message);
 }
 
 // Rename op parameter names to CLI flags in "x is required" messages.
@@ -79,7 +82,7 @@ interface Printed {
 // Run one CLI invocation; returns the exit code.
 export async function runCli(io: CliIo): Promise<number> {
   const argv = io.argv;
-  const out: Printed = { json: argv.includes('--json'), store: null };
+  const out: Printed = { json: jsonRequested(argv), store: null };
   let def: CommandDef | undefined;
   try {
     const [name, ...rest] = argv;
@@ -100,13 +103,12 @@ export async function runCli(io: CliIo): Promise<number> {
       });
     }
     const command = def;
-    let values: Values;
-    let positionals: string[];
-    try {
-      ({ values, positionals } = parseArgs({ args: rest, options: { ...GLOBAL_OPTIONS, ...command.options }, allowPositionals: true, strict: true }));
-    } catch (err) {
-      throw parseError(err, command);
-    }
+    const options = { ...GLOBAL_OPTIONS, ...command.options };
+    const parsed = parseStrict(command.name, rest, options);
+    rejectRepeated(parsed.tokens, command.name, rest, options);
+    const values: Values = parsed.values;
+    const positionals = parsed.positionals;
+    out.json = values.json === true;
     if (values.help === true) return print(io, out, { help: commandHelp(command) }, [], commandHelp(command));
     if (positionals.length < command.args.min || positionals.length > command.args.max) {
       throw new LaneboardError('USAGE', `wrong number of arguments for ${command.name} (got ${positionals.length}): laneboard ${command.usage}`);
@@ -126,7 +128,7 @@ export async function runCli(io: CliIo): Promise<number> {
       op: () => {
         store ??= resolveStore(discovery);
         out.store = store.dir;
-        return { store, actor: actor === '' ? undefined : actor, lockWaitMs: io.lockWaitMs };
+        return { store, actor: actor === '' ? undefined : actor, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
       },
       setStore: (dir) => {
         out.store = dir;
@@ -135,7 +137,7 @@ export async function runCli(io: CliIo): Promise<number> {
     return print(io, out, result.data, result.warnings, result.human);
   } catch (raw) {
     const err = flagMessage(toLaneboardError(raw), def);
-    const fix = cliFix(err, argv, def?.name);
+    const fix = cliFix(err, argv, def);
     if (out.json) io.stdout(errorEnvelope(out.store, err, fix));
     else io.stderr(errorText(err, fix));
     return ERRORS[err.code].exit;

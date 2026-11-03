@@ -3,12 +3,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { loadConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
 import { ensureDir, removeFile, writeFileAtomic } from '../fsio.ts';
 import { ATTACHMENT_NAME_RE } from '../schema.ts';
 import type { ConfigT } from '../schema.ts';
 import { transact } from '../transact.ts';
-import { addEvent, IdInput, normalizeId, parseInput, requireActiveTask, requireActor, toTaskView, touch } from './common.ts';
+import { addEvent, IdInput, normalizeId, parseInput, requireActiveTask, requireActor, toTaskView, touch, txOptions } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 
 export const AttachInput = z.strictObject({
@@ -55,12 +56,12 @@ export function globMatch(pattern: string, name: string): boolean {
   return new RegExp(`^${re}$`, 'i').test(name);
 }
 
-// Refuse names matching config.attachments.deny_names (secrets, keys).
-function checkDenied(config: ConfigT, names: string[]): void {
-  for (const name of names) {
+// Refuse a source whose name, stored name or link target matches config.attachments.deny_names (secrets, keys).
+function checkDenied(config: ConfigT, names: Array<{ name: string; what: string }>): void {
+  for (const { name, what } of names) {
     const pattern = config.attachments.deny_names.find((p) => globMatch(p, name));
     if (pattern) {
-      throw new LaneboardError('INVALID_VALUE', `"${name}" matches attachments.deny_names pattern "${pattern}" and is never attached`, {
+      throw new LaneboardError('INVALID_VALUE', `${what} "${name}" matches attachments.deny_names pattern "${pattern}" and is never attached`, {
         input: { field: 'path', value: name },
         fix: 'attach a file that holds no secrets; deny_names lives in .laneboard/config.json',
       });
@@ -73,21 +74,52 @@ export function attachmentDir(storeDir: string, id: string): string {
   return path.join(storeDir, 'attachments', id);
 }
 
-// Read the source file outside the lock; size is checked before reading.
-function readSource(file: string, limit: number): Buffer {
-  if (!path.isAbsolute(file)) throw new LaneboardError('INVALID_VALUE', `path "${file}" must be absolute`, { input: { field: 'path', value: file } });
-  let stat: fs.Stats;
+// Input error for an unusable source path.
+function badSource(file: string, message: string, fix: string): LaneboardError {
+  return new LaneboardError('INVALID_VALUE', message, { input: { field: 'path', value: file }, fix });
+}
+
+// Real path of the source (symlinks resolved), so deny_names also sees what a link points to.
+function realSource(file: string): string {
+  if (!path.isAbsolute(file)) throw badSource(file, `path "${file}" must be absolute`, 'pass an absolute path to the file');
   try {
-    stat = fs.statSync(file);
+    return fs.realpathSync(file);
   } catch {
-    // Missing or unreadable source is an input error, not a crash.
-    throw new LaneboardError('INVALID_VALUE', `file ${file} does not exist or is not readable`, { input: { field: 'path', value: file } });
+    // Missing path or a dangling link is an input error, not a crash.
+    throw badSource(file, `file ${file} does not exist or is not readable`, 'pass the path of an existing, readable file');
   }
-  if (!stat.isFile()) throw new LaneboardError('INVALID_VALUE', `${file} is not a regular file`, { input: { field: 'path', value: file } });
-  if (stat.size > limit) {
-    throw new LaneboardError('INVALID_VALUE', `${file} is ${stat.size} bytes, over limits.attachment_bytes (${limit})`, { input: { field: 'path', value: file } });
+}
+
+// Read the whole source through one descriptor, never more than `limit` bytes (a growing file cannot slip past the limit).
+function readSource(file: string, real: string, limit: number): Buffer {
+  let fd: number;
+  try {
+    // O_NOFOLLOW: the resolved path must not turn into a link after realpath; O_NONBLOCK: a FIFO must not hang the open.
+    fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch {
+    // Unreadable (permissions) or swapped for a link: an input error, not a crash.
+    throw badSource(file, `file ${file} does not exist or is not readable`, 'pass the path of an existing, readable file');
   }
-  return fs.readFileSync(file);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw badSource(file, `${file} is not a regular file`, 'attach a regular file; pack a directory into an archive first');
+    const tooBig = (size: string): LaneboardError =>
+      badSource(file, `${file} is ${size} bytes, over limits.attachment_bytes (${limit})`, `attach a file of at most ${limit} bytes, or raise limits.attachment_bytes in .laneboard/config.json`);
+    if (stat.size > limit) throw tooBig(String(stat.size));
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const chunk = Buffer.alloc(64 * 1024);
+      const n = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (n === 0) break;
+      total += n;
+      if (total > limit) throw tooBig(`more than ${limit}`);
+      chunks.push(chunk.subarray(0, n));
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // Copy a file into attachments/<id>/<name>, then record metadata in the same transaction; or remove one.
@@ -97,7 +129,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
   if ((p.path === undefined) === (p.remove === undefined)) throw new LaneboardError('USAGE', 'pass either path (to attach) or remove (to detach)');
   if (p.remove !== undefined && p.name !== undefined) throw new LaneboardError('USAGE', 'name is only used when attaching');
   const warnings: string[] = [];
-  const opts = { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings };
+  const opts = txOptions(ctx, warnings);
   const storeDir = ctx.store.dir;
 
   if (p.remove !== undefined) {
@@ -128,27 +160,37 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
   }
 
   const source = p.path ?? '';
+  const real = realSource(source);
   const name = p.name ?? path.basename(source);
+  // Lock-free config read: deny_names and the size limit only change by hand.
+  const config = loadConfig(storeDir);
+  // Secrets first, so a fix never suggests renaming one (`--name`).
+  checkDenied(config, [
+    { name, what: 'attachment name' },
+    { name: path.basename(source), what: 'file' },
+    { name: path.basename(real), what: `link target of ${path.basename(source)}` },
+  ]);
   if (!ATTACHMENT_NAME_RE.test(name)) {
     throw new LaneboardError('INVALID_VALUE', `attachment name "${name}" must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`, {
       input: { field: 'name', value: name },
       fix: 'pass --name with letters, digits, dot, dash or underscore',
     });
   }
+  // Read before the lock: a slow source (network mount, cloud placeholder) must not stall the lock holder (W2).
+  const bytes = readSource(source, real, config.limits.attachment_bytes);
   const data = await transact(
     ctx.store,
     { files: ['active', 'archive'] },
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
-      checkDenied(s.config, [name, path.basename(source)]);
       const task = requireActiveTask(s, id);
       if (task.attachments.some((a) => a.name === name)) {
         throw new LaneboardError('ATTACHMENT_EXISTS', `${id} already has an attachment "${name}"`, {
           fix: `pick another --name, or remove the old one first: laneboard attach ${id} --remove ${name}`,
         });
       }
-      const bytes = readSource(source, s.config.limits.attachment_bytes);
       const dir = attachmentDir(storeDir, id);
+      s.assertLockHeld();
       ensureDir(dir);
       // File first, metadata second: a crash leaves an orphan file, never metadata without a file.
       writeFileAtomic(path.join(dir, name), bytes, 0o444, { tmpDir: storeDir });

@@ -1,0 +1,16 @@
+# error-UNKNOWN_FIELD-typo
+$ laneboard update LB-1 --field priorty=1 --as a
+exit 2
+--- stdout
+
+--- stderr
+error UNKNOWN_FIELD: field "priorty" is not declared in config.fields
+  allowed: priority
+  fix: laneboard update LB-1 --field priority=1 --as a
+
+$ laneboard update LB-1 --field priorty=1 --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"UNKNOWN_FIELD","message":"field \"priorty\" is not declared in config.fields","fix":"laneboard update LB-1 --field priority=1 --as a --json","allowed":["priority"]}}
+--- stderr
+

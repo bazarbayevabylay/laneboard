@@ -1,0 +1,15 @@
+# error-LOCK_LOST
+$ laneboard create x --status todo --as a
+exit 5
+--- stdout
+
+--- stderr
+error LOCK_LOST: held the store lock past the 0 s write deadline (process paused or too slow); another laneboard process may own the lock now, so nothing was written
+  fix: retry the same command once
+
+$ laneboard create x --status todo --as a --json
+exit 5
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"LOCK_LOST","message":"held the store lock past the 0 s write deadline (process paused or too slow); another laneboard process may own the lock now, so nothing was written","fix":"retry the same command once"}}
+--- stderr
+

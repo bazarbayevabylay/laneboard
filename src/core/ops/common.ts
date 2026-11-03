@@ -5,7 +5,7 @@ import type { ErrorCode } from '../errors.ts';
 import { ACTOR_RE, ID_RE, LABEL_RE, LINK_KINDS } from '../schema.ts';
 import type { ConfigT, EventType, FieldType, LinkT, StoreFileT, TaskEventT, TaskT } from '../schema.ts';
 import type { StoreRef } from '../store.ts';
-import type { Faults } from '../transact.ts';
+import type { Faults, TransactOptions } from '../transact.ts';
 
 // Everything an op needs besides its input: the store, who acts, and test-only options.
 export interface OpContext {
@@ -14,6 +14,13 @@ export interface OpContext {
   actor?: string;
   faults?: Faults;
   lockWaitMs?: number;
+  // Write deadline after the lock acquire (tests only; default LOCK_MAX_HOLD_MS).
+  lockMaxHoldMs?: number;
+}
+
+// Options for transact taken from the op context; warnings go to `warnings`.
+export function txOptions(ctx: OpContext, warnings: string[]): TransactOptions {
+  return { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, lockMaxHoldMs: ctx.lockMaxHoldMs, warnings };
 }
 
 // Op output: data for the envelope plus warnings.
@@ -58,11 +65,25 @@ export function parseInput<S extends z.ZodType>(schema: S, input: unknown): z.in
     throw new LaneboardError('USAGE', `${where} is required`);
   }
   const shown = typeof value === 'string' ? value : JSON.stringify(value);
-  const extra = { input: { field: where, value: String(shown) } };
+  const bad = { field: where, value: String(shown) };
   if (issue.code === 'invalid_value') {
-    throw new LaneboardError('INVALID_VALUE', `${where}: "${shown}" is not allowed`, { ...extra, allowed: issue.values.map(String) });
+    throw new LaneboardError('INVALID_VALUE', `${where}: "${shown}" is not allowed`, { input: bad, allowed: issue.values.map(String), fix: `use a ${where} from \`allowed\`` });
   }
-  throw new LaneboardError('INVALID_VALUE', `${where}: ${issue.message}`, extra);
+  if (issue.code === 'invalid_format' && issue.format === 'datetime') {
+    throw new LaneboardError('INVALID_VALUE', `${where}: "${shown}" is not an ISO 8601 UTC time`, {
+      input: { ...bad, format: '<YYYY-MM-DDTHH:MM:SS.sssZ>' },
+      fix: `pass ${where} as an ISO 8601 UTC time with milliseconds and Z, e.g. 2026-01-31T09:00:00.000Z`,
+    });
+  }
+  throw new LaneboardError('INVALID_VALUE', `${where}: ${issue.message}`, { input: bad, fix: issueFix(issue, where) });
+}
+
+// A concrete fix for a zod issue that has no special case above.
+function issueFix(issue: z.core.$ZodIssue, where: string): string {
+  if (issue.code === 'too_big') return issue.origin === 'string' ? `shorten ${where} to at most ${String(issue.maximum)} characters` : `use a ${where} of at most ${String(issue.maximum)}`;
+  if (issue.code === 'too_small') return issue.origin === 'string' ? `${where} must not be empty` : `use a ${where} of at least ${String(issue.minimum)}`;
+  if (issue.code === 'invalid_type') return `pass ${where} as ${issue.expected}`;
+  return `correct ${where}: ${issue.message}`;
 }
 
 // Edit distance with adjacent transpositions counted as one edit (optimal string alignment).
@@ -102,7 +123,8 @@ export function requireActor(actor: string | undefined): string {
 export function checkActor(value: string, field: string): void {
   if (!ACTOR_RE.test(value)) {
     throw new LaneboardError('INVALID_VALUE', `${field} "${value}" must match ^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$`, {
-      input: { field, value },
+      input: { field, value, format: '<name like dev-1>' },
+      fix: `use letters, digits and . _ : @ - without spaces for ${field}, e.g. dev-1`,
     });
   }
 }
@@ -134,7 +156,8 @@ export function checkStatus(config: ConfigT, status: string): void {
 export function checkLabel(label: string): void {
   if (!LABEL_RE.test(label)) {
     throw new LaneboardError('INVALID_VALUE', `label "${label}" must match ^[a-z0-9][a-z0-9._-]{0,39}$ (lowercase)`, {
-      input: { field: 'label', value: label, ...(LABEL_RE.test(label.toLowerCase()) ? { suggestion: label.toLowerCase() } : {}) },
+      input: { field: 'label', value: label, format: '<label like ui-bug>', ...(LABEL_RE.test(label.toLowerCase()) ? { suggestion: label.toLowerCase() } : {}) },
+      fix: 'use lowercase letters, digits, dot, dash or underscore, e.g. ui-bug',
     });
   }
 }
@@ -187,22 +210,32 @@ export function checkFields(config: ConfigT, fields: Record<string, unknown>): v
     if (!matchesType(type, value)) {
       throw new LaneboardError('INVALID_VALUE', `field ${key} must be ${type}, got ${JSON.stringify(value)}`, {
         input: { field: key, value: JSON.stringify(value) },
+        fix: `pass ${key} as a ${type} value`,
       });
     }
   }
 }
+
+// Expected value format and an example per field type, for fixes.
+const FIELD_FORMAT: Record<FieldType, string> = { string: 'text', number: 'number', boolean: 'true|false', 'string[]': 'a,b,c', json: 'json' };
+const FIELD_EXAMPLE: Record<FieldType, string> = { string: 'text', number: '1', boolean: 'true', 'string[]': 'a,b', json: '{"k":1}' };
 
 // Parse CLI-style `key=value` field arguments using the declared field types.
 export function parseFieldArgs(config: ConfigT, args: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const arg of args) {
     const eq = arg.indexOf('=');
-    if (eq <= 0) throw new LaneboardError('INVALID_VALUE', `field "${arg}" must be key=value`, { input: { field: 'field', value: arg } });
+    if (eq <= 0) {
+      throw new LaneboardError('INVALID_VALUE', `field "${arg}" must be key=value`, { input: { field: 'field', value: arg, format: '<key=value>' }, fix: 'pass the field as key=value, e.g. priority=1' });
+    }
     const key = arg.slice(0, eq);
     const raw = arg.slice(eq + 1);
     const type = fieldType(config, key);
     const bad = (expected: string): LaneboardError =>
-      new LaneboardError('INVALID_VALUE', `field ${key} is ${type}: expected ${expected}, got "${raw}"`, { input: { field: key, value: arg } });
+      new LaneboardError('INVALID_VALUE', `field ${key} is ${type}: expected ${expected}, got "${raw}"`, {
+        input: { field: key, value: arg, format: `${key}=<${FIELD_FORMAT[type]}>` },
+        fix: `pass ${key}=<${FIELD_FORMAT[type]}>, e.g. ${key}=${FIELD_EXAMPLE[type]}`,
+      });
     switch (type) {
       case 'string':
         out[key] = raw;
@@ -240,7 +273,8 @@ export function parseLinkArg(arg: string): LinkT {
   if (!(LINK_KINDS as readonly string[]).includes(kind)) {
     throw new LaneboardError('INVALID_VALUE', `link "${arg}" must be kind=ref with kind one of ${LINK_KINDS.join(', ')}`, {
       allowed: [...LINK_KINDS],
-      input: { field: 'link', value: arg },
+      input: { field: 'link', value: arg, format: '<kind from allowed>=<ref>' },
+      fix: 'pass the link as kind=ref with a kind from `allowed`, e.g. branch=fix/login',
     });
   }
   return parseInput(LinkInput, { kind, ref: arg.slice(eq + 1) });

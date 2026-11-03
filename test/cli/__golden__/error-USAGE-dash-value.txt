@@ -1,0 +1,18 @@
+# error-USAGE-dash-value
+$ laneboard create t --status todo --description '- a
+- b' --as a
+exit 2
+--- stdout
+
+--- stderr
+error USAGE: the value of --description starts with "-"; pass it as --description=<value>
+  fix: laneboard create t --status todo '--description=- a
+- b' --as a
+
+$ laneboard create t --status todo --description '- a
+- b' --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":null,"error":{"code":"USAGE","message":"the value of --description starts with \"-\"; pass it as --description=<value>","fix":"laneboard create t --status todo '--description=- a\n- b' --as a --json"}}
+--- stderr
+

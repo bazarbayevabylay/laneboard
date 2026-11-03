@@ -85,7 +85,7 @@ Prototype (outside repo, Node 22.23 and 24.21, macOS) backs W2, W4, W6–W8 with
 | # | Rule | Test (vitest, `test/core/`) |
 |---|---|---|
 | W1 | No file write outside `src/core/fsio.ts` (store) and `src/setup/` (harness files). | C1 grep + planted violation |
-| W2 | Lock `.laneboard/lock` held for read → validate → mutate → write of all touched files. stale 10 s, heartbeat 5 s, wait budget 15 s (> stale, so a dead holder is always outwaited) → `LOCK_TIMEOUT`. | 8 procs × 25 creates → 200 tasks, ids LB-1..LB-200. Prototype: 200/200 with lock; 25–26/200 kept without. |
+| W2 | Lock `.laneboard/lock` held for read → validate → mutate → write of all touched files. stale 10 s, heartbeat 5 s, wait budget 15 s (> stale, so a dead holder is always outwaited) → `LOCK_TIMEOUT`. Write deadline 5 s after the acquire (half the stale window): a holder past it writes nothing → `LOCK_LOST`; a holder past the stale window does not remove the lock directory on release (it may be another process's now). | 8 procs × 25 creates → 200 tasks, ids LB-1..LB-200. Prototype: 200/200 with lock; 25–26/200 kept without. Writer paused 10+ s while another process takes over and writes → `LOCK_LOST`, the other's task kept, `next_id` monotonic, a third holder's lock intact. |
 | W3 | Every call reads files fresh; no in-memory state across calls in MCP/board processes. | long-lived MCP process sees a CLI write on next `task_get` |
 | W4 | Write = tmp `<file>.<pid>.<rand>.tmp` in same dir → write → fsync → chmod 0444 → rename → fsync dir; `.bak` written the same way first. Orphan `*.tmp` removed at transact start, only under lock (prototype: cleanup without lock deleted live peers' tmp → ENOENT crashes). | fault after tmp write → original intact; next transact removes tmp |
 | W5 | File `rev` +1 per write; task `rev` +1 per change. `expected_rev` (optional on update, claim, archive, delete; always sent by board) mismatch → `REV_CONFLICT` with current task in `details`. | two parallel updates with same expected_rev → exactly one ok, one REV_CONFLICT |
@@ -95,7 +95,7 @@ Prototype (outside repo, Node 22.23 and 24.21, macOS) backs W2, W4, W6–W8 with
 | W9 | `next_id` never decreases (archive/delete do not touch it); `doctor` asserts `next_id > max id in both files` and fixes. | delete highest id, create → larger id |
 | W10 | File `schema` newer than supported → `STORE_TOO_NEW` on write (fix: upgrade laneboard); reads allowed. `migrate` upgrades older files under lock. | fixture with `store@2` |
 | W11 | Unknown properties preserved on rewrite. | round-trip with `x_future` on file, task, event |
-Attachments: copy source → `attachments/<id>/<name>` via tmp+rename, then metadata in the same transact; crash between → orphan file (never metadata without file); `doctor` lists/removes orphans. Archive leaves files in place; delete removes record, then directory.
+Attachments: the source is read before the lock (symlinks resolved, at most `limits.attachment_bytes` through one descriptor), then under the lock written to `attachments/<id>/<name>` via tmp+rename, then metadata in the same transact; crash between → orphan file (never metadata without file); `doctor` lists/removes orphans. Archive leaves files in place; delete removes record, then directory.
 
 ## 5. CLI (`laneboard <verb>`; parser `node:util.parseArgs` with `strict: true`)
 Global: `--json`, `--dir <path>`, `--as <actor>`. Actor for writes = `--as`, else `LANEBOARD_AGENT`, else `ACTOR_REQUIRED` (no OS-user fallback). Ids are exact (`LB-12`); `12`/`lb-12` → `INVALID_VALUE` with the exact id in `fix`.
@@ -105,7 +105,7 @@ Global: `--json`, `--dir <path>`, `--as <actor>`. Actor for writes = `--as`, els
 | `get <id> [--events N]` (searches archive too; result has `"archived": bool`) | task_get |
 | `list [--status S]… [--assignee A | --unassigned] [--label L]… [--text Q] [--scope active|archive|all] [--limit N] [--offset N]` | task_list |
 | `update <id> [--title] [--description|--description-file] [--status S] [--assignee A | --unassign] [--add-label L] [--remove-label L] [--add-link k=ref] [--remove-link k=ref] [--field k=v] [--unset-field k] [--expected-rev N]` (≥1 change) | task_update |
-| `claim <id> [--status S] [--expected-rev N]` — assignee := actor; held by another → `ALREADY_CLAIMED` (fix: ask, or `update --assignee`) | task_claim |
+| `claim <id> [--status S] [--expected-rev N]` — assignee := actor; held by another → `ALREADY_CLAIMED` (fix: `comment`; `update --assignee` only in the message, for an intentional and agreed reassignment) | task_claim |
 | `comment <id> (<text> | --file P|-)` | task_comment |
 | `attach <id> <path> [--name N]` / `attach <id> --remove <name>` | task_attach |
 | `archive <id>… [--expected-rev N]` / `archive --status S --updated-before <Nd> [--dry-run]` | task_archive |
@@ -117,7 +117,7 @@ CLI-only: `init [--prefix P] [--statuses a,b,c]`, `setup <harness> [--remove] [-
 - `list`: `--limit` default 20 (max `list_limit_max`), sorted `updated_at` desc; the envelope always states `scope/limit/offset/total`.
 - Output, human: one line per result (`LB-12 created (rev 1)`), aligned table for lists plus footer `20 of 57 shown (scope active); next: --offset 20`.
 - Output, `--json` (stdout only, one document, also on error; stderr empty): `{"ok":true,"store":"/abs/.laneboard","data":…,"warnings":[]}`; task = full Task + `archived`; list items = `{id,title,status,assignee,labels,updated_at,rev}`. Error: `{"ok":false,"store":…,"error":{"code","message","fix","allowed"?,"details"?}}`.
-- Error registry `Record<ErrorCode,{exit,http,fix}>` in `src/core/errors.ts`: 0 ok · 1 `INTERNAL` · 2 `USAGE`, `UNKNOWN_OPTION` (with closest option), `INVALID_VALUE`, `UNKNOWN_STATUS` (allowed list), `UNKNOWN_FIELD` (declared list), `ACTOR_REQUIRED` · 3 `TASK_NOT_FOUND` (fix: `list --scope all --text`), `ATTACHMENT_NOT_FOUND` · 4 `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` · 5 `LOCK_TIMEOUT` · 6 `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS` (init into an existing or non-empty directory; §14).
+- Error registry `Record<ErrorCode,{exit,http,fix}>` in `src/core/errors.ts`: 0 ok · 1 `INTERNAL` · 2 `USAGE`, `UNKNOWN_OPTION` (with closest option), `INVALID_VALUE`, `UNKNOWN_STATUS` (allowed list), `UNKNOWN_FIELD` (declared list), `ACTOR_REQUIRED` · 3 `TASK_NOT_FOUND` (fix: `list --scope all --text`), `ATTACHMENT_NOT_FOUND` · 4 `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` · 5 `LOCK_TIMEOUT`, `LOCK_LOST` (write deadline passed, nothing written; fix: retry) · 6 `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS` (init into an existing or non-empty directory; §14).
 ```
 $ laneboard update LB-12 --status doing --as dev-1
 error UNKNOWN_STATUS: "doing" is not a configured status
@@ -125,6 +125,8 @@ error UNKNOWN_STATUS: "doing" is not a configured status
   fix: laneboard update LB-12 --status <status from allowed> --as dev-1
 ```
 A concrete value is suggested only for an obvious typo (`in-progress` → `in_progress`); see §14.
+- Options that are not repeatable in the table above (everything except `--label`, `--link`, `--field`, `--add-*`, `--remove-*`, `--unset-field`, list `--status`) may appear once: a repeat → `USAGE` (`--status is given 2 times`), never "last one wins".
+- Text that starts with `-` (a Markdown list item, `-1 …`): positionals go after `--` (`laneboard comment LB-1 --as me -- "- item"`), option values use `--opt=value` (`--description="- a"`). Otherwise `UNKNOWN_OPTION`/`USAGE` with that exact command as `fix`.
 
 ## 6. MCP (`laneboard mcp`, stdio, SDK `McpServer.registerTool` + `StdioServerTransport`, verified in sdk@1.30.0 `dist/esm/server/mcp.d.ts`)
 - 11 tools, same names/params as §5 (snake_case: `expected_rev`, `description`, `add_labels`…): task_create, task_get, task_list, task_update, task_claim, task_comment, task_attach (`path` | `remove`), task_archive (`ids` | `status`+`updated_before`, `dry_run`), task_restore, task_delete (`confirm_id`), task_events. Status changes only via task_update.
@@ -146,6 +148,7 @@ A concrete value is suggested only for an obvious typo (`in-progress` → `in_pr
 10. Done tasks: `laneboard archive <ID>`. Find old ones: `laneboard list --scope all --text <q>`.
 11. Ids are exact, e.g. LB-12. Store not found: export LANEBOARD_DIR=<abs>/.laneboard.
 12. Every error has `fix`: run it or adapt it. Exit codes: 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store.
+13. Text starting with "-": options first, then `--`, then the text (`laneboard comment <ID> --as <you> -- "- item"`); option values as `--description="- item"`.
 ```
 
 ## 8. Board (`laneboard board`, Vue 3 SPA built by Vite into `dist/board/`, served by `node:http`)
@@ -235,6 +238,7 @@ DoD: fixture of 5 files → import creates 5, re-import creates 0 and skips 5; `
 | Q2 (answered: global install) | Plugin needs `npm i -g laneboard` (plugin cannot install binaries). Alternative: `npx -y laneboard@<ver>` in `.mcp.json`/hook pins versions but needs network and adds start-up latency (npx in plugin `.mcp.json`: VERIFY). | global install, hook prints install hint |
 | Q3 (answered: MIT) | License MIT (as Backlog.md, beads) or Apache-2.0 (patent grant)? | MIT |
 | Q4 (answered: macOS + Linux only; `os` in package.json, CI matrix) | Windows in v1? rename over a file open in another process can fail there; no CI coverage planned. | macOS + Linux only, documented |
+| R6 | The mtime lock cannot stop a holder that pauses inside the write itself (after its last deadline check, a window of milliseconds); proper-lockfile has no fencing token. | accepted for v1; the deadline check runs before every file write |
 | R5 | SDK 1.30 pulls express, hono, jose, ajv… for a stdio-only server; proper-lockfile's 10 s stale window stalls writers after a crash. | measure in S2; if footprint is unacceptable, bundle with esbuild or switch to own JSON-RPC (new ADR) |
 
 Sources (accessed 2026-11-03): [plugins] code.claude.com/docs/en/plugins · [components] …/plugins/components.md · [marketplace] …/plugins/marketplace-reference.md · [hooks] …/hooks.md · [mcp] …/mcp.md · [memory] …/memory.md · [codex-mcp] developers.openai.com/codex/mcp (→ learn.chatgpt.com/docs/extend/mcp) · [agents-md] learn.chatgpt.com/docs/agent-configuration/agents-md · [cursor-mcp] cursor.com/docs/context/mcp · [cursor-rules] cursor.com/docs/context/rules · [gemini-mcp] geminicli.com/docs/tools/mcp-server · [gemini-md] geminicli.com/docs/cli/gemini-md · [opencode-mcp] opencode.ai/docs/mcp-servers · [opencode-rules] opencode.ai/docs/rules · MCP SDK: npm @modelcontextprotocol/sdk 1.30.0 type definitions · proper-lockfile 4.1.2 `lib/lockfile.js`.
@@ -243,12 +247,13 @@ Sources (accessed 2026-11-03): [plugins] code.claude.com/docs/en/plugins · [com
 - Schema: `schema/*.json` is generated by `z.toJSONSchema` and is the reference; it differs in form from the §2 sketch (no `$defs`, nullable as a type list, no `uniqueItems` on labels — core de-duplicates labels and links instead).
 - Config value formats: `prefix` `^[A-Z][A-Z0-9]{0,9}$`; each status `^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, non-empty and unique; field keys `^[a-z][a-z0-9_]{0,39}$`; `fields.<k>.description` optional.
 - New error code `STORE_EXISTS` (exit 6, http 409). `init` writes under the lock in the target dir, config.json last; target = `--dir`, else `LANEBOARD_DIR`, else `<cwd>/.laneboard` (no walk-up).
-- Fixes never guess a distant value: an agent may run a fix blindly, so `doing` does not become `done`. Suggestion only when equal ignoring case and `-_`, or one edit/transposition away; otherwise a placeholder `<field from allowed>`. The CLI rebuilds the user's own argv with the corrected token.
+- Fixes never guess a distant value: an agent may run a fix blindly, so `doing` does not become `done`. Suggestion only when equal ignoring case and `-_`, or one edit/transposition away; otherwise a placeholder `<field from allowed>` or a format placeholder (`--field priority=<number>`, `--since <YYYY-MM-DDTHH:MM:SS.sssZ>`). The CLI rebuilds the user's own argv with the corrected token; a fix never points to `--help` (usage errors print the command's usage line). For the same reason the `ALREADY_CLAIMED` fix is a `comment` command and never a takeover.
+- Attachments: `deny_names` is checked against the stored name, the source name and the symlink target name, before the name format check (so no fix suggests renaming a secret).
 - Op inputs (shared by CLI and MCP): snake_case; `assignee: null` unassigns (no separate `unassign`); `labels` (list filter); `fields` (typed) plus `field_args` (CLI `key=value`, parsed with declared types — MCP should expose only `fields`). Paths for attach must be absolute (CLI resolves against cwd).
 - List items also carry `archived` (needed with `--scope all`). `--text` matches id, title, description and labels, case-insensitive.
 - `events`: newest first; `--since` is exclusive; default limit 20 (max `list_limit_max`); `--task` searches both files and ignores `--scope`.
 - Semantics: a comment is a change (task rev +1); `update`/`claim` with values equal to the current ones is a no-op (rev unchanged, warning `no changes`); archive of an archived task → `TASK_ARCHIVED`; restore of an active task → `INVALID_VALUE`; delete needs an actor and records no event (the task is gone).
-- Write path: fault points are `after_tmp_write` and `between_files`; transact writes the file that gains tasks first (archive → archive.json first, restore → active.json first), which implements W6 generically. A lost lock (heartbeat missed) aborts before the next file write with `LOCK_TIMEOUT`. Attachment tmp files live in the store root, so orphan cleanup never scans attachment names.
+- Write path: fault points are `after_tmp_write` and `between_files`; transact writes the file that gains tasks first (archive → archive.json first, restore → active.json first), which implements W6 generically. Bodies under the lock are synchronous, so proper-lockfile's heartbeat (and its compromised callback) never runs inside them; instead `HeldLock.assertHeld()` before every file write (store files, attachment file, doctor repairs) fails with `LOCK_LOST` (exit 5) once 5 s have passed since the acquire. On release after ≥ 10 s the lock directory is left in place (stale, so the next writer takes it at once) instead of removing what may be another process's lock. Attachment tmp files live in the store root, so orphan cleanup never scans attachment names.
 - `doctor` exits 0 and reports `data.healthy`; `--restore-backup` swaps only files that fail to read, keeps the broken one as `<file>.invalid-<ts>`. `migrate` only verifies store@1 (no older format exists).
 - CLI: `src/cli/run.ts` holds the in-process runner (`runCli(io)`), `main.ts` is the bin wrapper; tests drive the runner in-process and the real process via `node src/cli/main.ts`.
 - Tooling: tests and scripts run TypeScript directly through Node type stripping (development needs Node ≥22.18; the published package is compiled and needs ≥22). Runtime deps in S1: `zod`, `proper-lockfile` only (MCP SDK arrives in S2, `yaml` in S5). `npm install` with npm 10.9 (Node 22) crashes on the vitest 5 peer tree (arborist `edgesOut`); the lockfile was produced with npm 11; `npm ci` works with both.

@@ -54,7 +54,7 @@ export interface CliRun {
 }
 
 // Run the CLI in-process with an isolated environment.
-export async function cli(argv: string[], opts: { cwd: string; env?: Record<string, string>; stdin?: string; lockWaitMs?: number }): Promise<CliRun> {
+export async function cli(argv: string[], opts: { cwd: string; env?: Record<string, string>; stdin?: string; lockWaitMs?: number; lockMaxHoldMs?: number }): Promise<CliRun> {
   let stdout = '';
   let stderr = '';
   const code = await runCli({
@@ -69,6 +69,7 @@ export async function cli(argv: string[], opts: { cwd: string; env?: Record<stri
       stderr += t;
     },
     lockWaitMs: opts.lockWaitMs,
+    lockMaxHoldMs: opts.lockMaxHoldMs,
   });
   return { code, stdout, stderr };
 }

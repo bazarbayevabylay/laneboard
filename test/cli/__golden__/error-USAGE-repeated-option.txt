@@ -1,0 +1,15 @@
+# error-USAGE-repeated-option
+$ laneboard update LB-1 --status done --status todo --as a
+exit 2
+--- stdout
+
+--- stderr
+error USAGE: --status is given 2 times ("done", "todo"); pass it once
+  fix: laneboard update LB-1 --status <one of: done, todo> --as a
+
+$ laneboard update LB-1 --status done --status todo --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":null,"error":{"code":"USAGE","message":"--status is given 2 times (\"done\", \"todo\"); pass it once","fix":"laneboard update LB-1 --status <one of: done, todo> --as a --json"}}
+--- stderr
+

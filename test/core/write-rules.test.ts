@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { archiveTasks, createTask, deleteTask, getTask, listTasks, restoreTask, updateTask } from '../../src/core/index.ts';
-import { acquireLock } from '../../src/core/lock.ts';
+import { archiveTasks, attachFile, createTask, deleteTask, getTask, listTasks, restoreTask, transact, updateTask } from '../../src/core/index.ts';
+import { acquireLock, LOCK_MAX_HOLD_MS, LOCK_STALE_MS } from '../../src/core/lock.ts';
 import { contentSha } from '../../src/core/store.ts';
 import { as, cleanupTemp, CLI_SOURCE, newStore, readStore, rejectsWith, spawnNode, writeRaw } from '../helpers.ts';
 
@@ -174,5 +174,47 @@ describe('W2 lock wait budget', () => {
     const started = Date.now();
     expect((await createTask(as(s, 'tester', { lockWaitMs: 2000 }), { title: 'a', status: 'todo' })).data.id).toBe('LB-1');
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+describe('W2 write deadline (lost lock)', () => {
+  it('a mutation that outlives the deadline fails with LOCK_LOST and writes nothing; the lock is released', async () => {
+    expect(LOCK_MAX_HOLD_MS).toBeLessThan(LOCK_STALE_MS);
+    const s = await newStore();
+    await createTask(as(s), { title: 'first', status: 'todo' });
+    const files = ['active.json', 'active.json.bak', 'archive.json'].map((f) => path.join(s.dir, f));
+    const before = files.map((f) => fs.readFileSync(f, 'utf8'));
+    const slow = transact(
+      s.store,
+      { files: ['active', 'archive'] },
+      (st) => {
+        // Synchronous stall, as in a paused process: no heartbeat can run here.
+        const end = Date.now() + 80;
+        while (Date.now() < end);
+        const task = st.active.tasks[0];
+        if (task) task.title = 'late write';
+      },
+      { lockMaxHoldMs: 40 },
+    );
+    const err = await rejectsWith(slow, 'LOCK_LOST');
+    expect(err.message).toContain('nothing was written');
+    expect(files.map((f) => fs.readFileSync(f, 'utf8'))).toEqual(before);
+    expect(tmpFiles(s.dir)).toEqual([]);
+    // Held well under the stale window: still our lock, so it was released and the next writer gets it at once.
+    expect((await createTask(as(s, 'tester', { lockWaitMs: 300 }), { title: 'next', status: 'todo' })).data.id).toBe('LB-2');
+  });
+
+  it('every write op passes the deadline through; attach writes no file once the lock is too old', async () => {
+    const s = await newStore();
+    await createTask(as(s), { title: 'first', status: 'todo' });
+    const late = as(s, 'tester', { lockMaxHoldMs: 0 });
+    await rejectsWith(createTask(late, { title: 'x', status: 'todo' }), 'LOCK_LOST');
+    await rejectsWith(updateTask(late, { id: 'LB-1', title: 'y' }), 'LOCK_LOST');
+    await rejectsWith(archiveTasks(late, { ids: ['LB-1'] }), 'LOCK_LOST');
+    const src = path.join(s.root, 'notes.txt');
+    fs.writeFileSync(src, 'n');
+    await rejectsWith(attachFile(late, { id: 'LB-1', path: src }), 'LOCK_LOST');
+    expect(fs.existsSync(path.join(s.dir, 'attachments', 'LB-1'))).toBe(false);
+    expect(readStore(s.dir, 'active').rev).toBe(1);
   });
 });

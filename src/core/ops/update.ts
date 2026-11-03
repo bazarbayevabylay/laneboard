@@ -25,6 +25,7 @@ import {
   TitleInput,
   toTaskView,
   touch,
+  txOptions,
   unique,
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
@@ -145,7 +146,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       }
       return toTaskView(task, false);
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }
@@ -171,10 +172,15 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const task = requireActiveTask(s, id);
       checkExpectedRev(task, false, p.expected_rev);
       if (task.assignee !== null && task.assignee !== actor) {
-        throw new LaneboardError('ALREADY_CLAIMED', `task ${id} is already claimed by ${task.assignee}`, {
-          details: { assignee: task.assignee },
-          fix: `do not take over: comment (laneboard comment ${id} "...") or ask the orchestrator; to reassign on purpose: laneboard update ${id} --assignee ${actor}`,
-        });
+        // The fix may be run blindly, so it never takes the task over; reassignment is only named in the message.
+        throw new LaneboardError(
+          'ALREADY_CLAIMED',
+          `task ${id} is already claimed by ${task.assignee}; do not take it over. Only if reassignment is intentional and agreed: laneboard update ${id} --assignee ${actor}`,
+          {
+            details: { assignee: task.assignee },
+            fix: `laneboard comment ${id} "<note for ${task.assignee}>" --as ${actor}`,
+          },
+        );
       }
       const assignChange = task.assignee !== actor ? { from: task.assignee, to: actor } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
@@ -193,7 +199,7 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       }
       return toTaskView(task, false);
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }
@@ -219,7 +225,7 @@ export async function commentTask(ctx: OpContext, input: CommentInputT): Promise
       addEvent(task, s.config, s.now, actor, 'commented', { text: p.text });
       return toTaskView(task, false);
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }

@@ -1,0 +1,15 @@
+# error-INVALID_VALUE-since
+$ laneboard events --since yesterday
+exit 2
+--- stdout
+
+--- stderr
+error INVALID_VALUE: since: "yesterday" is not an ISO 8601 UTC time
+  fix: laneboard events --since <YYYY-MM-DDTHH:MM:SS.sssZ>
+
+$ laneboard events --since yesterday --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"INVALID_VALUE","message":"since: \"yesterday\" is not an ISO 8601 UTC time","fix":"laneboard events --since <YYYY-MM-DDTHH:MM:SS.sssZ> --json"}}
+--- stderr
+

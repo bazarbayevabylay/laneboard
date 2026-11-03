@@ -13,35 +13,52 @@ export function commandLine(argv: readonly string[], placeholders: ReadonlySet<n
   return ['laneboard', ...argv.map((t, i) => (placeholders.has(i) ? t : shellQuote(t)))].join(' ');
 }
 
-// Replace the offending value in argv with the suggestion (or a placeholder when only `allowed` is known).
+// Replace the offending value in argv with the suggestion, else a format or `allowed` placeholder.
 function replaceValue(argv: readonly string[], err: LaneboardError): string | undefined {
   const input = err.input;
   if (!input) return undefined;
-  const replacement = input.suggestion ?? (err.allowed?.length ? `<${input.field} from allowed>` : undefined);
+  const replacement = input.suggestion ?? input.format ?? (err.allowed?.length ? `<${input.field} from allowed>` : undefined);
   if (replacement === undefined) return undefined;
+  const value = input.value;
+  // The value is a whole token, the tail of `--flag=value`, or the key of `key=value` (`--field priorty=1`).
+  const rewrite = (token: string): string | undefined => {
+    if (token === value) return replacement;
+    if (token.endsWith(`=${value}`)) return `${token.slice(0, token.length - value.length)}${replacement}`;
+    if (token.startsWith(`${value}=`)) return `${replacement}${token.slice(value.length)}`;
+    const inner = new RegExp(`^(--[^=]+=)${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(=.*)$`, 's').exec(token);
+    return inner ? `${inner[1] ?? ''}${replacement}${inner[2] ?? ''}` : undefined;
+  };
   const flag = `--${input.field.replace(/_/g, '-')}`;
   const hits: number[] = [];
   argv.forEach((token, i) => {
-    if (token === input.value || token.endsWith(`=${input.value}`)) hits.push(i);
+    if (rewrite(token) !== undefined) hits.push(i);
   });
   const index = hits.length === 1 ? hits[0] : hits.find((i) => argv[i - 1] === flag || argv[i]?.startsWith(`${flag}=`));
   if (index === undefined) return undefined;
   const out = [...argv];
-  const token = out[index] ?? '';
-  out[index] = token === input.value ? replacement : `${token.slice(0, token.length - input.value.length)}${replacement}`;
+  out[index] = rewrite(out[index] ?? '') ?? replacement;
   const placeholders = input.suggestion === undefined ? new Set([index]) : new Set<number>();
   return commandLine(out, placeholders);
 }
 
-// The fix shown to a CLI user: a corrected command when one can be built, else the core fix.
-export function cliFix(err: LaneboardError, argv: readonly string[], command: string | undefined): string {
+// argv with extra option tokens inserted before `--` (after it they would be read as text).
+function withOptions(argv: readonly string[], extra: readonly string[]): string[] {
+  const end = argv.indexOf('--');
+  return end < 0 ? [...argv, ...extra] : [...argv.slice(0, end), ...extra, ...argv.slice(end)];
+}
+
+// The fix shown to a CLI user: a corrected command when one can be built, else the usage line, else the core fix.
+export function cliFix(err: LaneboardError, argv: readonly string[], command: { name: string; usage: string } | undefined): string {
   const rebuilt = replaceValue(argv, err);
   if (rebuilt) return rebuilt;
-  if (err.code === 'ACTOR_REQUIRED') return `${commandLine(argv)} --as <your-name>   (or export LANEBOARD_AGENT=<your-name>)`;
-  if ((err.code === 'USAGE' || err.code === 'UNKNOWN_OPTION') && err.fix === ERRORS[err.code].fix) {
-    return command ? `laneboard ${command} --help` : 'laneboard --help';
+  if (err.code === 'ACTOR_REQUIRED') {
+    const out = withOptions(argv, ['--as', '<your-name>']);
+    return `${commandLine(out, new Set([out.indexOf('<your-name>')]))}   (or export LANEBOARD_AGENT=<your-name>)`;
   }
-  return command ? err.fix.replace('<command>', command) : err.fix;
+  if ((err.code === 'USAGE' || err.code === 'UNKNOWN_OPTION') && err.fix === ERRORS[err.code].fix) {
+    return command ? `laneboard ${command.usage}` : 'laneboard <command from allowed> [options]';
+  }
+  return command ? err.fix.replace('<command>', command.name) : err.fix;
 }
 
 // Success envelope (one JSON document on stdout).

@@ -4,10 +4,11 @@ import path from 'node:path';
 import { z } from 'zod';
 import { buildConfig, configPath, DEFAULT_PREFIX, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
-import { ensureDir, listOrphanTmp, moveAside, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
+import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
 import type { ConfigT, FileKind } from '../schema.ts';
 import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, serializeStoreFile, storeFilePath, validateStoreJson } from '../store.ts';
+import type { HeldLock, LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
@@ -28,30 +29,37 @@ export interface InitResult {
 }
 
 // Create a store at `target` with an explicit config and empty files; refuses an existing or non-empty directory.
-export async function initStore(target: string, input: InitInputT, opts: { lockWaitMs?: number } = {}): Promise<OpResult<InitResult>> {
+export async function initStore(target: string, input: InitInputT, opts: LockOptions = {}): Promise<OpResult<InitResult>> {
   const p = parseInput(InitInput, input);
   const prefix = p.prefix ?? DEFAULT_PREFIX;
   if (!PREFIX_RE.test(prefix)) {
     throw new LaneboardError('INVALID_VALUE', `prefix "${prefix}" must match ^[A-Z][A-Z0-9]{0,9}$`, {
-      input: { field: 'prefix', value: prefix, ...(PREFIX_RE.test(prefix.toUpperCase()) ? { suggestion: prefix.toUpperCase() } : {}) },
+      input: { field: 'prefix', value: prefix, format: '<PREFIX like WEB>', ...(PREFIX_RE.test(prefix.toUpperCase()) ? { suggestion: prefix.toUpperCase() } : {}) },
+      fix: 'use 1-10 uppercase letters and digits starting with a letter, e.g. --prefix WEB',
     });
   }
   const statuses = p.statuses ?? DEFAULT_STATUSES;
   for (const status of statuses) {
     if (!STATUS_RE.test(status)) {
-      throw new LaneboardError('INVALID_VALUE', `status "${status}" must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, { input: { field: 'statuses', value: status } });
+      throw new LaneboardError('INVALID_VALUE', `status "${status}" must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, {
+        input: { field: 'statuses', value: status },
+        fix: 'use letters, digits, dot, dash or underscore in each status, comma-separated: --statuses todo,doing,done',
+      });
     }
   }
-  if (unique(statuses).length !== statuses.length) throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`);
+  if (unique(statuses).length !== statuses.length) {
+    throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`, { fix: `list each status once: --statuses ${unique(statuses).join(',')}` });
+  }
   const config = validateConfig(buildConfig(prefix, [...statuses]), 'config.json');
   ensureDir(target);
-  await withLock({ dir: target }, opts.lockWaitMs, () => {
+  await withLock({ dir: target }, opts, (lock) => {
     if (fs.existsSync(configPath(target))) {
       throw new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${target}), or pass --dir <another empty directory>` });
     }
     const other = fs.readdirSync(target).filter((name) => name !== 'lock');
     if (other.length) throw new LaneboardError('STORE_EXISTS', `${target} is not empty (${other.slice(0, 3).join(', ')})`);
     const now = new Date().toISOString();
+    lock.assertHeld();
     for (const kind of FILE_KINDS) writeFileAtomic(storeFilePath(target, kind), serializeStoreFile(emptyStoreFile(kind, now)), 0o444);
     ensureDir(path.join(target, 'attachments'));
     if (p.gitignore !== false) writeFileAtomic(path.join(target, '.gitignore'), '*\n', 0o644);
@@ -70,7 +78,7 @@ export interface MigrateResult {
 export async function migrateStore(ctx: OpContext): Promise<OpResult<MigrateResult>> {
   const warnings: string[] = [];
   const migrated: string[] = [];
-  await withLock(ctx.store, ctx.lockWaitMs, () => {
+  await withLock(ctx.store, ctx, () => {
     loadConfig(ctx.store.dir);
     for (const kind of FILE_KINDS) {
       const file = readStoreFile(ctx.store.dir, kind, warnings);
@@ -112,10 +120,10 @@ function countTasks(raw: string | undefined): string {
   }
 }
 
-// Read a file's text, undefined when missing.
-function readText(file: string): string | undefined {
+// Read a file's bytes, undefined when missing.
+function readBytes(file: string): Buffer | undefined {
   try {
-    return fs.readFileSync(file, 'utf8');
+    return fs.readFileSync(file);
   } catch {
     // Missing or unreadable: reported by the caller.
     return undefined;
@@ -123,18 +131,24 @@ function readText(file: string): string | undefined {
 }
 
 // Swap in `<kind>.json.bak` for an invalid file; the broken file is kept next to it.
-function restoreFromBackup(storeDir: string, kind: FileKind, now: string): { ok: boolean; message: string } {
-  const current = readText(storeFilePath(storeDir, kind));
-  const backup = readText(backupPath(storeDir, kind));
-  const counts = `current: ${countTasks(current)}; backup: ${countTasks(backup)}`;
+function restoreFromBackup(storeDir: string, kind: FileKind, now: string, lock: HeldLock): { ok: boolean; message: string } {
+  const current = readBytes(storeFilePath(storeDir, kind));
+  const backup = readBytes(backupPath(storeDir, kind));
+  const counts = `current: ${countTasks(current?.toString('utf8'))}; backup: ${countTasks(backup?.toString('utf8'))}`;
   if (backup === undefined) return { ok: false, message: `invalid and no ${kind}.json.bak to restore (${counts})` };
   try {
-    validateStoreJson(JSON.parse(backup), kind, `${kind}.json.bak`);
+    validateStoreJson(JSON.parse(backup.toString('utf8')), kind, `${kind}.json.bak`);
   } catch (err) {
     return { ok: false, message: `invalid, and ${kind}.json.bak is invalid too: ${(err as Error).message} (${counts})` };
   }
+  lock.assertHeld();
   let kept = '';
-  if (current !== undefined) kept = `; broken file kept as ${path.basename(moveAside(storeFilePath(storeDir, kind), `${kind}.json.invalid-${now.replace(/[:.]/g, '-')}`))}`;
+  // Copy the broken file aside first, then replace it in one atomic step: lock-free readers never see it missing.
+  if (current !== undefined) {
+    const keptName = `${kind}.json.invalid-${now.replace(/[:.]/g, '-')}`;
+    writeFileAtomic(path.join(storeDir, keptName), current, 0o444);
+    kept = `; broken file kept as ${keptName}`;
+  }
   writeFileAtomic(storeFilePath(storeDir, kind), backup, 0o444);
   return { ok: true, message: `restored from ${kind}.json.bak (${counts})${kept}` };
 }
@@ -148,7 +162,7 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
   const add = (name: string, ok: boolean, message: string, fixed = false): void => {
     checks.push({ name, ok, fixed, message });
   };
-  await withLock(ctx.store, ctx.lockWaitMs, (lock) => {
+  await withLock(ctx.store, ctx, (lock) => {
     const now = new Date().toISOString();
     try {
       loadConfig(dir);
@@ -170,7 +184,7 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
           add(`${kind}.json`, false, `${(err as Error).message}; to roll back: laneboard doctor --restore-backup`);
           continue;
         }
-        const restored = restoreFromBackup(dir, kind, now);
+        const restored = restoreFromBackup(dir, kind, now, lock);
         add(`${kind}.json`, false, restored.message, restored.ok);
         if (!restored.ok) continue;
         file = readStoreFile(dir, kind, shaWarnings);
@@ -200,6 +214,8 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
       add('next_id', false, `next_id ${nextId} is not above the highest id number ${max}${fix ? `; set to ${max + 1}` : '; --fix sets it above'}`, fix);
     } else add('next_id', true, `next_id ${nextId} > highest id number ${max}`);
 
+    // Every repair below deletes or rewrites files: only while the lock is surely still ours.
+    if (fix) lock.assertHeld();
     const tmp = listOrphanTmp(dir);
     if (tmp.length) {
       if (fix) removeOrphanTmp(dir);

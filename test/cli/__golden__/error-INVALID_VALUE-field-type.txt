@@ -1,0 +1,15 @@
+# error-INVALID_VALUE-field-type
+$ laneboard update LB-1 --field priority=high --as a
+exit 2
+--- stdout
+
+--- stderr
+error INVALID_VALUE: field priority is number: expected a number, got "high"
+  fix: laneboard update LB-1 --field priority=<number> --as a
+
+$ laneboard update LB-1 --field priority=high --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"INVALID_VALUE","message":"field priority is number: expected a number, got \"high\"","fix":"laneboard update LB-1 --field priority=<number> --as a --json"}}
+--- stderr
+

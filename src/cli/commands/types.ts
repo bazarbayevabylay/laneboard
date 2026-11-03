@@ -15,6 +15,8 @@ export interface CliIo {
   stderr(text: string): void;
   // Override of the 15 s lock wait budget (tests only).
   lockWaitMs?: number;
+  // Override of the 5 s write deadline after the lock acquire (tests only).
+  lockMaxHoldMs?: number;
 }
 
 export interface CommandContext {

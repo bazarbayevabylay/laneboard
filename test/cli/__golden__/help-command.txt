@@ -7,12 +7,13 @@ laneboard create <title> --status S [--description T | --description-file P|-] [
 Create a task; prints its id.
 
 Global options: --json, --dir <path>, --as <actor>, --help
+Text that starts with "-": after -- (options first), or as --option=<value>.
 --- stderr
 
 
 $ laneboard create --help --json
 exit 0
 --- stdout
-{"ok":true,"store":null,"data":{"help":"laneboard create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...\n\nCreate a task; prints its id.\n\nGlobal options: --json, --dir <path>, --as <actor>, --help"},"warnings":[]}
+{"ok":true,"store":null,"data":{"help":"laneboard create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...\n\nCreate a task; prints its id.\n\nGlobal options: --json, --dir <path>, --as <actor>, --help\nText that starts with \"-\": after -- (options first), or as --option=<value>."},"warnings":[]}
 --- stderr
 

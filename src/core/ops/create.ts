@@ -19,6 +19,7 @@ import {
   requireActor,
   TitleInput,
   toTaskView,
+  txOptions,
   unique,
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
@@ -85,7 +86,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
       s.active.tasks.push(task);
       return toTaskView(task, false);
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }

@@ -1,4 +1,5 @@
 // Business rules of core ops: validation, events, claim, attachments, archive, delete, list, events feed.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -15,6 +16,7 @@ import {
   restoreTask,
   updateTask,
 } from '../../src/core/index.ts';
+import { acquireLock } from '../../src/core/lock.ts';
 import { as, cleanupTemp, newStore, readStore, rejectsWith, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
@@ -181,6 +183,9 @@ describe('claim', () => {
     expect(again.data.rev).toBe(2);
     const err = await rejectsWith(claimTask(as(s, 'dev-2'), { id: 'LB-1' }), 'ALREADY_CLAIMED');
     expect(err.details).toEqual({ assignee: 'dev-1' });
+    // Agents run a fix as is, so it must never take the task over; reassignment is only named in the message.
+    expect(err.fix).toBe('laneboard comment LB-1 "<note for dev-1>" --as dev-2');
+    expect(err.message).toContain('intentional and agreed: laneboard update LB-1 --assignee dev-2');
     await rejectsWith(claimTask(as(s, 'dev-1'), { id: 'LB-1', expected_rev: 1 }), 'REV_CONFLICT');
   });
 });
@@ -219,6 +224,56 @@ describe('attach', () => {
     expect(off.data.attachments).toEqual([]);
     expect(fs.existsSync(stored)).toBe(false);
     await rejectsWith(attachFile(as(s), { id: 'LB-1', remove: 'report.md' }), 'ATTACHMENT_NOT_FOUND');
+  });
+
+  it('a symlink to a secret is refused by its target name; a secret is refused before the name format check', async () => {
+    const s = await newStore();
+    await createTask(as(s), { title: 'a', status: 'todo' });
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, '.env'), 'TOKEN=x\n');
+    fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'config-notes.txt'));
+    const viaLink = await rejectsWith(attachFile(as(s), { id: 'LB-1', path: path.join(dir, 'config-notes.txt') }), 'INVALID_VALUE');
+    expect(viaLink.message).toContain('link target of config-notes.txt ".env" matches attachments.deny_names');
+    expect(fs.existsSync(path.join(s.dir, 'attachments', 'LB-1'))).toBe(false);
+    // `.env` fails the name format too; the secret rule must win, or the fix would suggest renaming a secret.
+    const direct = await rejectsWith(attachFile(as(s), { id: 'LB-1', path: path.join(dir, '.env') }), 'INVALID_VALUE');
+    expect(direct.message).toContain('deny_names');
+    expect(direct.fix).not.toContain('--name');
+    // A link to an ordinary file is fine and stores the target's bytes.
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'plain');
+    fs.symlinkSync(path.join(dir, 'notes.txt'), path.join(dir, 'link.txt'));
+    const ok = await attachFile(as(s), { id: 'LB-1', path: path.join(dir, 'link.txt') });
+    expect(ok.data.attachments[0]).toMatchObject({ name: 'link.txt', size: 5 });
+  });
+
+  it('reads the source before taking the lock (M2): bytes changed while waiting for the lock are not stored', async () => {
+    const s = await newStore();
+    await createTask(as(s), { title: 'a', status: 'todo' });
+    const src = sourceFile('log.txt', 'before');
+    const held = await acquireLock(s.dir);
+    const pending = attachFile(as(s, 'tester', { lockWaitMs: 5000 }), { id: 'LB-1', path: src });
+    fs.writeFileSync(src, 'after, while the lock was busy');
+    await held.release();
+    const r = await pending;
+    expect(fs.readFileSync(path.join(s.dir, 'attachments', 'LB-1', 'log.txt'), 'utf8')).toBe('before');
+    expect(r.data.attachments[0]).toMatchObject({ size: 6 });
+  });
+
+  it('refuses a directory and a FIFO without hanging, with a concrete fix', async () => {
+    const s = await newStore();
+    await createTask(as(s), { title: 'a', status: 'todo' });
+    const dir = tempDir();
+    const asDir = await rejectsWith(attachFile(as(s), { id: 'LB-1', path: dir }), 'INVALID_VALUE');
+    expect(asDir.fix).toContain('regular file');
+    const fifo = path.join(dir, 'pipe.txt');
+    execFileSync('mkfifo', [fifo]);
+    await rejectsWith(attachFile(as(s), { id: 'LB-1', path: fifo }), 'INVALID_VALUE');
+    patchConfig(s, (c) => {
+      c.limits.attachment_bytes = 3;
+    });
+    const big = await rejectsWith(attachFile(as(s), { id: 'LB-1', path: sourceFile('big.txt', 'four') }), 'INVALID_VALUE');
+    expect(big.fix).toBe('attach a file of at most 3 bytes, or raise limits.attachment_bytes in .laneboard/config.json');
+    expect((await attachFile(as(s), { id: 'LB-1', path: sourceFile('ok.txt', 'abc') })).data.attachments[0]).toMatchObject({ size: 3 });
   });
 });
 

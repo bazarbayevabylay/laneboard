@@ -1,0 +1,14 @@
+# comment-dash-text
+$ laneboard comment LB-1 --as a -- '- item one'
+exit 0
+--- stdout
+LB-1 commented (rev 2)
+--- stderr
+
+
+$ laneboard comment LB-1 --as a --json -- '- item one'
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":2,"title":"Fix login","description":"","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"commented","data":{"text":"- item one"}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
+--- stderr
+

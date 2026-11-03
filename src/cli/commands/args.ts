@@ -26,7 +26,10 @@ export function int(values: Values, name: string): number | undefined {
   const raw = str(values, name);
   if (raw === undefined) return undefined;
   if (!/^[0-9]+$/.test(raw)) {
-    throw new LaneboardError('INVALID_VALUE', `--${name} must be a whole number, got "${raw}"`, { input: { field: name, value: raw } });
+    throw new LaneboardError('INVALID_VALUE', `--${name} must be a whole number, got "${raw}"`, {
+      input: { field: name, value: raw, format: '<whole number>' },
+      fix: `pass --${name} as a whole number, e.g. --${name} 1`,
+    });
   }
   return Number(raw);
 }
@@ -43,7 +46,10 @@ export function readTextFile(io: CliIo, file: string, option: string): string {
     return fs.readFileSync(path.resolve(io.cwd, file), 'utf8');
   } catch {
     // Unreadable file is an input error for this option.
-    throw new LaneboardError('INVALID_VALUE', `--${option} ${file}: file cannot be read`, { input: { field: option, value: file } });
+    throw new LaneboardError('INVALID_VALUE', `--${option} ${file}: file cannot be read`, {
+      input: { field: option, value: file },
+      fix: `pass the path of an existing, readable file to --${option}, or - to read stdin`,
+    });
   }
 }
 

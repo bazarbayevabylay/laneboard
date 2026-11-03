@@ -30,6 +30,8 @@ interface Case {
   holdLock?: boolean;
   // Make the store directory read-only while the command runs.
   readOnlyStore?: boolean;
+  // Write deadline after the lock acquire (0 = every write finds the lock lost).
+  lockMaxHoldMs?: number;
 }
 
 const seed = async (e: Env): Promise<void> => {
@@ -95,6 +97,8 @@ const CASES: Case[] = [
   { name: 'claim', argv: ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'], setup: seed },
   { name: 'comment', argv: ['comment', 'LB-1', 'tests pass', '--as', 'a'], setup: seed },
   { name: 'comment-file', argv: ['comment', 'LB-1', '--file', '-', '--as', 'a'], setup: seed, stdin: 'long\nresult\n' },
+  { name: 'comment-dash-text', argv: ['comment', 'LB-1', '--as', 'a', '--', '- item one'], setup: seed },
+  { name: 'update-dash-value', argv: ['update', 'LB-1', '--title=-x thing', '--description=- a', '--as', 'a'], setup: seed },
   { name: 'attach', argv: ['attach', 'LB-1', 'notes.txt', '--as', 'a'], setup: seedFile },
   { name: 'attach-remove', argv: ['attach', 'LB-1', '--remove', 'notes.txt', '--as', 'a'], setup: seedAttached },
   { name: 'archive', argv: ['archive', 'LB-1', '--as', 'a'], setup: seed },
@@ -121,11 +125,18 @@ const CASES: Case[] = [
   { name: 'error-USAGE-missing-flag', argv: ['delete', 'LB-1', '--as', 'a'], error: 'USAGE', setup: seed },
   { name: 'error-USAGE-no-command', argv: [], error: 'USAGE', store: false },
   { name: 'error-USAGE-unknown-command', argv: ['craete', 'x'], error: 'USAGE', store: false },
+  { name: 'error-USAGE-repeated-option', argv: ['update', 'LB-1', '--status', 'done', '--status', 'todo', '--as', 'a'], error: 'USAGE', setup: seed },
+  { name: 'error-USAGE-dash-value', argv: ['create', 't', '--status', 'todo', '--description', '- a\n- b', '--as', 'a'], error: 'USAGE' },
   { name: 'error-UNKNOWN_OPTION', argv: ['create', 'x', '--stauts', 'todo', '--as', 'a'], error: 'UNKNOWN_OPTION' },
+  { name: 'error-UNKNOWN_OPTION-dash-text', argv: ['comment', 'LB-1', '- item one', '--as', 'a'], error: 'UNKNOWN_OPTION', setup: seed },
+  { name: 'error-UNKNOWN_OPTION-dash-title', argv: ['create', '-x', '--status', 'todo', '--as', 'a'], error: 'UNKNOWN_OPTION' },
   { name: 'error-INVALID_VALUE', argv: ['get', 'lb-1'], error: 'INVALID_VALUE', setup: seed },
+  { name: 'error-INVALID_VALUE-field-type', argv: ['update', 'LB-1', '--field', 'priority=high', '--as', 'a'], error: 'INVALID_VALUE', setup: seed },
+  { name: 'error-INVALID_VALUE-since', argv: ['events', '--since', 'yesterday'], error: 'INVALID_VALUE', setup: seed },
   { name: 'error-UNKNOWN_STATUS', argv: ['update', 'LB-1', '--status', 'doing', '--as', 'a'], error: 'UNKNOWN_STATUS', setup: seed },
   { name: 'error-UNKNOWN_STATUS-typo', argv: ['update', 'LB-1', '--status', 'in-progress', '--as', 'a'], error: 'UNKNOWN_STATUS', setup: seed },
   { name: 'error-UNKNOWN_FIELD', argv: ['update', 'LB-1', '--field', 'prio=1', '--as', 'a'], error: 'UNKNOWN_FIELD', setup: seed },
+  { name: 'error-UNKNOWN_FIELD-typo', argv: ['update', 'LB-1', '--field', 'priorty=1', '--as', 'a'], error: 'UNKNOWN_FIELD', setup: seed },
   { name: 'error-ACTOR_REQUIRED', argv: ['create', 'x', '--status', 'todo'], error: 'ACTOR_REQUIRED' },
   { name: 'error-TASK_NOT_FOUND', argv: ['get', 'LB-99'], error: 'TASK_NOT_FOUND', setup: seed },
   { name: 'error-ATTACHMENT_NOT_FOUND', argv: ['attach', 'LB-1', '--remove', 'nope.txt', '--as', 'a'], error: 'ATTACHMENT_NOT_FOUND', setup: seedAttached },
@@ -142,6 +153,7 @@ const CASES: Case[] = [
   { name: 'error-TASK_ARCHIVED', argv: ['comment', 'LB-1', 'more', '--as', 'a'], error: 'TASK_ARCHIVED', setup: seedArchived },
   { name: 'error-ATTACHMENT_EXISTS', argv: ['attach', 'LB-1', 'notes.txt', '--as', 'a'], error: 'ATTACHMENT_EXISTS', setup: seedAttached },
   { name: 'error-LOCK_TIMEOUT', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'LOCK_TIMEOUT', holdLock: true },
+  { name: 'error-LOCK_LOST', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'LOCK_LOST', lockMaxHoldMs: 0 },
   { name: 'error-STORE_NOT_FOUND', argv: ['list'], error: 'STORE_NOT_FOUND', store: false },
   {
     name: 'error-STORE_INVALID',
@@ -178,11 +190,13 @@ async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result
   const env: Env = { root, dir, run: (argv, stdin) => cli(argv, { cwd: root, stdin }) };
   if (c.store !== false) expect((await env.run(['init'])).code).toBe(0);
   await c.setup?.(env);
-  const argv = json ? [...c.argv, '--json'] : c.argv;
+  // `--json` goes before `--`: after it, it would be text.
+  const end = c.argv.indexOf('--');
+  const argv = !json ? c.argv : end < 0 ? [...c.argv, '--json'] : [...c.argv.slice(0, end), '--json', ...c.argv.slice(end)];
   const lock = c.holdLock ? await acquireLock(dir) : undefined;
   if (c.readOnlyStore) fs.chmodSync(dir, 0o555);
   try {
-    const result = await cli(argv, { cwd: root, stdin: c.stdin, lockWaitMs: 200 });
+    const result = await cli(argv, { cwd: root, stdin: c.stdin, lockWaitMs: 200, lockMaxHoldMs: c.lockMaxHoldMs });
     return { argv, result, root };
   } finally {
     if (c.readOnlyStore) fs.chmodSync(dir, 0o755);

@@ -5,7 +5,7 @@ import { removeDir } from '../fsio.ts';
 import type { StoreFileT, TaskT } from '../schema.ts';
 import { readBoth, transact } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { addEvent, checkExpectedRev, checkStatus, IdInput, locate, normalizeId, notFound, parseInput, requireActor, RevInput, toTaskView, touch, unique } from './common.ts';
+import { addEvent, checkExpectedRev, checkStatus, IdInput, locate, normalizeId, notFound, parseInput, requireActor, RevInput, toTaskView, touch, txOptions, unique } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -37,7 +37,8 @@ function cutoff(updatedBefore: string, now: Date): string {
   const m = /^([1-9][0-9]*)d$/.exec(updatedBefore);
   if (!m) {
     throw new LaneboardError('INVALID_VALUE', `updated_before "${updatedBefore}" must be a number of days like 14d`, {
-      input: { field: 'updated_before', value: updatedBefore },
+      input: { field: 'updated_before', value: updatedBefore, format: '<days like 14d>' },
+      fix: 'pass a whole number of days followed by d, e.g. 14d',
     });
   }
   return new Date(now.getTime() - Number(m[1]) * DAY_MS).toISOString();
@@ -94,7 +95,7 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
       }
       return { archived: tasks.map((t) => ({ id: t.id, rev: t.rev })), dry_run: false };
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }
@@ -122,7 +123,7 @@ export async function restoreTask(ctx: OpContext, input: RestoreInputT): Promise
       move(s.archive, s.active, task);
       return toTaskView(task, false);
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }
@@ -159,7 +160,7 @@ export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<O
       s.onCommit(() => removeDir(attachmentDir(ctx.store.dir, id)));
       return { id, deleted: true as const };
     },
-    { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, warnings },
+    txOptions(ctx, warnings),
   );
   return { data, warnings };
 }
