@@ -123,6 +123,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   initStore: 'cli-only',
   migrateStore: 'cli-only',
   doctor: 'cli-only',
+  importTasks: 'cli-only',
 };
 
 interface ToolEntry {

@@ -210,8 +210,8 @@ function fieldType(config: ConfigT, key: string): FieldType {
   return def.type;
 }
 
-// Is `value` valid for a declared field type?
-function matchesType(type: FieldType, value: unknown): boolean {
+// Is `value` valid for a declared field type? (also used by import to collect every problem at once)
+export function matchesType(type: FieldType, value: unknown): boolean {
   switch (type) {
     case 'string':
       return typeof value === 'string';

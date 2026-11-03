@@ -3,6 +3,7 @@ import { archiveTasks, deleteTask, restoreTask } from './archive.ts';
 import { attachFile } from './attach.ts';
 import { doctor, initStore, migrateStore } from './admin.ts';
 import { createTask } from './create.ts';
+import { importTasks } from './import.ts';
 import { getTask, listEvents, listTasks, taskSummary } from './read.ts';
 import { claimTask, commentTask, updateTask } from './update.ts';
 
@@ -22,6 +23,7 @@ export const OPS = {
   initStore,
   migrateStore,
   doctor,
+  importTasks,
 } as const;
 
 export type OpName = keyof typeof OPS;

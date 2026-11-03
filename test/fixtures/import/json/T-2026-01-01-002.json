@@ -1,0 +1,14 @@
+{
+  "id": "T-2026-01-01-002",
+  "title": "Nightly export job",
+  "description": "Export orders every night at 02:00.",
+  "state": "backlog",
+  "assignee": "dev-bot",
+  "labels": ["jobs"],
+  "priority_score": 3,
+  "acceptance_criteria": ["AC-1 file lands in the bucket"],
+  "created_at": "2026-01-01T11:00:00Z",
+  "history": [
+    {"ts": "2026-01-01T11:00:00Z", "actor": "pm-bot", "event": "created"}
+  ]
+}

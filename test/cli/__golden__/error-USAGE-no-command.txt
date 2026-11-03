@@ -5,12 +5,12 @@ exit 2
 
 --- stderr
 error USAGE: missing command
-  allowed: create, get, list, update, claim, comment, attach, archive, restore, delete, events, init, setup, prime, mcp, migrate, doctor
+  allowed: create, get, list, update, claim, comment, attach, archive, restore, delete, events, init, setup, import, prime, mcp, migrate, doctor
   fix: laneboard <command from allowed> [options]
 
 $ laneboard --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"the command comes first: laneboard <command> [options], got --json","fix":"laneboard <command from allowed> [options]","allowed":["create","get","list","update","claim","comment","attach","archive","restore","delete","events","init","setup","prime","mcp","migrate","doctor"]}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"the command comes first: laneboard <command> [options], got --json","fix":"laneboard <command from allowed> [options]","allowed":["create","get","list","update","claim","comment","attach","archive","restore","delete","events","init","setup","import","prime","mcp","migrate","doctor"]}}
 --- stderr
 

@@ -1,0 +1,16 @@
+{
+  "id": "T-2026-01-02-001",
+  "title": "Search by phone number",
+  "description": "Normalize numbers before the lookup.",
+  "state": "testing",
+  "assignee": "qa-bot",
+  "labels": ["search"],
+  "priority_score": 5,
+  "acceptance_criteria": ["AC-1 +7 and 8 prefixes match"],
+  "created_at": "2026-01-02",
+  "history": [
+    {"at": "2026-01-02", "actor": "pm-bot", "event": "created"},
+    {"at": "2026-01-03T08:00:00+05:00", "actor": "dev-bot", "event": "done_by_dev", "from": "in_progress", "to": "done_by_dev"},
+    {"at": "2026-01-03T09:00:00Z", "actor": "Тестировщик", "event": "note", "note": "pushed to test"}
+  ]
+}

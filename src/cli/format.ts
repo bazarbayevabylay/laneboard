@@ -1,6 +1,7 @@
 // Output for the CLI: JSON envelopes, human text, and error fixes rebuilt from argv.
 import { ERRORS, fieldsLine, LaneboardError, toErrorObject } from '../core/index.ts';
 import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
+import type { ImportData } from '../import/index.ts';
 import type { SetupResult } from '../setup/index.ts';
 
 // Quote one argv token for a copy-pasteable shell command.
@@ -242,5 +243,14 @@ export function setupText(r: SetupResult): string {
     for (const d of f.diff ?? []) lines.push(`    ${d}`);
   }
   for (const n of r.notes) lines.push(`next: ${n}`);
+  return lines.join('\n');
+}
+
+// Human result of an import: counts, then one line per created and skipped file.
+export function importText(d: ImportData): string {
+  const verb = d.dry_run ? 'would create' : 'created';
+  const lines = [`import ${d.format}${d.dry_run ? ' (dry run, nothing written)' : ''}: ${verb} ${d.created.length}, skipped ${d.skipped.length} (imported before)`];
+  for (const c of d.created) lines.push(`  ${(c.id ?? 'new').padEnd(10)}  ${c.source}  ${c.title}`);
+  for (const s of d.skipped) lines.push(`  ${s.id.padEnd(10)}  ${s.source}  (skipped: imported before)`);
   return lines.join('\n');
 }

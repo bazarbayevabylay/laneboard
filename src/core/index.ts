@@ -1,7 +1,7 @@
 // Public API of laneboard core: the only module facades (CLI, MCP, board, import) import (C2).
 export { ERRORS, ERROR_CODES, LaneboardError, toErrorObject, toLaneboardError } from './errors.ts';
 export type { BadInput, ErrorCode, ErrorObject, ErrorSpec } from './errors.ts';
-export { CONFIG_SCHEMA, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
+export { ACTOR_RE, CONFIG_SCHEMA, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
 export type { ConfigT, FieldType, LinkKind, LinkT, Scope, TaskEventT, TaskT } from './schema.ts';
 export { initTarget, parentStoreWarning, resolveStore, STORE_DIR_NAME } from './store.ts';
 export type { DiscoveryInput, StoreRef, StoreSource } from './store.ts';
@@ -23,6 +23,8 @@ export { ArchiveInput, DeleteInput, RestoreInput, archiveTasks, deleteTask, rest
 export type { ArchiveInputT, ArchiveResult, DeleteInputT, RestoreInputT } from './ops/archive.ts';
 export { DoctorInput, InitInput, doctor, initStore, migrateStore } from './ops/admin.ts';
 export type { DoctorCheck, DoctorInputT, DoctorResult, InitInputT, InitResult, MigrateResult } from './ops/admin.ts';
+export { ImportEvent, ImportInput, ImportTask, importTasks } from './ops/import.ts';
+export type { ImportInputT, ImportResult, ImportTaskT } from './ops/import.ts';
 export { agentRules, skillMarkdown } from './rules.ts';
 export { OPS } from './ops/registry.ts';
 export type { OpName } from './ops/registry.ts';

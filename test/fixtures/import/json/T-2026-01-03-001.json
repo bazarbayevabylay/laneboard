@@ -1,0 +1,15 @@
+{
+  "id": "T-2026-01-03-001",
+  "title": "Webhook retries",
+  "description": "Retry failed webhooks with backoff.",
+  "state": "blocked",
+  "assignee": "dev-bot",
+  "labels": ["webhooks"],
+  "priority_score": 6,
+  "acceptance_criteria": ["AC-1 three retries", "AC-2 dead letter after the last"],
+  "created_at": "2026-01-03T07:00:00Z",
+  "history": [
+    {"at": "2026-01-03T07:00:00Z", "actor": "pm-bot", "event": "created"},
+    {"actor": "pm-bot", "event": "blocked", "note": "waiting for the partner's sandbox"}
+  ]
+}
