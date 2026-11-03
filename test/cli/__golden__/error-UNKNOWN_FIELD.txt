@@ -1,0 +1,16 @@
+# error-UNKNOWN_FIELD
+$ laneboard update LB-1 --field prio=1 --as a
+exit 2
+--- stdout
+
+--- stderr
+error UNKNOWN_FIELD: field "prio" is not declared in config.fields
+  allowed: priority
+  fix: use a field from `allowed` or declare it in .laneboard/config.json `fields`
+
+$ laneboard update LB-1 --field prio=1 --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"UNKNOWN_FIELD","message":"field \"prio\" is not declared in config.fields","fix":"use a field from `allowed` or declare it in .laneboard/config.json `fields`","allowed":["priority"]}}
+--- stderr
+

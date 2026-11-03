@@ -1,0 +1,14 @@
+# delete
+$ laneboard delete LB-1 --confirm LB-1 --as a
+exit 0
+--- stdout
+LB-1 deleted
+--- stderr
+
+
+$ laneboard delete LB-1 --confirm LB-1 --as a --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","deleted":true},"warnings":[]}
+--- stderr
+

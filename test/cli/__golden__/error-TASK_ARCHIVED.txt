@@ -1,0 +1,15 @@
+# error-TASK_ARCHIVED
+$ laneboard comment LB-1 more --as a
+exit 4
+--- stdout
+
+--- stderr
+error TASK_ARCHIVED: task LB-1 is archived and read-only
+  fix: laneboard restore LB-1
+
+$ laneboard comment LB-1 more --as a --json
+exit 4
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"TASK_ARCHIVED","message":"task LB-1 is archived and read-only","fix":"laneboard restore LB-1"}}
+--- stderr
+

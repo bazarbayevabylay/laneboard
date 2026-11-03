@@ -1,0 +1,14 @@
+# archive-dry-run
+$ laneboard archive --status todo --updated-before 1d --dry-run
+exit 0
+--- stdout
+no tasks matched
+--- stderr
+
+
+$ laneboard archive --status todo --updated-before 1d --dry-run --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"archived":[],"dry_run":true},"warnings":[]}
+--- stderr
+

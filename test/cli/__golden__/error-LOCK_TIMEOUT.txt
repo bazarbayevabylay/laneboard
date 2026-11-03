@@ -1,0 +1,15 @@
+# error-LOCK_TIMEOUT
+$ laneboard create x --status todo --as a
+exit 5
+--- stdout
+
+--- stderr
+error LOCK_TIMEOUT: store is locked by another laneboard process (waited 0.2 s for <ROOT>/.laneboard/lock)
+  fix: the store is busy: retry the same command once
+
+$ laneboard create x --status todo --as a --json
+exit 5
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"LOCK_TIMEOUT","message":"store is locked by another laneboard process (waited 0.2 s for <ROOT>/.laneboard/lock)","fix":"the store is busy: retry the same command once"}}
+--- stderr
+

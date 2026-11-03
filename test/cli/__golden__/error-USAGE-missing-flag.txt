@@ -1,0 +1,15 @@
+# error-USAGE-missing-flag
+$ laneboard delete LB-1 --as a
+exit 2
+--- stdout
+
+--- stderr
+error USAGE: --confirm is required
+  fix: laneboard delete --help
+
+$ laneboard delete LB-1 --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"USAGE","message":"--confirm is required","fix":"laneboard delete --help"}}
+--- stderr
+

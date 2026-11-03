@@ -1,0 +1,16 @@
+# error-ATTACHMENT_NOT_FOUND
+$ laneboard attach LB-1 --remove nope.txt --as a
+exit 3
+--- stdout
+
+--- stderr
+error ATTACHMENT_NOT_FOUND: LB-1 has no attachment "nope.txt"
+  allowed: notes.txt
+  fix: see attachment names: laneboard get LB-1
+
+$ laneboard attach LB-1 --remove nope.txt --as a --json
+exit 3
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"ATTACHMENT_NOT_FOUND","message":"LB-1 has no attachment \"nope.txt\"","fix":"see attachment names: laneboard get LB-1","allowed":["notes.txt"]}}
+--- stderr
+

@@ -1,0 +1,27 @@
+# get
+$ laneboard get LB-1
+exit 0
+--- stdout
+LB-1  Fix login
+  status: todo · assignee: - · rev: 4 · archived: no
+  links: pr=https://example.com/pr/7
+  fields: priority=0
+  attachments: notes.txt (11 B)
+  created: YYYY-MM-DDTHH:MM:SS.mmmZ by a · updated: YYYY-MM-DDTHH:MM:SS.mmmZ by b
+  description:
+    Steps:
+    1. open /login
+  events (4 shown):
+    YYYY-MM-DDTHH:MM:SS.mmmZ  a  created  {"title":"Fix login","status":"todo","assignee":null}
+    YYYY-MM-DDTHH:MM:SS.mmmZ  a  attached  {"name":"notes.txt","size":11,"sha256":"af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf"}
+    YYYY-MM-DDTHH:MM:SS.mmmZ  a  updated  {"description":{"chars":[0,21]},"links":[[],[{"kind":"pr","ref":"https://example.com/pr/7"}]],"fields.priority":[null,0]}
+    YYYY-MM-DDTHH:MM:SS.mmmZ  b  commented  {"text":"repro attached"}
+--- stderr
+
+
+$ laneboard get LB-1 --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":4,"title":"Fix login","description":"Steps:\n1. open /login","status":"todo","assignee":null,"labels":[],"links":[{"kind":"pr","ref":"https://example.com/pr/7"}],"fields":{"priority":0},"attachments":[{"name":"notes.txt","size":11,"sha256":"af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf","mime":"text/plain","added_by":"a","added_at":"YYYY-MM-DDTHH:MM:SS.mmmZ"}],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"attached","data":{"name":"notes.txt","size":11,"sha256":"af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf"}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"updated","data":{"description":{"chars":[0,21]},"links":[[],[{"kind":"pr","ref":"https://example.com/pr/7"}]],"fields.priority":[null,0]}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"b","type":"commented","data":{"text":"repro attached"}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"b","archived_at":null,"archived":false},"warnings":[]}
+--- stderr
+

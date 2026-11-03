@@ -1,0 +1,39 @@
+# help
+$ laneboard --help
+exit 0
+--- stdout
+laneboard <command> [options] - task board & CLI for AI coding agents
+
+Commands:
+  create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...
+  get <id> [--events N]
+  list [--status S]... [--assignee A | --unassigned] [--label L]... [--text Q] [--scope active|archive|all] [--limit N] [--offset N]
+  update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N]
+  claim <id> [--status S] [--expected-rev N]
+  comment <id> (<text> | --file P|-)
+  attach <id> <path> [--name N]  |  attach <id> --remove <name>
+  archive <id>... [--expected-rev N]  |  archive --status S --updated-before <Nd> [--dry-run]
+  restore <id>
+  delete <id> --confirm <id> [--expected-rev N]
+  events [--task id] [--since ts] [--limit N] [--scope active|archive|all]
+  init [--prefix P] [--statuses a,b,c] [--no-gitignore]
+  migrate
+  doctor [--fix] [--restore-backup]
+
+Global options (every command):
+  --json         print one JSON document on stdout, also on errors
+  --dir <path>   store directory (.laneboard); else LANEBOARD_DIR; else search up from cwd
+  --as <actor>   who is writing; else LANEBOARD_AGENT (required for writes)
+  --help, -h     usage of a command: laneboard <command> --help
+  --version      print the version
+
+Exit codes: 0 ok, 1 internal, 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store
+--- stderr
+
+
+$ laneboard --help --json
+exit 0
+--- stdout
+{"ok":true,"store":null,"data":{"help":"laneboard <command> [options] - task board & CLI for AI coding agents\n\nCommands:\n  create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...\n  get <id> [--events N]\n  list [--status S]... [--assignee A | --unassigned] [--label L]... [--text Q] [--scope active|archive|all] [--limit N] [--offset N]\n  update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N]\n  claim <id> [--status S] [--expected-rev N]\n  comment <id> (<text> | --file P|-)\n  attach <id> <path> [--name N]  |  attach <id> --remove <name>\n  archive <id>... [--expected-rev N]  |  archive --status S --updated-before <Nd> [--dry-run]\n  restore <id>\n  delete <id> --confirm <id> [--expected-rev N]\n  events [--task id] [--since ts] [--limit N] [--scope active|archive|all]\n  init [--prefix P] [--statuses a,b,c] [--no-gitignore]\n  migrate\n  doctor [--fix] [--restore-backup]\n\nGlobal options (every command):\n  --json         print one JSON document on stdout, also on errors\n  --dir <path>   store directory (.laneboard); else LANEBOARD_DIR; else search up from cwd\n  --as <actor>   who is writing; else LANEBOARD_AGENT (required for writes)\n  --help, -h     usage of a command: laneboard <command> --help\n  --version      print the version\n\nExit codes: 0 ok, 1 internal, 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store"},"warnings":[]}
+--- stderr
+

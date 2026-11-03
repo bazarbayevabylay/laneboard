@@ -1,0 +1,14 @@
+# create
+$ laneboard create 'Fix login' --status todo --description 'Users cannot log in' --assignee dev-1 --label auth --link branch=fix/login --field priority=1 --as a
+exit 0
+--- stdout
+LB-1 created (rev 1)
+--- stderr
+
+
+$ laneboard create 'Fix login' --status todo --description 'Users cannot log in' --assignee dev-1 --label auth --link branch=fix/login --field priority=1 --as a --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":1,"title":"Fix login","description":"Users cannot log in","status":"todo","assignee":"dev-1","labels":["auth"],"links":[{"kind":"branch","ref":"fix/login"}],"fields":{"priority":1},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":"dev-1"}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
+--- stderr
+

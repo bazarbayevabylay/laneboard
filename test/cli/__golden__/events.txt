@@ -1,0 +1,17 @@
+# events
+$ laneboard events
+exit 0
+--- stdout
+AT                        TASK  ACTOR  TYPE       DATA
+YYYY-MM-DDTHH:MM:SS.mmmZ  LB-1  b      commented  {"text":"looking"}
+YYYY-MM-DDTHH:MM:SS.mmmZ  LB-1  a      created    {"title":"Fix login","status":"todo","assignee":null}
+2 of 2 shown (scope active, newest first)
+--- stderr
+
+
+$ laneboard events --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"items":[{"task_id":"LB-1","at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"b","type":"commented","data":{"text":"looking"}},{"task_id":"LB-1","at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}}],"scope":"active","limit":20,"total":2},"warnings":[]}
+--- stderr
+

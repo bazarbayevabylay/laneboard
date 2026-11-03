@@ -1,0 +1,15 @@
+# error-USAGE
+$ laneboard update LB-1 --as a
+exit 2
+--- stdout
+
+--- stderr
+error USAGE: nothing to change: pass at least one of title, description, status, assignee, labels, links, fields
+  fix: laneboard update --help
+
+$ laneboard update LB-1 --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"USAGE","message":"nothing to change: pass at least one of title, description, status, assignee, labels, links, fields","fix":"laneboard update --help"}}
+--- stderr
+

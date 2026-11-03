@@ -1,0 +1,18 @@
+# help-command
+$ laneboard create --help
+exit 0
+--- stdout
+laneboard create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...
+
+Create a task; prints its id.
+
+Global options: --json, --dir <path>, --as <actor>, --help
+--- stderr
+
+
+$ laneboard create --help --json
+exit 0
+--- stdout
+{"ok":true,"store":null,"data":{"help":"laneboard create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...\n\nCreate a task; prints its id.\n\nGlobal options: --json, --dir <path>, --as <actor>, --help"},"warnings":[]}
+--- stderr
+

@@ -1,0 +1,242 @@
+// Store administration: init, migrate, doctor (CLI-only).
+import fs from 'node:fs';
+import path from 'node:path';
+import { z } from 'zod';
+import { buildConfig, configPath, DEFAULT_PREFIX, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
+import { LaneboardError } from '../errors.ts';
+import { ensureDir, listOrphanTmp, moveAside, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
+import { FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
+import type { ConfigT, FileKind } from '../schema.ts';
+import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, serializeStoreFile, storeFilePath, validateStoreJson } from '../store.ts';
+import type { LoadedFile } from '../store.ts';
+import { commitFiles, withLock } from '../transact.ts';
+import { attachmentDir } from './attach.ts';
+import { parseInput, unique } from './common.ts';
+import type { OpContext, OpResult } from './common.ts';
+
+export const InitInput = z.strictObject({
+  prefix: z.string().optional(),
+  statuses: z.array(z.string()).min(1).optional(),
+  // Write `.laneboard/.gitignore` with `*` (default true).
+  gitignore: z.boolean().optional(),
+});
+export type InitInputT = z.infer<typeof InitInput>;
+
+export interface InitResult {
+  store: string;
+  config: ConfigT;
+}
+
+// Create a store at `target` with an explicit config and empty files; refuses an existing or non-empty directory.
+export async function initStore(target: string, input: InitInputT, opts: { lockWaitMs?: number } = {}): Promise<OpResult<InitResult>> {
+  const p = parseInput(InitInput, input);
+  const prefix = p.prefix ?? DEFAULT_PREFIX;
+  if (!PREFIX_RE.test(prefix)) {
+    throw new LaneboardError('INVALID_VALUE', `prefix "${prefix}" must match ^[A-Z][A-Z0-9]{0,9}$`, {
+      input: { field: 'prefix', value: prefix, ...(PREFIX_RE.test(prefix.toUpperCase()) ? { suggestion: prefix.toUpperCase() } : {}) },
+    });
+  }
+  const statuses = p.statuses ?? DEFAULT_STATUSES;
+  for (const status of statuses) {
+    if (!STATUS_RE.test(status)) {
+      throw new LaneboardError('INVALID_VALUE', `status "${status}" must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, { input: { field: 'statuses', value: status } });
+    }
+  }
+  if (unique(statuses).length !== statuses.length) throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`);
+  const config = validateConfig(buildConfig(prefix, [...statuses]), 'config.json');
+  ensureDir(target);
+  await withLock({ dir: target }, opts.lockWaitMs, () => {
+    if (fs.existsSync(configPath(target))) {
+      throw new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${target}), or pass --dir <another empty directory>` });
+    }
+    const other = fs.readdirSync(target).filter((name) => name !== 'lock');
+    if (other.length) throw new LaneboardError('STORE_EXISTS', `${target} is not empty (${other.slice(0, 3).join(', ')})`);
+    const now = new Date().toISOString();
+    for (const kind of FILE_KINDS) writeFileAtomic(storeFilePath(target, kind), serializeStoreFile(emptyStoreFile(kind, now)), 0o444);
+    ensureDir(path.join(target, 'attachments'));
+    if (p.gitignore !== false) writeFileAtomic(path.join(target, '.gitignore'), '*\n', 0o644);
+    // config.json last: its presence marks a complete store.
+    writeFileAtomic(configPath(target), serializeConfig(config), 0o644);
+  });
+  return { data: { store: target, config }, warnings: [] };
+}
+
+export interface MigrateResult {
+  schema: string;
+  migrated: string[];
+}
+
+// Upgrade older store files under the lock; store@1 is the first version, so this only verifies.
+export async function migrateStore(ctx: OpContext): Promise<OpResult<MigrateResult>> {
+  const warnings: string[] = [];
+  const migrated: string[] = [];
+  await withLock(ctx.store, ctx.lockWaitMs, () => {
+    loadConfig(ctx.store.dir);
+    for (const kind of FILE_KINDS) {
+      const file = readStoreFile(ctx.store.dir, kind, warnings);
+      if (file.version > STORE_VERSION) {
+        throw new LaneboardError('STORE_TOO_NEW', `${kind}.json is ${file.data.schema}; this laneboard supports ${STORE_SCHEMA}`);
+      }
+    }
+  });
+  return { data: { schema: STORE_SCHEMA, migrated }, warnings };
+}
+
+export const DoctorInput = z.strictObject({
+  fix: z.boolean().optional(),
+  restore_backup: z.boolean().optional(),
+});
+export type DoctorInputT = z.infer<typeof DoctorInput>;
+
+export interface DoctorCheck {
+  name: string;
+  ok: boolean;
+  fixed: boolean;
+  message: string;
+}
+
+export interface DoctorResult {
+  healthy: boolean;
+  checks: DoctorCheck[];
+}
+
+// Number of tasks in a store file's text, or "unreadable".
+function countTasks(raw: string | undefined): string {
+  if (raw === undefined) return 'missing';
+  try {
+    const json = JSON.parse(raw) as { tasks?: unknown };
+    return Array.isArray(json.tasks) ? `${json.tasks.length} tasks` : 'unreadable';
+  } catch {
+    // Not JSON at all.
+    return 'unreadable';
+  }
+}
+
+// Read a file's text, undefined when missing.
+function readText(file: string): string | undefined {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    // Missing or unreadable: reported by the caller.
+    return undefined;
+  }
+}
+
+// Swap in `<kind>.json.bak` for an invalid file; the broken file is kept next to it.
+function restoreFromBackup(storeDir: string, kind: FileKind, now: string): { ok: boolean; message: string } {
+  const current = readText(storeFilePath(storeDir, kind));
+  const backup = readText(backupPath(storeDir, kind));
+  const counts = `current: ${countTasks(current)}; backup: ${countTasks(backup)}`;
+  if (backup === undefined) return { ok: false, message: `invalid and no ${kind}.json.bak to restore (${counts})` };
+  try {
+    validateStoreJson(JSON.parse(backup), kind, `${kind}.json.bak`);
+  } catch (err) {
+    return { ok: false, message: `invalid, and ${kind}.json.bak is invalid too: ${(err as Error).message} (${counts})` };
+  }
+  let kept = '';
+  if (current !== undefined) kept = `; broken file kept as ${path.basename(moveAside(storeFilePath(storeDir, kind), `${kind}.json.invalid-${now.replace(/[:.]/g, '-')}`))}`;
+  writeFileAtomic(storeFilePath(storeDir, kind), backup, 0o444);
+  return { ok: true, message: `restored from ${kind}.json.bak (${counts})${kept}` };
+}
+
+// Check the store and optionally repair it: config, files, checksums, duplicates, next_id, tmp files, attachments.
+export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpResult<DoctorResult>> {
+  const p = parseInput(DoctorInput, input);
+  const fix = p.fix === true;
+  const dir = ctx.store.dir;
+  const checks: DoctorCheck[] = [];
+  const add = (name: string, ok: boolean, message: string, fixed = false): void => {
+    checks.push({ name, ok, fixed, message });
+  };
+  await withLock(ctx.store, ctx.lockWaitMs, (lock) => {
+    const now = new Date().toISOString();
+    try {
+      loadConfig(dir);
+      add('config', true, 'valid');
+    } catch (err) {
+      add('config', false, (err as Error).message);
+      return;
+    }
+    const files: LoadedFile[] = [];
+    const force = new Set<FileKind>();
+    for (const kind of FILE_KINDS) {
+      const shaWarnings: string[] = [];
+      let file: LoadedFile | undefined;
+      try {
+        file = readStoreFile(dir, kind, shaWarnings);
+        add(`${kind}.json`, true, `valid, ${file.data.tasks.length} tasks, rev ${file.data.rev}`);
+      } catch (err) {
+        if (!p.restore_backup) {
+          add(`${kind}.json`, false, `${(err as Error).message}; to roll back: laneboard doctor --restore-backup`);
+          continue;
+        }
+        const restored = restoreFromBackup(dir, kind, now);
+        add(`${kind}.json`, false, restored.message, restored.ok);
+        if (!restored.ok) continue;
+        file = readStoreFile(dir, kind, shaWarnings);
+      }
+      files.push(file);
+      if (file.version > STORE_VERSION) add(`${kind}.json schema`, false, `${file.data.schema} is newer than ${STORE_SCHEMA}; upgrade laneboard`);
+      if (contentSha(file.data.tasks) !== file.data.content_sha256) {
+        if (fix) force.add(kind);
+        add(`${kind}.json checksum`, false, fix ? 'content_sha256 mismatch (hand edit): accepted and rewritten' : 'content_sha256 mismatch: the file was edited by hand; --fix accepts the edit', fix);
+      }
+    }
+    const active = files.find((f) => f.kind === 'active');
+    const archive = files.find((f) => f.kind === 'archive');
+    if (!active || !archive || files.some((f) => f.version > STORE_VERSION)) return;
+
+    const archivedIds = new Set(archive.data.tasks.map((t) => t.id));
+    const duplicates = active.data.tasks.filter((t) => archivedIds.has(t.id)).map((t) => t.id);
+    if (duplicates.length) {
+      if (fix) dedupeFiles(active.data, archive.data);
+      add('duplicates', false, `ids in both files: ${duplicates.join(', ')}${fix ? ' (kept the copy with the higher rev)' : '; --fix keeps the copy with the higher rev'}`, fix);
+    } else add('duplicates', true, 'no id in both files');
+
+    const max = maxIdNumber(active.data.tasks, archive.data.tasks);
+    const nextId = active.data.next_id ?? 0;
+    if (nextId <= max) {
+      if (fix) active.data.next_id = max + 1;
+      add('next_id', false, `next_id ${nextId} is not above the highest id number ${max}${fix ? `; set to ${max + 1}` : '; --fix sets it above'}`, fix);
+    } else add('next_id', true, `next_id ${nextId} > highest id number ${max}`);
+
+    const tmp = listOrphanTmp(dir);
+    if (tmp.length) {
+      if (fix) removeOrphanTmp(dir);
+      add('tmp files', false, `${tmp.length} orphan tmp file(s) from a crashed writer${fix ? ' removed' : '; --fix removes them'}`, fix);
+    } else add('tmp files', true, 'none');
+
+    const known = new Map<string, Set<string>>();
+    for (const t of [...active.data.tasks, ...archive.data.tasks]) known.set(t.id, new Set(t.attachments.map((a) => a.name)));
+    const orphans: string[] = [];
+    const root = path.join(dir, 'attachments');
+    for (const id of fs.existsSync(root) ? fs.readdirSync(root) : []) {
+      if (!fs.statSync(attachmentDir(dir, id)).isDirectory()) continue;
+      const names = known.get(id);
+      const entries = fs.readdirSync(attachmentDir(dir, id));
+      if (!names) {
+        orphans.push(`${id}/`);
+        if (fix) removeDir(attachmentDir(dir, id));
+        continue;
+      }
+      for (const entry of entries) {
+        if (names.has(entry)) continue;
+        orphans.push(`${id}/${entry}`);
+        if (fix) removeFile(path.join(attachmentDir(dir, id), entry));
+      }
+    }
+    if (orphans.length) add('attachment files', false, `files without metadata: ${orphans.join(', ')}${fix ? ' (removed)' : '; --fix removes them'}`, fix);
+    else add('attachment files', true, 'every file has metadata');
+
+    const missing: string[] = [];
+    for (const t of [...active.data.tasks, ...archive.data.tasks]) {
+      for (const a of t.attachments) if (!fs.existsSync(path.join(attachmentDir(dir, t.id), a.name))) missing.push(`${t.id}/${a.name}`);
+    }
+    if (missing.length) add('attachment metadata', false, `metadata without file: ${missing.join(', ')}; remove each with laneboard attach <id> --remove <name>`);
+    else add('attachment metadata', true, 'every attachment has its file');
+
+    if (fix) commitFiles(dir, files, { now, lock, force });
+  });
+  return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings: [] };
+}
+

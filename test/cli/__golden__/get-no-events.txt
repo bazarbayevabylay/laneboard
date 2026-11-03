@@ -1,0 +1,17 @@
+# get-no-events
+$ laneboard get LB-1 --events 0
+exit 0
+--- stdout
+LB-1  Fix login
+  status: todo · assignee: - · rev: 1 · archived: no
+  created: YYYY-MM-DDTHH:MM:SS.mmmZ by a · updated: YYYY-MM-DDTHH:MM:SS.mmmZ by a
+  events (0 shown):
+--- stderr
+
+
+$ laneboard get LB-1 --events 0 --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":1,"title":"Fix login","description":"","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[],"events":[],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
+--- stderr
+

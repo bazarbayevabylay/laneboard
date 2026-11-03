@@ -1,5 +1,5 @@
 # laneboard — technical spec v0.1 (ADR-0001: two-JSON store behind one transact(), CLI-first, MCP + board as thin facades)
-Status: proposed 2026-11-03 · Links: none · Source: owner brief, install/storage research digests
+Status: accepted 2026-11-03, S1 implemented (deltas in §14) · Links: none · Source: owner brief, install/storage research digests
 Tagline: "Task board & CLI for AI coding agents". Scope: create, update, delete, archive, attach, comment, board. No workflow: statuses are a plain list.
 
 ## 0. Context
@@ -117,13 +117,14 @@ CLI-only: `init [--prefix P] [--statuses a,b,c]`, `setup <harness> [--remove] [-
 - `list`: `--limit` default 20 (max `list_limit_max`), sorted `updated_at` desc; the envelope always states `scope/limit/offset/total`.
 - Output, human: one line per result (`LB-12 created (rev 1)`), aligned table for lists plus footer `20 of 57 shown (scope active); next: --offset 20`.
 - Output, `--json` (stdout only, one document, also on error; stderr empty): `{"ok":true,"store":"/abs/.laneboard","data":…,"warnings":[]}`; task = full Task + `archived`; list items = `{id,title,status,assignee,labels,updated_at,rev}`. Error: `{"ok":false,"store":…,"error":{"code","message","fix","allowed"?,"details"?}}`.
-- Error registry `Record<ErrorCode,{exit,http,fix}>` in `src/core/errors.ts`: 0 ok · 1 `INTERNAL` · 2 `USAGE`, `UNKNOWN_OPTION` (with closest option), `INVALID_VALUE`, `UNKNOWN_STATUS` (allowed list), `UNKNOWN_FIELD` (declared list), `ACTOR_REQUIRED` · 3 `TASK_NOT_FOUND` (fix: `list --scope all --text`), `ATTACHMENT_NOT_FOUND` · 4 `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` · 5 `LOCK_TIMEOUT` · 6 `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`.
+- Error registry `Record<ErrorCode,{exit,http,fix}>` in `src/core/errors.ts`: 0 ok · 1 `INTERNAL` · 2 `USAGE`, `UNKNOWN_OPTION` (with closest option), `INVALID_VALUE`, `UNKNOWN_STATUS` (allowed list), `UNKNOWN_FIELD` (declared list), `ACTOR_REQUIRED` · 3 `TASK_NOT_FOUND` (fix: `list --scope all --text`), `ATTACHMENT_NOT_FOUND` · 4 `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` · 5 `LOCK_TIMEOUT` · 6 `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS` (init into an existing or non-empty directory; §14).
 ```
 $ laneboard update LB-12 --status doing --as dev-1
 error UNKNOWN_STATUS: "doing" is not a configured status
   allowed: todo, in_progress, review, done
-  fix: laneboard update LB-12 --status in_progress --as dev-1
+  fix: laneboard update LB-12 --status <status from allowed> --as dev-1
 ```
+A concrete value is suggested only for an obvious typo (`in-progress` → `in_progress`); see §14.
 
 ## 6. MCP (`laneboard mcp`, stdio, SDK `McpServer.registerTool` + `StdioServerTransport`, verified in sdk@1.30.0 `dist/esm/server/mcp.d.ts`)
 - 11 tools, same names/params as §5 (snake_case: `expected_rev`, `description`, `add_labels`…): task_create, task_get, task_list, task_update, task_claim, task_comment, task_attach (`path` | `remove`), task_archive (`ids` | `status`+`updated_before`, `dry_run`), task_restore, task_delete (`confirm_id`), task_events. Status changes only via task_update.
@@ -208,7 +209,7 @@ Repo is empty, so each check is created in S1/S2; red-control run on a planted t
 - C5 Every error code has exit, http, fix — `Record<ErrorCode,…>` typecheck + test iterating the registry asserting non-empty `fix`.
 - C6 Board bound to loopback — test asserts `server.address().address === "127.0.0.1"`; requests without token / foreign Origin / foreign Host → 403.
 - C7 No env-triggered fault hooks in the package — `! grep -rnE 'CRASH|FAULT' dist --include='*.js' | grep -i 'process\.env'`; faults reach core only via the `opts.faults` argument from test fixtures.
-- C8 Generated JSON Schema matches zod — `npm run check:schema` (regenerate + `git diff --exit-code schema/`).
+- C8 Generated JSON Schema matches zod — `npm run check:schema` (`scripts/gen-schema.ts --check`: regenerates in memory and compares with `schema/` on disk, so a missing or untracked file also fails).
 
 ## 12. Slices (sequential; package.json and CI owned by the running slice)
 S1 core + CLI (~70 turns). Files: package.json, tsconfig, .nvmrc, src/core, src/cli, schema, scripts, test/core, test/cli, ci.yml, LICENSE.
@@ -230,10 +231,25 @@ DoD: fixture of 5 files → import creates 5, re-import creates 0 and skips 5; `
 ## 13. Risks and open questions (owner)
 | # | Question / risk | Until answered |
 |---|---|---|
-| Q1 | Delete: hard delete (record + attachments, nothing left) or tombstone in archive.json for audit? May agents delete active tasks via MCP? | hard delete, `confirm_id` required, active and archive |
-| Q2 | Plugin needs `npm i -g laneboard` (plugin cannot install binaries). Alternative: `npx -y laneboard@<ver>` in `.mcp.json`/hook pins versions but needs network and adds start-up latency (npx in plugin `.mcp.json`: VERIFY). | global install, hook prints install hint |
-| Q3 | License MIT (as Backlog.md, beads) or Apache-2.0 (patent grant)? | MIT |
-| Q4 | Windows in v1? rename over a file open in another process can fail there; no CI coverage planned. | macOS + Linux only, documented |
+| Q1 (answered: hard delete, `confirm_id`, active and archive) | Delete: hard delete (record + attachments, nothing left) or tombstone in archive.json for audit? May agents delete active tasks via MCP? | hard delete, `confirm_id` required, active and archive |
+| Q2 (answered: global install) | Plugin needs `npm i -g laneboard` (plugin cannot install binaries). Alternative: `npx -y laneboard@<ver>` in `.mcp.json`/hook pins versions but needs network and adds start-up latency (npx in plugin `.mcp.json`: VERIFY). | global install, hook prints install hint |
+| Q3 (answered: MIT) | License MIT (as Backlog.md, beads) or Apache-2.0 (patent grant)? | MIT |
+| Q4 (answered: macOS + Linux only; `os` in package.json, CI matrix) | Windows in v1? rename over a file open in another process can fail there; no CI coverage planned. | macOS + Linux only, documented |
 | R5 | SDK 1.30 pulls express, hono, jose, ajv… for a stdio-only server; proper-lockfile's 10 s stale window stalls writers after a crash. | measure in S2; if footprint is unacceptable, bundle with esbuild or switch to own JSON-RPC (new ADR) |
 
 Sources (accessed 2026-11-03): [plugins] code.claude.com/docs/en/plugins · [components] …/plugins/components.md · [marketplace] …/plugins/marketplace-reference.md · [hooks] …/hooks.md · [mcp] …/mcp.md · [memory] …/memory.md · [codex-mcp] developers.openai.com/codex/mcp (→ learn.chatgpt.com/docs/extend/mcp) · [agents-md] learn.chatgpt.com/docs/agent-configuration/agents-md · [cursor-mcp] cursor.com/docs/context/mcp · [cursor-rules] cursor.com/docs/context/rules · [gemini-mcp] geminicli.com/docs/tools/mcp-server · [gemini-md] geminicli.com/docs/cli/gemini-md · [opencode-mcp] opencode.ai/docs/mcp-servers · [opencode-rules] opencode.ai/docs/rules · MCP SDK: npm @modelcontextprotocol/sdk 1.30.0 type definitions · proper-lockfile 4.1.2 `lib/lockfile.js`.
+
+## 14. S1 implementation deltas (what the code does where this spec was silent or different)
+- Schema: `schema/*.json` is generated by `z.toJSONSchema` and is the reference; it differs in form from the §2 sketch (no `$defs`, nullable as a type list, no `uniqueItems` on labels — core de-duplicates labels and links instead).
+- Config value formats: `prefix` `^[A-Z][A-Z0-9]{0,9}$`; each status `^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, non-empty and unique; field keys `^[a-z][a-z0-9_]{0,39}$`; `fields.<k>.description` optional.
+- New error code `STORE_EXISTS` (exit 6, http 409). `init` writes under the lock in the target dir, config.json last; target = `--dir`, else `LANEBOARD_DIR`, else `<cwd>/.laneboard` (no walk-up).
+- Fixes never guess a distant value: an agent may run a fix blindly, so `doing` does not become `done`. Suggestion only when equal ignoring case and `-_`, or one edit/transposition away; otherwise a placeholder `<field from allowed>`. The CLI rebuilds the user's own argv with the corrected token.
+- Op inputs (shared by CLI and MCP): snake_case; `assignee: null` unassigns (no separate `unassign`); `labels` (list filter); `fields` (typed) plus `field_args` (CLI `key=value`, parsed with declared types — MCP should expose only `fields`). Paths for attach must be absolute (CLI resolves against cwd).
+- List items also carry `archived` (needed with `--scope all`). `--text` matches id, title, description and labels, case-insensitive.
+- `events`: newest first; `--since` is exclusive; default limit 20 (max `list_limit_max`); `--task` searches both files and ignores `--scope`.
+- Semantics: a comment is a change (task rev +1); `update`/`claim` with values equal to the current ones is a no-op (rev unchanged, warning `no changes`); archive of an archived task → `TASK_ARCHIVED`; restore of an active task → `INVALID_VALUE`; delete needs an actor and records no event (the task is gone).
+- Write path: fault points are `after_tmp_write` and `between_files`; transact writes the file that gains tasks first (archive → archive.json first, restore → active.json first), which implements W6 generically. A lost lock (heartbeat missed) aborts before the next file write with `LOCK_TIMEOUT`. Attachment tmp files live in the store root, so orphan cleanup never scans attachment names.
+- `doctor` exits 0 and reports `data.healthy`; `--restore-backup` swaps only files that fail to read, keeps the broken one as `<file>.invalid-<ts>`. `migrate` only verifies store@1 (no older format exists).
+- CLI: `src/cli/run.ts` holds the in-process runner (`runCli(io)`), `main.ts` is the bin wrapper; tests drive the runner in-process and the real process via `node src/cli/main.ts`.
+- Tooling: tests and scripts run TypeScript directly through Node type stripping (development needs Node ≥22.18; the published package is compiled and needs ≥22). Runtime deps in S1: `zod`, `proper-lockfile` only (MCP SDK arrives in S2, `yaml` in S5). `npm install` with npm 10.9 (Node 22) crashes on the vitest 5 peer tree (arborist `edgesOut`); the lockfile was produced with npm 11; `npm ci` works with both.
+- Not in S1: `src/core/agent-rules.md`, `prime`, `setup`, `mcp`, `board`, `import` (S2–S5).

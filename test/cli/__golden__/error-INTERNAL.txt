@@ -1,0 +1,15 @@
+# error-INTERNAL
+$ laneboard create x --status todo --as a
+exit 1
+--- stdout
+
+--- stderr
+error INTERNAL: EACCES: permission denied, mkdir '<ROOT>/.laneboard/lock'
+  fix: retry once; if it repeats, report a bug with the command and `laneboard --version`
+
+$ laneboard create x --status todo --as a --json
+exit 1
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"INTERNAL","message":"EACCES: permission denied, mkdir '<ROOT>/.laneboard/lock'","fix":"retry once; if it repeats, report a bug with the command and `laneboard --version`"}}
+--- stderr
+

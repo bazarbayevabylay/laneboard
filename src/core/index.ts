@@ -1,0 +1,24 @@
+// Public API of laneboard core: the only module facades (CLI, MCP, board, import) import (C2).
+export { ERRORS, ERROR_CODES, LaneboardError, toErrorObject, toLaneboardError } from './errors.ts';
+export type { BadInput, ErrorCode, ErrorObject, ErrorSpec } from './errors.ts';
+export { CONFIG_SCHEMA, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
+export type { ConfigT, FieldType, LinkKind, LinkT, Scope, TaskEventT, TaskT } from './schema.ts';
+export { initTarget, resolveStore, STORE_DIR_NAME } from './store.ts';
+export type { DiscoveryInput, StoreRef } from './store.ts';
+export { LOCK_STALE_MS, LOCK_WAIT_MS } from './lock.ts';
+export { transact } from './transact.ts';
+export type { FaultPoint, Faults, State, TransactOptions } from './transact.ts';
+export { DEFAULT_LIST_LIMIT, MAX_COMMENT_CHARS, parseLinkArg, suggestClosest } from './ops/common.ts';
+export type { OpContext, OpResult, TaskView } from './ops/common.ts';
+export { CreateInput, createTask } from './ops/create.ts';
+export type { CreateInputT } from './ops/create.ts';
+export { EventsInput, GetInput, ListInput, getTask, listEvents, listTasks } from './ops/read.ts';
+export type { EventItem, EventsInputT, EventsResult, GetInputT, ListInputT, ListItem, ListResult } from './ops/read.ts';
+export { ClaimInput, CommentInput, UpdateInput, claimTask, commentTask, updateTask } from './ops/update.ts';
+export type { ClaimInputT, CommentInputT, UpdateInputT } from './ops/update.ts';
+export { AttachInput, attachFile } from './ops/attach.ts';
+export type { AttachInputT } from './ops/attach.ts';
+export { ArchiveInput, DeleteInput, RestoreInput, archiveTasks, deleteTask, restoreTask } from './ops/archive.ts';
+export type { ArchiveInputT, ArchiveResult, DeleteInputT, RestoreInputT } from './ops/archive.ts';
+export { DoctorInput, InitInput, doctor, initStore, migrateStore } from './ops/admin.ts';
+export type { DoctorCheck, DoctorInputT, DoctorResult, InitInputT, InitResult, MigrateResult } from './ops/admin.ts';

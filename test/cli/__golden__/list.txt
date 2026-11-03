@@ -1,0 +1,17 @@
+# list
+$ laneboard list
+exit 0
+--- stdout
+ID    STATUS  ASSIGNEE  REV  UPDATED                   TITLE
+LB-2  review  dev-2     1    YYYY-MM-DDTHH:MM:SS.mmmZ  Add dark mode
+LB-1  todo    -         1    YYYY-MM-DDTHH:MM:SS.mmmZ  Fix login
+2 of 2 shown (scope active)
+--- stderr
+
+
+$ laneboard list --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"items":[{"id":"LB-2","title":"Add dark mode","status":"review","assignee":"dev-2","labels":[],"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1,"archived":false},{"id":"LB-1","title":"Fix login","status":"todo","assignee":null,"labels":[],"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1,"archived":false}],"scope":"active","limit":20,"offset":0,"total":2},"warnings":[]}
+--- stderr
+

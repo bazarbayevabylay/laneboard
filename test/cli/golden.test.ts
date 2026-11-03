@@ -1,0 +1,223 @@
+// CLI golden outputs: every command and every error code, human and --json (ADR-0001 S1 DoD).
+import fs from 'node:fs';
+import path from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import { ERROR_CODES, ERRORS } from '../../src/core/index.ts';
+import type { ErrorCode } from '../../src/core/index.ts';
+import { commandLine } from '../../src/cli/format.ts';
+import { acquireLock } from '../../src/core/lock.ts';
+import { cleanupTemp, cli, readStore, tempDir, writeRaw } from '../helpers.ts';
+import type { CliRun } from '../helpers.ts';
+
+afterAll(cleanupTemp);
+
+interface Env {
+  root: string;
+  dir: string;
+  run(argv: string[], stdin?: string): Promise<CliRun>;
+}
+
+interface Case {
+  name: string;
+  argv: string[];
+  // Expected error code, or undefined for success.
+  error?: ErrorCode;
+  // Run `init` before setup (default true).
+  store?: boolean;
+  setup?: (e: Env) => Promise<void>;
+  stdin?: string;
+  // Hold the store lock while the command runs.
+  holdLock?: boolean;
+  // Make the store directory read-only while the command runs.
+  readOnlyStore?: boolean;
+}
+
+const seed = async (e: Env): Promise<void> => {
+  await e.run(['create', 'Fix login', '--status', 'todo', '--as', 'a']);
+};
+const seedFile = async (e: Env): Promise<void> => {
+  await seed(e);
+  fs.writeFileSync(path.join(e.root, 'notes.txt'), 'some notes\n');
+};
+const seedAttached = async (e: Env): Promise<void> => {
+  await seedFile(e);
+  await e.run(['attach', 'LB-1', 'notes.txt', '--as', 'a']);
+};
+const seedArchived = async (e: Env): Promise<void> => {
+  await seed(e);
+  await e.run(['archive', 'LB-1', '--as', 'a']);
+};
+const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 3));
+
+const CASES: Case[] = [
+  { name: 'init', argv: ['init'], store: false },
+  { name: 'init-options', argv: ['init', '--prefix', 'WEB', '--statuses', 'todo,doing,done', '--no-gitignore'], store: false },
+  {
+    name: 'create',
+    argv: ['create', 'Fix login', '--status', 'todo', '--description', 'Users cannot log in', '--assignee', 'dev-1', '--label', 'auth', '--link', 'branch=fix/login', '--field', 'priority=1', '--as', 'a'],
+  },
+  { name: 'create-description-stdin', argv: ['create', 'From stdin', '--status', 'todo', '--description-file', '-', '--as', 'a'], stdin: 'line 1\nline 2\n' },
+  {
+    name: 'get',
+    argv: ['get', 'LB-1'],
+    setup: async (e) => {
+      await seedAttached(e);
+      await e.run(['update', 'LB-1', '--description', 'Steps:\n1. open /login', '--add-link', 'pr=https://example.com/pr/7', '--field', 'priority=0', '--as', 'a']);
+      await e.run(['comment', 'LB-1', 'repro attached', '--as', 'b']);
+    },
+  },
+  { name: 'get-no-events', argv: ['get', 'LB-1', '--events', '0'], setup: seed },
+  {
+    name: 'list',
+    argv: ['list'],
+    setup: async (e) => {
+      await seed(e);
+      await tick();
+      await e.run(['create', 'Add dark mode', '--status', 'review', '--assignee', 'dev-2', '--as', 'a']);
+      await tick();
+      await e.run(['create', 'Old task', '--status', 'done', '--as', 'a']);
+      await e.run(['archive', 'LB-3', '--as', 'a']);
+    },
+  },
+  {
+    name: 'list-paged-all',
+    argv: ['list', '--scope', 'all', '--limit', '1', '--offset', '1'],
+    setup: async (e) => {
+      await seed(e);
+      await tick();
+      await e.run(['create', 'Second', '--status', 'todo', '--as', 'a']);
+      await tick();
+      await e.run(['create', 'Third', '--status', 'done', '--as', 'a']);
+    },
+  },
+  { name: 'update', argv: ['update', 'LB-1', '--status', 'in_progress', '--title', 'Fix login page', '--add-label', 'ui', '--as', 'a'], setup: seed },
+  { name: 'update-unchanged', argv: ['update', 'LB-1', '--status', 'todo', '--as', 'a'], setup: seed },
+  { name: 'claim', argv: ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'], setup: seed },
+  { name: 'comment', argv: ['comment', 'LB-1', 'tests pass', '--as', 'a'], setup: seed },
+  { name: 'comment-file', argv: ['comment', 'LB-1', '--file', '-', '--as', 'a'], setup: seed, stdin: 'long\nresult\n' },
+  { name: 'attach', argv: ['attach', 'LB-1', 'notes.txt', '--as', 'a'], setup: seedFile },
+  { name: 'attach-remove', argv: ['attach', 'LB-1', '--remove', 'notes.txt', '--as', 'a'], setup: seedAttached },
+  { name: 'archive', argv: ['archive', 'LB-1', '--as', 'a'], setup: seed },
+  { name: 'archive-dry-run', argv: ['archive', '--status', 'todo', '--updated-before', '1d', '--dry-run'], setup: seed },
+  { name: 'restore', argv: ['restore', 'LB-1', '--as', 'a'], setup: seedArchived },
+  { name: 'delete', argv: ['delete', 'LB-1', '--confirm', 'LB-1', '--as', 'a'], setup: seed },
+  {
+    name: 'events',
+    argv: ['events'],
+    setup: async (e) => {
+      await seed(e);
+      await tick();
+      await e.run(['comment', 'LB-1', 'looking', '--as', 'b']);
+    },
+  },
+  { name: 'migrate', argv: ['migrate'] },
+  { name: 'doctor', argv: ['doctor'], setup: seed },
+  { name: 'help', argv: ['--help'], store: false },
+  { name: 'help-command', argv: ['create', '--help'], store: false },
+  { name: 'version', argv: ['--version'], store: false },
+
+  { name: 'error-INTERNAL', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'INTERNAL', readOnlyStore: true },
+  { name: 'error-USAGE', argv: ['update', 'LB-1', '--as', 'a'], error: 'USAGE', setup: seed },
+  { name: 'error-USAGE-missing-flag', argv: ['delete', 'LB-1', '--as', 'a'], error: 'USAGE', setup: seed },
+  { name: 'error-USAGE-no-command', argv: [], error: 'USAGE', store: false },
+  { name: 'error-USAGE-unknown-command', argv: ['craete', 'x'], error: 'USAGE', store: false },
+  { name: 'error-UNKNOWN_OPTION', argv: ['create', 'x', '--stauts', 'todo', '--as', 'a'], error: 'UNKNOWN_OPTION' },
+  { name: 'error-INVALID_VALUE', argv: ['get', 'lb-1'], error: 'INVALID_VALUE', setup: seed },
+  { name: 'error-UNKNOWN_STATUS', argv: ['update', 'LB-1', '--status', 'doing', '--as', 'a'], error: 'UNKNOWN_STATUS', setup: seed },
+  { name: 'error-UNKNOWN_STATUS-typo', argv: ['update', 'LB-1', '--status', 'in-progress', '--as', 'a'], error: 'UNKNOWN_STATUS', setup: seed },
+  { name: 'error-UNKNOWN_FIELD', argv: ['update', 'LB-1', '--field', 'prio=1', '--as', 'a'], error: 'UNKNOWN_FIELD', setup: seed },
+  { name: 'error-ACTOR_REQUIRED', argv: ['create', 'x', '--status', 'todo'], error: 'ACTOR_REQUIRED' },
+  { name: 'error-TASK_NOT_FOUND', argv: ['get', 'LB-99'], error: 'TASK_NOT_FOUND', setup: seed },
+  { name: 'error-ATTACHMENT_NOT_FOUND', argv: ['attach', 'LB-1', '--remove', 'nope.txt', '--as', 'a'], error: 'ATTACHMENT_NOT_FOUND', setup: seedAttached },
+  { name: 'error-REV_CONFLICT', argv: ['update', 'LB-1', '--title', 'y', '--expected-rev', '5', '--as', 'a'], error: 'REV_CONFLICT', setup: seed },
+  {
+    name: 'error-ALREADY_CLAIMED',
+    argv: ['claim', 'LB-1', '--as', 'dev-2'],
+    error: 'ALREADY_CLAIMED',
+    setup: async (e) => {
+      await seed(e);
+      await e.run(['claim', 'LB-1', '--as', 'dev-1']);
+    },
+  },
+  { name: 'error-TASK_ARCHIVED', argv: ['comment', 'LB-1', 'more', '--as', 'a'], error: 'TASK_ARCHIVED', setup: seedArchived },
+  { name: 'error-ATTACHMENT_EXISTS', argv: ['attach', 'LB-1', 'notes.txt', '--as', 'a'], error: 'ATTACHMENT_EXISTS', setup: seedAttached },
+  { name: 'error-LOCK_TIMEOUT', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'LOCK_TIMEOUT', holdLock: true },
+  { name: 'error-STORE_NOT_FOUND', argv: ['list'], error: 'STORE_NOT_FOUND', store: false },
+  {
+    name: 'error-STORE_INVALID',
+    argv: ['list'],
+    error: 'STORE_INVALID',
+    setup: async (e) => writeRaw(path.join(e.dir, 'active.json'), '{"schema":'),
+  },
+  {
+    name: 'error-STORE_TOO_NEW',
+    argv: ['create', 'x', '--status', 'todo', '--as', 'a'],
+    error: 'STORE_TOO_NEW',
+    setup: async (e) => {
+      const data = readStore(e.dir, 'active');
+      data.schema = 'laneboard/store@2';
+      writeRaw(path.join(e.dir, 'active.json'), JSON.stringify(data));
+    },
+  },
+  { name: 'error-STORE_EXISTS', argv: ['init'], error: 'STORE_EXISTS' },
+];
+
+// Replace machine-specific parts (temp path, timestamps) with stable tokens.
+function normalize(text: string, root: string): string {
+  return text
+    .split(root)
+    .join('<ROOT>')
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, 'YYYY-MM-DDTHH:MM:SS.mmmZ')
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z/g, 'YYYY-MM-DDTHH-MM-SS-mmmZ');
+}
+
+// Run one case in a fresh directory, in human or JSON mode.
+async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result: CliRun; root: string }> {
+  const root = tempDir();
+  const dir = path.join(root, '.laneboard');
+  const env: Env = { root, dir, run: (argv, stdin) => cli(argv, { cwd: root, stdin }) };
+  if (c.store !== false) expect((await env.run(['init'])).code).toBe(0);
+  await c.setup?.(env);
+  const argv = json ? [...c.argv, '--json'] : c.argv;
+  const lock = c.holdLock ? await acquireLock(dir) : undefined;
+  if (c.readOnlyStore) fs.chmodSync(dir, 0o555);
+  try {
+    const result = await cli(argv, { cwd: root, stdin: c.stdin, lockWaitMs: 200 });
+    return { argv, result, root };
+  } finally {
+    if (c.readOnlyStore) fs.chmodSync(dir, 0o755);
+    await lock?.release();
+  }
+}
+
+// One transcript block for the golden file.
+function transcript(argv: string[], r: CliRun, root: string): string {
+  return normalize([`$ ${commandLine(argv)}`, `exit ${r.code}`, '--- stdout', r.stdout.trimEnd(), '--- stderr', r.stderr.trimEnd(), ''].join('\n'), root);
+}
+
+describe('CLI golden outputs', () => {
+  it('cover every error code', () => {
+    const covered = new Set(CASES.map((c) => c.error).filter(Boolean));
+    expect(ERROR_CODES.filter((code) => !covered.has(code))).toEqual([]);
+  });
+
+  it.each(CASES)('$name', async (c) => {
+    const human = await runCase(c, false);
+    const json = await runCase(c, true);
+    const exit = c.error ? ERRORS[c.error].exit : 0;
+    expect(human.result.code).toBe(exit);
+    expect(json.result.code).toBe(exit);
+    if (c.error) expect(human.result.stdout).toBe('');
+
+    // --json: exactly one JSON document on stdout, nothing on stderr.
+    expect(json.result.stderr).toBe('');
+    expect(json.result.stdout.trimEnd().split('\n')).toHaveLength(1);
+    const doc = JSON.parse(json.result.stdout);
+    expect(doc.ok).toBe(!c.error);
+    if (c.error) expect(doc.error.code).toBe(c.error);
+    if (c.error) expect(doc.error.fix.length).toBeGreaterThan(0);
+
+    const text = [`# ${c.name}`, transcript(human.argv, human.result, human.root), transcript(json.argv, json.result, json.root)].join('\n');
+    await expect(text).toMatchFileSnapshot(`__golden__/${c.name}.txt`);
+  });
+});

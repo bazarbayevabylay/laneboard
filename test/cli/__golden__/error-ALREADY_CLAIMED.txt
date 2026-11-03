@@ -1,0 +1,15 @@
+# error-ALREADY_CLAIMED
+$ laneboard claim LB-1 --as dev-2
+exit 4
+--- stdout
+
+--- stderr
+error ALREADY_CLAIMED: task LB-1 is already claimed by dev-1
+  fix: do not take over: comment (laneboard comment LB-1 "...") or ask the orchestrator; to reassign on purpose: laneboard update LB-1 --assignee dev-2
+
+$ laneboard claim LB-1 --as dev-2 --json
+exit 4
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"ALREADY_CLAIMED","message":"task LB-1 is already claimed by dev-1","fix":"do not take over: comment (laneboard comment LB-1 \"...\") or ask the orchestrator; to reassign on purpose: laneboard update LB-1 --assignee dev-2","details":{"assignee":"dev-1"}}}
+--- stderr
+

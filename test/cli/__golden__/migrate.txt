@@ -1,0 +1,14 @@
+# migrate
+$ laneboard migrate
+exit 0
+--- stdout
+store is up to date (laneboard/store@1)
+--- stderr
+
+
+$ laneboard migrate --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"schema":"laneboard/store@1","migrated":[]},"warnings":[]}
+--- stderr
+

@@ -1,0 +1,14 @@
+# claim
+$ laneboard claim LB-1 --status in_progress --as dev-1
+exit 0
+--- stdout
+LB-1 claimed by dev-1 (rev 2)
+--- stderr
+
+
+$ laneboard claim LB-1 --status in_progress --as dev-1 --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":2,"title":"Fix login","description":"","status":"in_progress","assignee":"dev-1","labels":[],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"dev-1","type":"assigned","data":{"from":null,"to":"dev-1"}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"dev-1","type":"status","data":{"from":"todo","to":"in_progress"}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"dev-1","archived_at":null,"archived":false},"warnings":[]}
+--- stderr
+

@@ -1,0 +1,15 @@
+# error-STORE_TOO_NEW
+$ laneboard create x --status todo --as a
+exit 6
+--- stdout
+
+--- stderr
+error STORE_TOO_NEW: active.json is laneboard/store@2; this laneboard writes laneboard/store@1
+  fix: upgrade laneboard: npm i -g laneboard@latest
+
+$ laneboard create x --status todo --as a --json
+exit 6
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"STORE_TOO_NEW","message":"active.json is laneboard/store@2; this laneboard writes laneboard/store@1","fix":"upgrade laneboard: npm i -g laneboard@latest"}}
+--- stderr
+

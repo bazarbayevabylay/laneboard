@@ -1,0 +1,15 @@
+# error-ATTACHMENT_EXISTS
+$ laneboard attach LB-1 notes.txt --as a
+exit 4
+--- stdout
+
+--- stderr
+error ATTACHMENT_EXISTS: LB-1 already has an attachment "notes.txt"
+  fix: pick another --name, or remove the old one first: laneboard attach LB-1 --remove notes.txt
+
+$ laneboard attach LB-1 notes.txt --as a --json
+exit 4
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"ATTACHMENT_EXISTS","message":"LB-1 already has an attachment \"notes.txt\"","fix":"pick another --name, or remove the old one first: laneboard attach LB-1 --remove notes.txt"}}
+--- stderr
+

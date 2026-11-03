@@ -1,0 +1,14 @@
+# update
+$ laneboard update LB-1 --status in_progress --title 'Fix login page' --add-label ui --as a
+exit 0
+--- stdout
+LB-1 updated (rev 2)
+--- stderr
+
+
+$ laneboard update LB-1 --status in_progress --title 'Fix login page' --add-label ui --as a --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":2,"title":"Fix login page","description":"","status":"in_progress","assignee":null,"labels":["ui"],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"updated","data":{"title":["Fix login","Fix login page"],"labels":[[],["ui"]]}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"status","data":{"from":"todo","to":"in_progress"}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
+--- stderr
+

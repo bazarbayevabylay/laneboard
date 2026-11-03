@@ -1,0 +1,15 @@
+# error-STORE_INVALID
+$ laneboard list
+exit 6
+--- stdout
+
+--- stderr
+error STORE_INVALID: active.json is not valid JSON: Unexpected end of JSON input
+  fix: laneboard doctor; to roll back to the previous good version: laneboard doctor --restore-backup
+
+$ laneboard list --json
+exit 6
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"STORE_INVALID","message":"active.json is not valid JSON: Unexpected end of JSON input","fix":"laneboard doctor; to roll back to the previous good version: laneboard doctor --restore-backup"}}
+--- stderr
+
