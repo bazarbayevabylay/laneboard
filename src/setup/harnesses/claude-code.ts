@@ -1,15 +1,18 @@
-// Claude Code: .mcp.json, CLAUDE.md block, SessionStart hook in .claude/settings.json (code.claude.com/docs/en/mcp, /hooks, /memory).
+// Claude Code: .mcp.json, CLAUDE.md block, and in .claude/settings.json the SessionStart hook, the PostToolUse edit reminder and
+// env LANEBOARD_DIR (code.claude.com/docs/en/mcp, /hooks, /memory, /settings: `env` is set "for every session and its subprocesses").
 import fs from 'node:fs';
 import path from 'node:path';
-import { jsonEdit } from '../json-key.ts';
+import { jsonEdit, jsonEdits } from '../json-key.ts';
 import { blockEdit, MD_MARKERS } from '../md-block.ts';
-import { INSTRUCTION_LINES, MCP_ARGS, MCP_COMMAND, PRIME_HOOK_COMMAND } from './common.ts';
+import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, MCP_ARGS, MCP_COMMAND, PRIME_HOOK_COMMAND } from './common.ts';
 import type { Harness, HarnessContext } from './common.ts';
 
-// Is this SessionStart matcher group ours (it runs our hook command)?
-function isPrimeHook(entry: unknown): boolean {
-  const hooks = (entry as { hooks?: unknown } | null)?.hooks;
-  return Array.isArray(hooks) && hooks.some((h) => (h as { command?: unknown } | null)?.command === PRIME_HOOK_COMMAND);
+// Does this matcher group run `command` (so it is ours)?
+function runs(command: string): (entry: unknown) => boolean {
+  return (entry) => {
+    const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+    return Array.isArray(hooks) && hooks.some((h) => (h as { command?: unknown } | null)?.command === command);
+  };
 }
 
 // Plugins root: CLAUDE_CODE_PLUGIN_CACHE_DIR, else <CLAUDE_CONFIG_DIR or ~/.claude>/plugins (code.claude.com/docs/en/env-vars).
@@ -35,17 +38,27 @@ export const claudeCode: Harness = {
   name: 'claude-code',
   files: [
     { path: '.mcp.json', scope: 'project', edit: (f) => jsonEdit(f, { kind: 'key', path: ['mcpServers', 'laneboard'], value: { command: MCP_COMMAND, args: [...MCP_ARGS] } }) },
-    { path: 'CLAUDE.md', scope: 'project', edit: (f) => blockEdit(f, MD_MARKERS, INSTRUCTION_LINES) },
+    { path: 'CLAUDE.md', scope: 'project', edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, 'settings-env')) },
     {
       path: '.claude/settings.json',
       scope: 'project',
-      edit: (f) =>
-        jsonEdit(f, {
-          kind: 'entry',
-          path: ['hooks', 'SessionStart'],
-          value: { matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: PRIME_HOOK_COMMAND }] },
-          match: isPrimeHook,
-        }),
+      edit: (f, c) =>
+        jsonEdits(f, [
+          {
+            kind: 'entry',
+            path: ['hooks', 'SessionStart'],
+            value: { matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: PRIME_HOOK_COMMAND }] },
+            match: runs(PRIME_HOOK_COMMAND),
+          },
+          {
+            kind: 'entry',
+            path: ['hooks', 'PostToolUse'],
+            value: { matcher: EDIT_HOOK_MATCHER, hooks: [{ type: 'command', command: EDIT_HOOK_COMMAND }] },
+            match: runs(EDIT_HOOK_COMMAND),
+          },
+          // Pins the store for Bash, hooks and the MCP server of every session started here (a parent's store is never picked up).
+          { kind: 'key', path: ['env', 'LANEBOARD_DIR'], value: c.storeDir },
+        ]),
     },
   ],
   notes: ['start Claude Code in this directory and approve the project MCP server "laneboard" when asked'],

@@ -2,12 +2,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { buildConfig, configPath, DEFAULT_PREFIX, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
+import { buildConfig, configPath, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
 import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
 import type { ConfigT, FileKind } from '../schema.ts';
-import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, serializeStoreFile, storeFilePath, validateStoreJson } from '../store.ts';
+import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, serializeStoreFile, STORE_DIR_NAME, storeFilePath, validateStoreJson } from '../store.ts';
 import type { HeldLock, LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
@@ -28,10 +28,21 @@ export interface InitResult {
   config: ConfigT;
 }
 
+// Folder whose name gives the default prefix: the project of `<project>/.laneboard`, else the store directory itself.
+function prefixSource(target: string): string {
+  return path.basename(target) === STORE_DIR_NAME ? path.basename(path.dirname(target)) : path.basename(target);
+}
+
 // Create a store at `target` with an explicit config and empty files; refuses an existing or non-empty directory.
+// Without a prefix, it is derived from the folder name, so stores of different projects on one machine get different ids.
 export async function initStore(target: string, input: InitInputT, opts: LockOptions = {}): Promise<OpResult<InitResult>> {
   const p = parseInput(InitInput, input);
-  const prefix = p.prefix ?? DEFAULT_PREFIX;
+  const warnings: string[] = [];
+  const derived = p.prefix === undefined ? derivePrefix(prefixSource(target)) : undefined;
+  if (p.prefix === undefined && derived === undefined) {
+    warnings.push(`no prefix could be derived from the folder name "${prefixSource(target)}", so ids use ${DEFAULT_PREFIX}; pick one with laneboard init --prefix <PREFIX>`);
+  }
+  const prefix = p.prefix ?? derived ?? DEFAULT_PREFIX;
   if (!PREFIX_RE.test(prefix)) {
     throw new LaneboardError('INVALID_VALUE', `prefix "${prefix}" must match ^[A-Z][A-Z0-9]{0,9}$`, {
       input: { field: 'prefix', value: prefix, format: '<PREFIX like WEB>', ...(PREFIX_RE.test(prefix.toUpperCase()) ? { suggestion: prefix.toUpperCase() } : {}) },
@@ -66,7 +77,7 @@ export async function initStore(target: string, input: InitInputT, opts: LockOpt
     // config.json last: its presence marks a complete store.
     writeFileAtomic(configPath(target), serializeConfig(config), 0o644);
   });
-  return { data: { store: target, config }, warnings: [] };
+  return { data: { store: target, config }, warnings };
 }
 
 export interface MigrateResult {

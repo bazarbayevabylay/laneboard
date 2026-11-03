@@ -10,6 +10,6 @@ error USAGE: --confirm is required
 $ laneboard delete LB-1 --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"USAGE","message":"--confirm is required","fix":"laneboard delete <id> --confirm <id> [--expected-rev N]"}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"USAGE","message":"--confirm is required","fix":"laneboard delete <id> --confirm <id> [--expected-rev N]"}}
 --- stderr
 

@@ -34,11 +34,11 @@ export interface TestStore {
   store: StoreRef;
 }
 
-// Initialize a store at <temp>/.laneboard.
+// Initialize a store at <temp>/.laneboard (prefix LB unless given: the temp folder name would derive a random one).
 export async function newStore(opts: { prefix?: string; statuses?: string[] } = {}): Promise<TestStore> {
   const root = tempDir();
   const dir = path.join(root, '.laneboard');
-  await initStore(dir, { prefix: opts.prefix, statuses: opts.statuses });
+  await initStore(dir, { prefix: opts.prefix ?? 'LB', statuses: opts.statuses });
   return { root, dir, store: { dir } };
 }
 

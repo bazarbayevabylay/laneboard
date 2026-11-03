@@ -9,6 +9,6 @@ LB-1 deleted
 $ laneboard delete LB-1 --confirm LB-1 --as a --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","deleted":true},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","deleted":true},"warnings":[]}
 --- stderr
 

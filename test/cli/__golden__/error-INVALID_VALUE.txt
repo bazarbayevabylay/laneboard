@@ -10,6 +10,6 @@ error INVALID_VALUE: "lb-1" is not a task id; ids are exact, like LB-1
 $ laneboard get lb-1 --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"INVALID_VALUE","message":"\"lb-1\" is not a task id; ids are exact, like LB-1","fix":"laneboard get LB-1 --json"}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"INVALID_VALUE","message":"\"lb-1\" is not a task id; ids are exact, like LB-1","fix":"laneboard get LB-1 --json"}}
 --- stderr
 

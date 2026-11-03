@@ -9,9 +9,13 @@ import type { FileKind, StoreFileT, TaskT } from './schema.ts';
 
 export const STORE_DIR_NAME = '.laneboard';
 
-// A resolved store: absolute path of the `.laneboard` directory.
+// How a store was found: --dir, LANEBOARD_DIR, in the current directory, or in a parent of it (walk-up).
+export type StoreSource = 'dir' | 'env' | 'cwd' | 'parent';
+
+// A resolved store: absolute path of the `.laneboard` directory (and how discovery found it, when it did).
 export interface StoreRef {
   dir: string;
+  found?: StoreSource;
 }
 
 export interface DiscoveryInput {
@@ -43,17 +47,27 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
         fix: `laneboard init --dir ${dir}, or fix ${source}`,
       });
     }
-    return { dir };
+    return { dir, found: input.dir !== undefined ? 'dir' : 'env' };
   }
-  let current = path.resolve(input.cwd);
+  const start = path.resolve(input.cwd);
+  let current = start;
   for (;;) {
     const candidate = path.join(current, STORE_DIR_NAME);
-    if (isDir(candidate)) return { dir: candidate };
+    if (isDir(candidate)) return { dir: candidate, found: current === start ? 'cwd' : 'parent' };
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
   }
   throw new LaneboardError('STORE_NOT_FOUND', `no ${STORE_DIR_NAME} directory in ${path.resolve(input.cwd)} or any parent`);
+}
+
+// Warning for a store found in a parent directory: another project's store (a nested agent directory) would be used silently otherwise.
+export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | null): string | undefined {
+  if (ref.found !== 'parent') return undefined;
+  return (
+    `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} found in a parent directory, not in ${path.resolve(cwd)}; ` +
+    `fine if it is this project's store, otherwise stop and ask the user (pin the right one: export LANEBOARD_DIR=<abs>/.laneboard)`
+  );
 }
 
 // Directory that init creates: --dir, then LANEBOARD_DIR, then `<cwd>/.laneboard` (no walk-up).

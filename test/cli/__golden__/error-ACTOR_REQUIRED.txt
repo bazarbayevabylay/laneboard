@@ -10,6 +10,6 @@ error ACTOR_REQUIRED: this command changes the store and needs an actor: pass --
 $ laneboard create x --status todo --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"ACTOR_REQUIRED","message":"this command changes the store and needs an actor: pass --as <your-name>, or export LANEBOARD_AGENT=<your-name> once for the session","fix":"laneboard create x --status todo --json --as <your-name>"}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"ACTOR_REQUIRED","message":"this command changes the store and needs an actor: pass --as <your-name>, or export LANEBOARD_AGENT=<your-name> once for the session","fix":"laneboard create x --status todo --json --as <your-name>"}}
 --- stderr
 

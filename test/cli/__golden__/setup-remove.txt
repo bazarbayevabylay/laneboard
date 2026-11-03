@@ -10,6 +10,6 @@ deleted AGENTS.md
 $ laneboard setup codex --remove --json
 exit 0
 --- stdout
-{"ok":true,"store":null,"data":{"harness":"codex","mode":"remove","dry_run":false,"files":[{"path":"~/.codex/config.toml","scope":"global","result":"deleted"},{"path":"AGENTS.md","scope":"project","result":"deleted"}],"notes":[]},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"harness":"codex","store":"<ROOT>/.laneboard","mode":"remove","dry_run":false,"files":[{"path":"~/.codex/config.toml","scope":"global","result":"deleted"},{"path":"AGENTS.md","scope":"project","result":"deleted"}],"notes":[]},"warnings":[]}
 --- stderr
 

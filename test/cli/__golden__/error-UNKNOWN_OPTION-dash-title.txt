@@ -10,6 +10,6 @@ error UNKNOWN_OPTION: "-x" starts with "-", so it was read as an option; text th
 $ laneboard create -x --status todo --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"error":{"code":"UNKNOWN_OPTION","message":"\"-x\" starts with \"-\", so it was read as an option; text that starts with \"-\" goes after --","fix":"laneboard create --status todo --as a --json -- -x"}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"UNKNOWN_OPTION","message":"\"-x\" starts with \"-\", so it was read as an option; text that starts with \"-\" goes after --","fix":"laneboard create --status todo --as a --json -- -x"}}
 --- stderr
 

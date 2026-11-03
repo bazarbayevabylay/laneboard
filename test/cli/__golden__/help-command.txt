@@ -14,6 +14,6 @@ Text that starts with "-": after -- (options first), or as --option=<value>.
 $ laneboard create --help --json
 exit 0
 --- stdout
-{"ok":true,"store":null,"data":{"help":"laneboard create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...\n\nCreate a task; prints its id.\n\nGlobal options: --json, --dir <path>, --as <actor>, --help\nText that starts with \"-\": after -- (options first), or as --option=<value>."},"warnings":[]}
+{"ok":true,"store":null,"prefix":null,"data":{"help":"laneboard create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]...\n\nCreate a task; prints its id.\n\nGlobal options: --json, --dir <path>, --as <actor>, --help\nText that starts with \"-\": after -- (options first), or as --option=<value>."},"warnings":[]}
 --- stderr
 

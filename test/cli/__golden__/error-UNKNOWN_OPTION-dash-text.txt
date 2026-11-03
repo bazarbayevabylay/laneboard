@@ -10,6 +10,6 @@ error UNKNOWN_OPTION: "- item one" starts with "-", so it was read as an option;
 $ laneboard comment LB-1 '- item one' --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"error":{"code":"UNKNOWN_OPTION","message":"\"- item one\" starts with \"-\", so it was read as an option; text that starts with \"-\" goes after --","fix":"laneboard comment LB-1 --as a --json -- '- item one'"}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"UNKNOWN_OPTION","message":"\"- item one\" starts with \"-\", so it was read as an option; text that starts with \"-\" goes after --","fix":"laneboard comment LB-1 --as a --json -- '- item one'"}}
 --- stderr
 

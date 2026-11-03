@@ -2,13 +2,13 @@
 $ laneboard init
 exit 0
 --- stdout
-initialized <ROOT>/.laneboard (prefix LB; statuses: todo, in_progress, review, done)
+initialized <ROOT>/.laneboard (prefix WEBAPP; statuses: todo, in_progress, review, done)
 --- stderr
 
 
 $ laneboard init --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"LB","statuses":["todo","in_progress","review","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_ed25519*"]},"board":{"port":7420}}},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WEBAPP","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WEBAPP","statuses":["todo","in_progress","review","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_ed25519*"]},"board":{"port":7420}}},"warnings":[]}
 --- stderr
 

@@ -11,6 +11,6 @@ error UNKNOWN_STATUS: "doing" is not a configured status
 $ laneboard update LB-1 --status doing --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"UNKNOWN_STATUS","message":"\"doing\" is not a configured status","fix":"laneboard update LB-1 --status <status from allowed> --as a --json","allowed":["todo","in_progress","review","done"]}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"UNKNOWN_STATUS","message":"\"doing\" is not a configured status","fix":"laneboard update LB-1 --status <status from allowed> --as a --json","allowed":["todo","in_progress","review","done"]}}
 --- stderr
 

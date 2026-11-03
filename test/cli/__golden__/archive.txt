@@ -9,6 +9,6 @@ LB-1 archived (rev 2)
 $ laneboard archive LB-1 --as a --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"archived":[{"id":"LB-1","rev":2}],"dry_run":false},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"archived":[{"id":"LB-1","rev":2}],"dry_run":false},"warnings":[]}
 --- stderr
 

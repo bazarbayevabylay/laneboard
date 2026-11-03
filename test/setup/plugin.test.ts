@@ -3,10 +3,12 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, skillMarkdown } from '../../src/core/index.ts';
-import { PRIME_HOOK_COMMAND } from '../../src/setup/index.ts';
-import { REPO } from '../helpers.ts';
+import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, PRIME_HOOK_COMMAND } from '../../src/setup/index.ts';
+import { cleanupTemp, CLI_SOURCE, newStore, REPO, tempDir } from '../helpers.ts';
+
+afterAll(cleanupTemp);
 
 const PLUGIN = path.join(REPO, 'plugins', 'claude-code');
 const json = (file: string): Record<string, unknown> => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -26,13 +28,22 @@ describe('agent rules (src/core/agent-rules.md)', () => {
   it('at most 15 lines; name what the usability test showed agents had to guess (create, rev after writes, details.task, final status, commented)', () => {
     const rules = agentRules();
     expect(rules.split('\n').length).toBeLessThanOrEqual(15);
-    expect(rules).toContain('`laneboard create "<title>" --status <status> --as <you> --json`');
+    expect(rules).toContain('`laneboard create "<title>" --status <status> --assignee <you> --as <you> --json`');
     expect(rules).toContain('rev from your last read or write');
     expect(rules).toContain('`--description` replaces the whole text');
     expect(rules).toContain('`error.details.task`');
     expect(rules).toContain('the last one is final');
     expect(rules).toContain('type `commented`');
     expect(rules).toContain('never run `laneboard init` unless the user asks');
+  });
+
+  it('rule 1 makes task tracking mandatory for any work, also when nobody asks for tasks and the board is empty (usability test 03.11)', () => {
+    const first = agentRules().split('\n')[1] ?? '';
+    expect(first).toMatch(/^1\. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one/);
+    expect(first).toContain('comment each meaningful step');
+    expect(first).toContain('set the final status and add a result comment');
+    expect(first).toContain('No untracked work.');
+    expect(agentRules()).toContain('Every reply names `store` and `prefix`');
   });
 });
 
@@ -52,11 +63,32 @@ describe('Claude Code plugin', () => {
     expect(p).toMatchObject({ name: 'laneboard', version: pkg.version, license: 'MIT', author: { name: expect.any(String) } });
   });
 
-  it('.mcp.json starts `laneboard mcp`; the SessionStart hook runs the same command setup writes', () => {
+  it('.mcp.json starts `laneboard mcp`; the SessionStart and PostToolUse hooks run the same commands setup writes', () => {
     expect(json(path.join(PLUGIN, '.mcp.json'))).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp'] } } });
     expect(json(path.join(PLUGIN, 'hooks', 'hooks.json'))).toEqual({
-      hooks: { SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: PRIME_HOOK_COMMAND }] }] },
+      hooks: {
+        SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: PRIME_HOOK_COMMAND }] }],
+        PostToolUse: [{ matcher: EDIT_HOOK_MATCHER, hooks: [{ type: 'command', command: EDIT_HOOK_COMMAND }] }],
+      },
     });
+  });
+
+  it('the edit hook command, run by a shell with the CLI on PATH, prints the reminder JSON in a store without work in progress', async () => {
+    const bin = tempDir();
+    fs.writeFileSync(path.join(bin, 'laneboard'), `#!/bin/sh\nexec "${process.execPath}" "${CLI_SOURCE}" "$@"\n`, { mode: 0o755 });
+    const s = await newStore();
+    const r = spawnSync('/bin/sh', ['-c', EDIT_HOOK_COMMAND], { cwd: s.root, env: { PATH: `${bin}:/usr/bin:/bin`, LANEBOARD_AGENT: 'dev-1' }, input: '{"tool_name":"Edit"}', encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).hookSpecificOutput).toMatchObject({ hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('no task claimed - run laneboard prime') });
+    const outside = spawnSync('/bin/sh', ['-c', EDIT_HOOK_COMMAND], { cwd: tempDir(), env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8' });
+    expect([outside.status, outside.stdout, outside.stderr]).toEqual([0, '', '']);
+  });
+
+  it('the edit hook is silent and exits 0 when the CLI is missing', () => {
+    const r = spawnSync('/bin/sh', ['-c', EDIT_HOOK_COMMAND], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toBe('');
   });
 
   it('the hook prints a hint when the CLI is missing, and exits 0', () => {

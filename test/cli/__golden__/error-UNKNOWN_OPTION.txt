@@ -11,6 +11,6 @@ error UNKNOWN_OPTION: unknown option --stauts for create
 $ laneboard create x --stauts todo --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"error":{"code":"UNKNOWN_OPTION","message":"unknown option --stauts for create","fix":"laneboard create x --status todo --as a --json","allowed":["--json","--dir","--as","--help","--status","--description","--description-file","--assignee","--label","--link","--field"]}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"UNKNOWN_OPTION","message":"unknown option --stauts for create","fix":"laneboard create x --status todo --as a --json","allowed":["--json","--dir","--as","--help","--status","--description","--description-file","--assignee","--label","--link","--field"]}}
 --- stderr
 

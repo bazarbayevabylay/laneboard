@@ -13,8 +13,10 @@ import {
   LaneboardError,
   ListInput,
   OPS,
+  parentStoreWarning,
   resolveStore,
   RestoreInput,
+  storePrefix,
   toErrorObject,
   toLaneboardError,
   UpdateInput,
@@ -197,8 +199,11 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     const result = await op(ctx, input);
+    // Same notice as the CLI: a store found in a parent directory may belong to another project.
+    const parent = parentStoreWarning(ctx.store, env.cwd, storePrefix(ctx.store.dir));
+    const warnings = parent ? [parent, ...result.warnings] : result.warnings;
     const content = [{ type: 'text' as const, text: JSON.stringify(result.data) }];
-    if (result.warnings.length) content.push({ type: 'text', text: JSON.stringify({ warnings: result.warnings }) });
+    if (warnings.length) content.push({ type: 'text', text: JSON.stringify({ warnings }) });
     return { content, structuredContent: result.data };
   } catch (raw) {
     const error = mcpError(toLaneboardError(raw), entry?.def);

@@ -232,12 +232,14 @@ function normalize(text: string, root: string): string {
 
 // Run one case in a fresh directory, in human or JSON mode.
 async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result: CliRun; root: string }> {
-  const root = tempDir();
+  // A fixed folder name, so `init` without --prefix derives the same prefix (WEBAPP) on every machine.
+  const root = path.join(tempDir(), 'web-app');
+  fs.mkdirSync(root);
   const dir = path.join(root, '.laneboard');
   const caseEnv = Object.fromEntries(Object.entries(c.env ?? {}).map(([k, v]) => [k, v.split('<ROOT>').join(root)]));
   if (caseEnv.HOME) fs.mkdirSync(caseEnv.HOME, { recursive: true });
   const env: Env = { root, dir, run: (argv, stdin) => cli(argv, { cwd: root, stdin, env: caseEnv }) };
-  if (c.store !== false) expect((await env.run(['init'])).code).toBe(0);
+  if (c.store !== false) expect((await env.run(['init', '--prefix', 'LB'])).code).toBe(0);
   await c.setup?.(env);
   // `--json` goes before `--`: after it, it would be text.
   const end = c.argv.indexOf('--');

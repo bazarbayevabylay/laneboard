@@ -309,3 +309,36 @@ export function jsonEdit(file: string, owned: JsonOwned): TextEdit {
     },
   };
 }
+
+// Text edit for several laneboard parts of one JSON file (Claude Code settings: hooks and env), applied one after another.
+export function jsonEdits(file: string, parts: readonly JsonOwned[]): TextEdit {
+  const edits = parts.map((p) => jsonEdit(file, p));
+  return {
+    add(text) {
+      let out = text;
+      for (const e of edits) out = e.add(out);
+      return out ?? '';
+    },
+    strip(text) {
+      return edits.reduce((out, e) => e.strip(out), text);
+    },
+    owns(text) {
+      return edits.some((e) => e.owns(text));
+    },
+    same(a, b) {
+      // Prune the empty containers of every part twice: one part's empty array may be what keeps another's parent alive.
+      const [x, y] = [valueOf(a), valueOf(b)];
+      for (let pass = 0; pass < 2; pass++) {
+        for (const owned of parts) {
+          const levels = owned.kind === 'key' ? owned.path.slice(0, -1) : owned.path;
+          pruneValue(x, levels);
+          pruneValue(y, levels);
+        }
+      }
+      return sameJson(x, y);
+    },
+    isEmpty(text) {
+      return edits.every((e) => e.isEmpty(text));
+    },
+  };
+}

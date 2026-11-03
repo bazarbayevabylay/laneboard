@@ -69,14 +69,14 @@ export function cliMessage(err: LaneboardError): LaneboardError {
   return new LaneboardError(err.code, `${err.message}: pass --as <your-name>, or export LANEBOARD_AGENT=<your-name> once for the session`, { fix: err.fix });
 }
 
-// Success envelope (one JSON document on stdout).
-export function okEnvelope(store: string | null, data: unknown, warnings: string[]): string {
-  return `${JSON.stringify({ ok: true, store, data, warnings })}\n`;
+// Success envelope (one JSON document on stdout): the store and its id prefix say whose store was used.
+export function okEnvelope(store: string | null, prefix: string | null, data: unknown, warnings: string[]): string {
+  return `${JSON.stringify({ ok: true, store, prefix, data, warnings })}\n`;
 }
 
 // Error envelope (also on stdout; stderr stays empty in --json mode).
-export function errorEnvelope(store: string | null, err: LaneboardError, fix: string): string {
-  return `${JSON.stringify({ ok: false, store, error: toErrorObject(err, fix) })}\n`;
+export function errorEnvelope(store: string | null, prefix: string | null, err: LaneboardError, fix: string): string {
+  return `${JSON.stringify({ ok: false, store, prefix, error: toErrorObject(err, fix) })}\n`;
 }
 
 // Human error block for stderr.
@@ -167,12 +167,21 @@ export const PRIME_MAX_CHARS = 4000;
 export interface PrimeData {
   rules: string;
   agent: string | null;
+  // The store in use and its id prefix (null without a store).
+  store: string | null;
+  prefix: string | null;
+  // Set when the store was found in a parent directory (it may be another project's).
+  store_warning: string | null;
   store_problem: string | null;
   statuses: Array<{ status: string; count: number }>;
+  // The first configured status (new tasks start there); null without a store.
+  first_status: string | null;
   // The last configured status (work there is done); null without a store.
   final_status: string | null;
   fields: Record<string, FieldInfo>;
   tasks: ListItem[];
+  // The agent's tasks not in the final status (without a name: anybody's assigned ones, used by the edit hook).
+  in_progress: number;
 }
 
 // `line` cut to `room` characters, marked with an ellipsis when cut.
@@ -180,25 +189,39 @@ function fit(line: string, room: number): string {
   return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
 }
 
-// Rules, statuses (final one named), fields, then the agent's active tasks (or a hint); at most PRIME_MAX_CHARS characters.
+// What to do when the agent has no task in progress: the exact create command (and how to keep a name without one).
+function noTaskText(d: PrimeData): string {
+  const name = d.agent === null ? '<your-name>' : shellQuote(d.agent);
+  const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name} --as ${name} --json`;
+  if (d.agent === null) {
+    return [
+      'You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:',
+      create,
+      'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).',
+    ].join('\n');
+  }
+  return ['You have no task in progress. Create one now:', create, `Given a task id instead: laneboard claim <ID> --as ${name} --json`].join('\n');
+}
+
+// Rules, store, statuses (final one named), fields, then the agent's tasks or the command to create one; at most PRIME_MAX_CHARS characters.
 export function primeText(d: PrimeData): string {
   const head = `${d.rules}\n`;
   if (d.store_problem !== null) return fit(`${head}\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
   const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'} --json`;
-  let closing: string;
-  if (d.agent === null) closing = 'Set your name to see your tasks: export LANEBOARD_AGENT=<your-name> (or pass --as <your-name>).';
-  else if (!d.tasks.length) closing = `Your active tasks (${d.agent}): none. Find work: laneboard list --unassigned --json`;
-  else closing = `Your active tasks (${d.agent}), newest update first:`;
-  // Status and field lines share what is left after the rules, the closing line and the longest footer.
-  const room = PRIME_MAX_CHARS - head.length - closing.length - (d.agent !== null && d.tasks.length ? more(d.tasks.length).length : 0) - 3;
+  const listed = d.agent !== null && d.tasks.length > 0;
+  // Without a name the agent's own tasks are unknown, so the create command is always shown.
+  const closing = [d.agent === null || d.in_progress === 0 ? noTaskText(d) : '', listed ? `Your active tasks (${d.agent}), newest update first:` : ''].filter(Boolean).join('\n');
+  const store = [`Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`, ...(d.store_warning ? [`warning: ${d.store_warning}`] : [])].join('\n');
+  // Status and field lines share what is left after the rules, the store, the closing lines and the longest footer.
+  const room = PRIME_MAX_CHARS - head.length - store.length - closing.length - (listed ? more(d.tasks.length).length : 0) - 4;
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
   if (status.length + 1 + fields.length > room) {
     fields = fit(fields, Math.floor(room / 3));
     status = fit(status, room - 1 - fields.length);
   }
-  let text = [head, status, fields, closing].join('\n');
-  if (d.agent === null || !d.tasks.length) return fit(text, PRIME_MAX_CHARS);
+  let text = [head, store, status, fields, closing].join('\n');
+  if (!listed) return fit(text, PRIME_MAX_CHARS);
   for (const [i, t] of d.tasks.entries()) {
     const line = `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
     const left = d.tasks.length - i - 1;
@@ -213,6 +236,7 @@ export function primeText(d: PrimeData): string {
 export function setupText(r: SetupResult): string {
   const lines: string[] = [];
   if (r.dry_run) lines.push('dry run: nothing was written');
+  if (r.mode === 'install') lines.push(`store: ${r.store}`);
   for (const f of r.files) {
     lines.push(`${f.result} ${f.path}${f.scope === 'global' ? ' (global file)' : ''}`);
     for (const d of f.diff ?? []) lines.push(`    ${d}`);

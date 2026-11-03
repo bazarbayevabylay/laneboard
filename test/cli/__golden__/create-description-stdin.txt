@@ -9,6 +9,6 @@ LB-1 created (rev 1)
 $ laneboard create 'From stdin' --status todo --description-file - --as a --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"id":"LB-1","rev":1,"title":"From stdin","description":"line 1\nline 2\n","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"From stdin","status":"todo","assignee":null}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":1,"title":"From stdin","description":"line 1\nline 2\n","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"From stdin","status":"todo","assignee":null}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
 --- stderr
 

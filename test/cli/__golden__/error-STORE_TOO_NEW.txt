@@ -10,6 +10,6 @@ error STORE_TOO_NEW: active.json is laneboard/store@2; this laneboard writes lan
 $ laneboard create x --status todo --as a --json
 exit 6
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"STORE_TOO_NEW","message":"active.json is laneboard/store@2; this laneboard writes laneboard/store@1","fix":"upgrade laneboard: npm i -g laneboard@latest"}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"STORE_TOO_NEW","message":"active.json is laneboard/store@2; this laneboard writes laneboard/store@1","fix":"upgrade laneboard: npm i -g laneboard@latest"}}
 --- stderr
 

@@ -36,6 +36,8 @@ export interface CommandOutput {
   human: string;
   // Print nothing (the MCP server owns stdout).
   silent?: boolean;
+  // The human text already shows the parent-directory store warning (prime), so it is not repeated on stderr.
+  storeWarningInText?: boolean;
 }
 
 export interface CommandDef {

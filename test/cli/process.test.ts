@@ -7,14 +7,16 @@ import { cleanupTemp, CLI_SOURCE, spawnNode, tempDir } from '../helpers.ts';
 afterAll(cleanupTemp);
 
 describe('laneboard process', () => {
-  it('spec smoke: init, create -> LB-1, update with an unknown status -> exit 2 listing allowed', async () => {
-    const cwd = tempDir();
+  it('spec smoke: init (prefix from the folder name), create -> WEBAPP-1, update with an unknown status -> exit 2 listing allowed', async () => {
+    const cwd = path.join(tempDir(), 'web-app');
+    fs.mkdirSync(cwd);
     expect((await spawnNode([CLI_SOURCE, 'init'], { cwd })).code).toBe(0);
     const created = await spawnNode([CLI_SOURCE, 'create', 'x', '--status', 'todo', '--as', 'a', '--json'], { cwd });
     expect(created.code).toBe(0);
-    expect(created.stdout).toContain('"id":"LB-1"');
+    expect(created.stdout).toContain('"id":"WEBAPP-1"');
+    expect(created.stdout).toContain('"prefix":"WEBAPP"');
     expect(created.stderr).toBe('');
-    const bad = await spawnNode([CLI_SOURCE, 'update', 'LB-1', '--status', 'doing', '--as', 'a'], { cwd });
+    const bad = await spawnNode([CLI_SOURCE, 'update', 'WEBAPP-1', '--status', 'doing', '--as', 'a'], { cwd });
     expect(bad.code).toBe(2);
     expect(bad.stdout).toBe('');
     expect(bad.stderr).toContain('allowed: todo, in_progress, review, done');
@@ -22,7 +24,7 @@ describe('laneboard process', () => {
 
   it('finds the store from a subdirectory, via LANEBOARD_DIR, and via --dir; takes the actor from LANEBOARD_AGENT', async () => {
     const root = tempDir();
-    await spawnNode([CLI_SOURCE, 'init'], { cwd: root });
+    await spawnNode([CLI_SOURCE, 'init', '--prefix', 'LB'], { cwd: root });
     const sub = path.join(root, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
     const store = path.join(root, '.laneboard');
@@ -40,7 +42,7 @@ describe('laneboard process', () => {
 
   it('reads a description from stdin with --description-file -', async () => {
     const cwd = tempDir();
-    await spawnNode([CLI_SOURCE, 'init'], { cwd });
+    await spawnNode([CLI_SOURCE, 'init', '--prefix', 'LB'], { cwd });
     const { spawn } = await import('node:child_process');
     const child = spawn(process.execPath, [CLI_SOURCE, 'create', 'piped', '--status', 'todo', '--description-file', '-', '--as', 'a', '--json'], { cwd });
     let out = '';

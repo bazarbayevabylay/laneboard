@@ -198,8 +198,12 @@ export const SummaryInput = z.strictObject({
 export type SummaryInputT = z.infer<typeof SummaryInput>;
 
 export interface SummaryResult {
+  // Id prefix of this store (shown so an agent sees whose store it writes to).
+  prefix: string;
   // Active tasks per configured status (in config order), then statuses no longer in config.
   statuses: Array<{ status: string; count: number }>;
+  // The first configured status: where new tasks start.
+  first_status: string;
   // The last configured status: work there is done.
   final_status: string;
   // Declared fields with type, description and an example.
@@ -207,6 +211,8 @@ export interface SummaryResult {
   assignee: string | null;
   // Active tasks of `assignee`, newest update first (empty without an assignee).
   assigned: ListItem[];
+  // Active tasks not in the final status that are assigned to `assignee` (without one: to anybody) - work in progress.
+  in_progress: number;
 }
 
 // Session summary for `prime`: counts per status and the active tasks of one assignee (active.json only, lock-free).
@@ -219,13 +225,18 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   for (const { task } of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
   const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee);
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
+  const finalStatus = config.statuses.at(-1) ?? '';
+  const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
   return {
     data: {
+      prefix: config.prefix,
       statuses: [...counts].map(([status, count]) => ({ status, count })),
-      final_status: config.statuses.at(-1) ?? '',
+      first_status: config.statuses[0] ?? '',
+      final_status: finalStatus,
       fields: fieldInfo(config),
       assignee: p.assignee ?? null,
       assigned: assigned.map(({ task, archived }) => toListItem(task, archived)),
+      in_progress: inProgress.length,
     },
     warnings,
   };

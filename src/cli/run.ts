@@ -1,7 +1,7 @@
 // CLI runner: parse argv strictly, call one core op, print one result (thin adapter, testable in-process).
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
-import { ERRORS, LaneboardError, resolveStore, suggestClosest, toLaneboardError } from '../core/index.ts';
+import { ERRORS, LaneboardError, parentStoreWarning, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { StoreRef } from '../core/index.ts';
 import { jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
@@ -77,6 +77,8 @@ function flagMessage(err: LaneboardError, def: CommandDef | undefined): Laneboar
 interface Printed {
   json: boolean;
   store: string | null;
+  // The store as discovery found it (to tell a store in a parent directory apart).
+  ref?: StoreRef;
 }
 
 // Run one CLI invocation; returns the exit code.
@@ -128,6 +130,7 @@ export async function runCli(io: CliIo): Promise<number> {
       op: () => {
         store ??= resolveStore(discovery);
         out.store = store.dir;
+        out.ref = store;
         return { store, actor: actor === '' ? undefined : actor, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
       },
       setStore: (dir) => {
@@ -135,20 +138,23 @@ export async function runCli(io: CliIo): Promise<number> {
       },
     });
     if (result.silent) return 0;
-    return print(io, out, result.data, result.warnings, result.human);
+    // A store found in a parent directory may be another project's: every result says so (prime prints it in its text).
+    const parent = out.ref ? parentStoreWarning(out.ref, io.cwd, storePrefix(out.ref.dir)) : undefined;
+    const warnings = parent && (out.json || !result.storeWarningInText) ? [parent, ...result.warnings] : result.warnings;
+    return print(io, out, result.data, warnings, result.human);
   } catch (raw) {
     const err = cliMessage(flagMessage(toLaneboardError(raw), def));
     const fix = cliFix(err, argv, def);
-    if (out.json) io.stdout(errorEnvelope(out.store, err, fix));
+    if (out.json) io.stdout(errorEnvelope(out.store, out.store ? storePrefix(out.store) : null, err, fix));
     else io.stderr(errorText(err, fix));
     return ERRORS[err.code].exit;
   }
 }
 
-// Print a successful result: JSON envelope, or human text on stdout and warnings on stderr.
+// Print a successful result: JSON envelope (with the store's prefix), or human text on stdout and warnings on stderr.
 function print(io: CliIo, out: Printed, data: unknown, warnings: string[], human: string): number {
   if (out.json) {
-    io.stdout(okEnvelope(out.store, data, warnings));
+    io.stdout(okEnvelope(out.store, out.store ? storePrefix(out.store) : null, data, warnings));
   } else {
     io.stdout(`${human}\n`);
     if (warnings.length) io.stderr(warningText(warnings));

@@ -17,6 +17,6 @@ healthy
 $ laneboard doctor --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"healthy":true,"checks":[{"name":"config","ok":true,"fixed":false,"message":"valid"},{"name":"active.json","ok":true,"fixed":false,"message":"valid, 1 tasks, rev 1"},{"name":"archive.json","ok":true,"fixed":false,"message":"valid, 0 tasks, rev 0"},{"name":"duplicates","ok":true,"fixed":false,"message":"no id in both files"},{"name":"next_id","ok":true,"fixed":false,"message":"next_id 2 > highest id number 1"},{"name":"tmp files","ok":true,"fixed":false,"message":"none"},{"name":"attachment files","ok":true,"fixed":false,"message":"every file has metadata"},{"name":"attachment metadata","ok":true,"fixed":false,"message":"every attachment has its file"}]},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"healthy":true,"checks":[{"name":"config","ok":true,"fixed":false,"message":"valid"},{"name":"active.json","ok":true,"fixed":false,"message":"valid, 1 tasks, rev 1"},{"name":"archive.json","ok":true,"fixed":false,"message":"valid, 0 tasks, rev 0"},{"name":"duplicates","ok":true,"fixed":false,"message":"no id in both files"},{"name":"next_id","ok":true,"fixed":false,"message":"next_id 2 > highest id number 1"},{"name":"tmp files","ok":true,"fixed":false,"message":"none"},{"name":"attachment files","ok":true,"fixed":false,"message":"every file has metadata"},{"name":"attachment metadata","ok":true,"fixed":false,"message":"every attachment has its file"}]},"warnings":[]}
 --- stderr
 

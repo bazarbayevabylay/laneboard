@@ -9,6 +9,6 @@ store is up to date (laneboard/store@1)
 $ laneboard migrate --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"schema":"laneboard/store@1","migrated":[]},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"schema":"laneboard/store@1","migrated":[]},"warnings":[]}
 --- stderr
 

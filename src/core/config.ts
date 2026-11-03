@@ -9,6 +9,28 @@ import type { ConfigT } from './schema.ts';
 export const DEFAULT_PREFIX = 'LB';
 export const DEFAULT_STATUSES = ['todo', 'in_progress', 'review', 'done'];
 
+// Prefix that init derives from a folder name (`my-web-app` -> MYWEBAPP, `agent-2` -> AGENT2), or undefined when none fits.
+// Uppercase letters and digits only, starting with a letter, at most 10 characters; a trailing number is kept when the name is cut.
+export function derivePrefix(folder: string): string | undefined {
+  const letters = folder.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[0-9]+/, '');
+  if (letters === '') return undefined;
+  if (letters.length <= 10) return letters;
+  const number = /[0-9]+$/.exec(letters)?.[0] ?? '';
+  if (number.length >= 5) return letters.slice(0, 10);
+  return letters.slice(0, 10 - number.length) + number;
+}
+
+// Prefix of the store at `storeDir`, or null when its config cannot be read (only shown to the reader, never trusted for writes).
+export function storePrefix(storeDir: string): string | null {
+  try {
+    const json = JSON.parse(fs.readFileSync(configPath(storeDir), 'utf8')) as { prefix?: unknown };
+    return typeof json.prefix === 'string' ? json.prefix : null;
+  } catch {
+    // Missing or broken config: the command itself reports it; the envelope just has no prefix.
+    return null;
+  }
+}
+
 // Path of config.json inside a store directory.
 export function configPath(storeDir: string): string {
   return path.join(storeDir, 'config.json');

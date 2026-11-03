@@ -137,6 +137,7 @@ describe('setup details', () => {
     expect(read('.cursor/mcp.json')).toEqual({ mcpServers: { laneboard: { type: 'stdio', command: 'laneboard', args: ['mcp'] } } });
     expect(read('.gemini/settings.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp'] } } });
     expect(read('opencode.json')).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp'], enabled: true } } });
+    const store = path.join(s.cwd, '.laneboard');
     expect(read('.claude/settings.json')).toEqual({
       hooks: {
         SessionStart: [
@@ -145,14 +146,48 @@ describe('setup details', () => {
             hooks: [{ type: 'command', command: "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'" }],
           },
         ],
+        PostToolUse: [{ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }],
       },
+      env: { LANEBOARD_DIR: store },
     });
     expect(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8')).toBe('# laneboard:start\n[mcp_servers.laneboard]\ncommand = "laneboard"\nargs = ["mcp"]\n# laneboard:end\n');
     const agents = fs.readFileSync(path.join(s.cwd, 'AGENTS.md'), 'utf8');
-    expect(agents.split('\n').slice(1, -2)).toHaveLength(3);
-    expect(agents).toContain('run `laneboard prime`');
-    expect(agents).toContain('LANEBOARD_AGENT');
-    expect(fs.readFileSync(path.join(s.cwd, 'CLAUDE.md'), 'utf8')).toBe(agents);
+    const lines = agents.split('\n').slice(1, -2);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain(`\`LANEBOARD_DIR=${store} laneboard <command>\``);
+    expect(lines[1]).toMatch(/^MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one/);
+    expect(lines[1]).toContain('No untracked work.');
+    expect(lines[2]).toContain('LANEBOARD_AGENT');
+    expect(fs.readFileSync(path.join(s.cwd, 'GEMINI.md'), 'utf8')).toBe(agents);
+    // Claude Code gets the pin from .claude/settings.json; the rest of the block is the same.
+    const claude = fs.readFileSync(path.join(s.cwd, 'CLAUDE.md'), 'utf8').split('\n').slice(1, -2);
+    expect(claude[0]).toContain(`Its store is ${store} (LANEBOARD_DIR is set for this project in .claude/settings.json).`);
+    expect(claude.slice(1)).toEqual(lines.slice(1));
+  });
+
+  it('pins --dir (or LANEBOARD_DIR) instead of ./.laneboard, never a store found in a parent directory; warns when no store is there yet', async () => {
+    const s = sandbox();
+    const sub = path.join(s.cwd, 'sub');
+    fs.mkdirSync(sub);
+    expect((await cli(['init', '--prefix', 'PARENT'], { cwd: s.cwd })).code).toBe(0);
+    const inSub = { run: (argv: string[], env: Record<string, string> = {}) => cli(argv, { cwd: sub, env: { HOME: s.home, ...env } }) };
+    const plain = JSON.parse((await inSub.run(['setup', 'gemini', '--json'])).stdout);
+    expect(plain.data.store).toBe(path.join(sub, '.laneboard'));
+    expect(plain.warnings).toContain(`no laneboard store at ${path.join(sub, '.laneboard')} yet: run laneboard init in ${sub}, or run setup again with --dir <the project's .laneboard>`);
+    expect(fs.readFileSync(path.join(sub, 'GEMINI.md'), 'utf8')).toContain(`LANEBOARD_DIR=${path.join(sub, '.laneboard')} laneboard`);
+    const parent = path.join(s.cwd, '.laneboard');
+    const flagged = JSON.parse((await inSub.run(['setup', 'gemini', '--dir', parent, '--json'])).stdout);
+    expect(flagged).toMatchObject({ store: parent, prefix: 'PARENT', data: { store: parent }, warnings: [] });
+    expect(fs.readFileSync(path.join(sub, 'GEMINI.md'), 'utf8')).toContain(`LANEBOARD_DIR=${parent} laneboard`);
+    const fromEnv = JSON.parse((await inSub.run(['setup', 'gemini', '--json'], { LANEBOARD_DIR: parent })).stdout);
+    expect(fromEnv.warnings).toEqual([`the store pin comes from LANEBOARD_DIR=${parent} in your environment, not ./.laneboard; to pin another store run setup again with --dir <path>`]);
+  });
+
+  it('a store path with spaces is quoted in the instruction line', async () => {
+    const s = sandbox();
+    const odd = path.join(s.cwd, "my store's");
+    await ok(s, ['setup', 'codex', '--dir', odd]);
+    expect(fs.readFileSync(path.join(s.cwd, 'AGENTS.md'), 'utf8')).toContain(`\`LANEBOARD_DIR='${odd.replace("'", "'\\''")}' laneboard <command>\``);
   });
 
   it('a different laneboard entry is replaced and shown as a diff, without a backup; --remove takes laneboard out', async () => {
@@ -247,9 +282,12 @@ describe('setup details', () => {
     const viaEnv = sandbox();
     const cache = tempDir();
     fs.mkdirSync(path.join(cache, 'cache', 'other-market', 'laneboard'), { recursive: true });
+    await viaEnv.run(['init', '--prefix', 'LB']);
     const r2 = await viaEnv.run(['setup', 'claude-code', '--json'], { CLAUDE_CODE_PLUGIN_CACHE_DIR: cache });
     expect(JSON.parse(r2.stdout).warnings).toHaveLength(1);
-    expect(JSON.parse((await sandbox().run(['setup', 'claude-code', '--json'])).stdout).warnings).toEqual([]);
+    const clean = sandbox();
+    await clean.run(['init', '--prefix', 'LB']);
+    expect(JSON.parse((await clean.run(['setup', 'claude-code', '--json'])).stdout).warnings).toEqual([]);
   });
 
   it('unknown harness names fail with allowed and a runnable fix', async () => {
@@ -265,7 +303,7 @@ describe('setup details', () => {
     const s = sandbox();
     const r = await s.run(['setup', 'codex']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toBe('created ~/.codex/config.toml (global file)\ncreated AGENTS.md\nnext: the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project\n');
+    expect(r.stdout).toBe(`store: ${s.cwd}/.laneboard\n` + 'created ~/.codex/config.toml (global file)\ncreated AGENTS.md\nnext: the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project\n');
   });
 });
 
@@ -355,9 +393,12 @@ describe('setup backups and exact edits', () => {
     plant(s, { 'p:.claude/settings.json': original });
     await ok(s, ['setup', 'claude-code']);
     const hook = JSON.stringify({ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'" }] }, null, 2);
-    const inserted = `,\n  "hooks": {\n    "SessionStart": [\n      ${hook.split('\n').join('\n      ')}\n    ]\n  }`;
+    const edit = JSON.stringify({ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }, null, 2);
+    const indent = (text: string): string => text.split('\n').join('\n      ');
+    const inserted = `,\n  "hooks": {\n    "SessionStart": [\n      ${indent(hook)}\n    ],\n    "PostToolUse": [\n      ${indent(edit)}\n    ]\n  }`;
     const file = path.join(s.cwd, '.claude', 'settings.json');
-    expect(fs.readFileSync(file, 'utf8')).toBe(original.replace('" }\n}\n', `" }${inserted}\n}\n`));
+    const pinned = original.replace('"caf\\u00e9" }', `"caf\\u00e9",${JSON.stringify('LANEBOARD_DIR')}:${JSON.stringify(path.join(s.cwd, '.laneboard'))} }`);
+    expect(fs.readFileSync(file, 'utf8')).toBe(pinned.replace('" }\n}\n', `" }${inserted}\n}\n`));
     // The user changes something else after setup: --remove takes only our part out and keeps every other byte.
     const edited = fs.readFileSync(file, 'utf8').replace('"deny": []', '"deny": ["Bash(rm)"]');
     fs.writeFileSync(file, edited);

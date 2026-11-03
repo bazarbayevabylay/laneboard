@@ -9,6 +9,6 @@ exit 0
 $ laneboard --version --json
 exit 0
 --- stdout
-{"ok":true,"store":null,"data":{"version":"0.1.0"},"warnings":[]}
+{"ok":true,"store":null,"prefix":null,"data":{"version":"0.1.0"},"warnings":[]}
 --- stderr
 

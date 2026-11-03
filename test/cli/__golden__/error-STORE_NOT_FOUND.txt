@@ -10,6 +10,6 @@ error STORE_NOT_FOUND: no .laneboard directory in <ROOT> or any parent
 $ laneboard list --json
 exit 6
 --- stdout
-{"ok":false,"store":null,"error":{"code":"STORE_NOT_FOUND","message":"no .laneboard directory in <ROOT> or any parent","fix":"laneboard init, or export LANEBOARD_DIR=/abs/path/.laneboard"}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"STORE_NOT_FOUND","message":"no .laneboard directory in <ROOT> or any parent","fix":"laneboard init, or export LANEBOARD_DIR=/abs/path/.laneboard"}}
 --- stderr
 

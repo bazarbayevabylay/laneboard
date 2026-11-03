@@ -10,6 +10,6 @@ error USAGE: --status is given 2 times ("done", "todo"); pass it once
 $ laneboard update LB-1 --status done --status todo --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"error":{"code":"USAGE","message":"--status is given 2 times (\"done\", \"todo\"); pass it once","fix":"laneboard update LB-1 --status <one of: done, todo> --as a --json"}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"--status is given 2 times (\"done\", \"todo\"); pass it once","fix":"laneboard update LB-1 --status <one of: done, todo> --as a --json"}}
 --- stderr
 

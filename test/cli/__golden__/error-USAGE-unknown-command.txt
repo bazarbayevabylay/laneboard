@@ -11,6 +11,6 @@ error USAGE: unknown command "craete"
 $ laneboard craete x --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"error":{"code":"USAGE","message":"unknown command \"craete\"","fix":"laneboard create x --json","allowed":["create","get","list","update","claim","comment","attach","archive","restore","delete","events","init","setup","prime","mcp","migrate","doctor"]}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"unknown command \"craete\"","fix":"laneboard create x --json","allowed":["create","get","list","update","claim","comment","attach","archive","restore","delete","events","init","setup","prime","mcp","migrate","doctor"]}}
 --- stderr
 
