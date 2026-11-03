@@ -5,7 +5,7 @@ import { removeDir } from '../fsio.ts';
 import type { StoreFileT, TaskT } from '../schema.ts';
 import { readBoth, transact } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { addEvent, checkExpectedRev, checkStatus, IdInput, locate, normalizeId, notFound, parseInput, requireActor, RevInput, toTaskView, touch, txOptions, unique } from './common.ts';
+import { actorSourceOf, addEvent, checkExpectedRev, checkStatus, IdInput, locate, normalizeId, notFound, parseInput, requireActor, RevInput, toTaskView, touch, txOptions, unique } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -90,7 +90,7 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
       for (const task of tasks) {
         touch(task, s.now, actor);
         task.archived_at = s.now;
-        addEvent(task, s.config, s.now, actor, 'archived', {});
+        addEvent(task, s.config, s.now, actor, 'archived', {}, actorSourceOf(ctx));
         move(s.active, s.archive, task);
       }
       return { archived: tasks.map((t) => ({ id: t.id, rev: t.rev })), dry_run: false };
@@ -119,7 +119,7 @@ export async function restoreTask(ctx: OpContext, input: RestoreInputT): Promise
       const task = found.task;
       touch(task, s.now, actor);
       delete task.archived_at;
-      addEvent(task, s.config, s.now, actor, 'restored', {});
+      addEvent(task, s.config, s.now, actor, 'restored', {}, actorSourceOf(ctx));
       move(s.archive, s.active, task);
       return toTaskView(task, false);
     },

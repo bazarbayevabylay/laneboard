@@ -10,6 +10,18 @@
       "type": "string",
       "pattern": "^[A-Z][A-Z0-9]{0,9}$"
     },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001F\\u007F]+$"
+    },
     "statuses": {
       "minItems": 1,
       "type": "array",

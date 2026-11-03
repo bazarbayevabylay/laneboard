@@ -1,0 +1,15 @@
+# config
+$ laneboard config
+exit 0
+--- stdout
+board: web-app (prefix LB)
+  test board
+--- stderr
+
+
+$ laneboard config --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"name":"web-app","description":"test board","prefix":"LB","changed":false},"warnings":[]}
+--- stderr
+

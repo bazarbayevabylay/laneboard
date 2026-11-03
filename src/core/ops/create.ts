@@ -5,6 +5,7 @@ import type { TaskT } from '../schema.ts';
 import { maxIdNumber } from '../store.ts';
 import { transact } from '../transact.ts';
 import {
+  actorSourceOf,
   addEvent,
   checkActor,
   checkFields,
@@ -82,7 +83,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
         updated_at: s.now,
         updated_by: actor,
       };
-      addEvent(task, s.config, s.now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee });
+      addEvent(task, s.config, s.now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee }, actorSourceOf(ctx));
       s.active.tasks.push(task);
       return toTaskView(task, false);
     },

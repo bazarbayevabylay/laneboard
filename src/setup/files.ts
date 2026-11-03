@@ -11,6 +11,9 @@ export interface TextEdit {
   strip(text: string): string;
   // Does the text hold our part (in any version: an edited entry is still ours)?
   owns(text: string): boolean;
+  // Does the text hold a part only laneboard writes (default: owns)? A value the user may have set too (env.LANEBOARD_DIR) is no proof:
+  // a file with only such values still gets a backup, and --remove restores it when the rest equals the backup without our parts.
+  ownsExclusive?(text: string): boolean;
   // Same content for restore purposes (deep-equal JSON, equal text ignoring trailing whitespace).
   same(a: string, b: string): boolean;
   // Nothing left but an empty shell ({} or blank).
@@ -99,7 +102,8 @@ export function planAdd(file: string, shown: string, scope: PlannedFile['scope']
   if (before === after) return { file, shown, scope, result: 'unchanged', before };
   if (before === null) return checkWritable({ file, shown, scope, result: 'created', write: after, before });
   // The backup is the file as it was without laneboard: never a text that already holds our part, never overwritten.
-  const backup = !edit.owns(before) && readText(backupOf(file)) === null ? before : undefined;
+  const exclusive = edit.ownsExclusive ?? edit.owns;
+  const backup = !exclusive(before) && readText(backupOf(file)) === null ? before : undefined;
   return checkWritable({ file, shown, scope, result: 'updated', write: after, diff: lineDiff(before, after), before, ...(backup !== undefined ? { backup } : {}) });
 }
 
@@ -111,7 +115,10 @@ export function planRemove(file: string, shown: string, scope: PlannedFile['scop
   if (before === null || !edit.owns(before)) return { file, shown, scope, result: 'unchanged', before, keptBackup };
   const stripped = edit.strip(before);
   // The backup itself is compared (not the backup without our part): one that holds our part never matches, so it never brings the entry back.
-  if (original !== null && edit.same(original, stripped)) {
+  // A backup without exclusive parts may hold values the user set before setup (env.LANEBOARD_DIR): equal apart from those, it is restored.
+  const exclusive = edit.ownsExclusive ?? edit.owns;
+  const sameAsBackup = original !== null && (edit.same(original, stripped) || (!exclusive(original) && edit.same(edit.strip(original), stripped)));
+  if (original !== null && sameAsBackup) {
     return checkWritable({ file, shown, scope, result: 'restored', write: original, dropBackup: true, before });
   }
   if (original === null && edit.isEmpty(stripped)) return checkWritable({ file, shown, scope, result: 'deleted', write: null, before });
@@ -152,6 +159,8 @@ function putBack(file: string, text: string | null, created?: string): void {
 export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]): void {
   // Undo steps, each with the file it puts back.
   const undo: Array<{ shown: string; run: () => void }> = [];
+  // Directories a deleted file was in: checked once every file is done (two files of ours may share one, .claude/).
+  const emptied = new Set<string>();
   let current: PlannedFile | undefined;
   try {
     for (const p of plan) {
@@ -170,7 +179,7 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
       if (p.write === null) {
         undo.push({ shown: p.shown, run: () => putBack(p.file, p.before) });
         fs.unlinkSync(p.file);
-        dropCreatedDir(path.dirname(p.file), roots);
+        emptied.add(path.dirname(p.file));
         continue;
       }
       const dir = path.dirname(p.file);
@@ -193,6 +202,8 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
         fs.unlinkSync(bak);
       }
     }
+    current = undefined;
+    for (const dir of emptied) dropCreatedDir(dir, roots);
   } catch (err) {
     // A write failed after the plan passed its checks (disk full, a dangling symlink, a race): undo this run, newest first.
     const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';

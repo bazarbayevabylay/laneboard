@@ -1,0 +1,23 @@
+# view-filtered
+$ laneboard view --assignee dev-1 --label ui
+exit 0
+--- stdout
+web-app (prefix LB) - test board
+<ROOT>/.laneboard
+
+todo (1)                 in_progress (0)          review (0)               done (1)
+-----------------------  -----------------------  -----------------------  -----------------------
+LB-1 Fix login on the                                                      LB-4 Ship v1
+  checkout page when t…                                                      <1m · dev-1
+  <1m · dev-1
+
+2 of 4 active tasks shown (assignee=dev-1, label=ui)
+--- stderr
+
+
+$ laneboard view --assignee dev-1 --label ui --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"name":"web-app","description":"test board","prefix":"LB","columns":[{"status":"todo","known":true,"cards":[{"id":"LB-1","title":"Fix login on the checkout page when the session cookie has expired","assignee":"dev-1","labels":["ui"],"status_since":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1}]},{"status":"in_progress","known":true,"cards":[]},{"status":"review","known":true,"cards":[]},{"status":"done","known":true,"cards":[{"id":"LB-4","title":"Ship v1","assignee":"dev-1","labels":["ui"],"status_since":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1}]}],"shown":2,"total":4},"warnings":[]}
+--- stderr
+

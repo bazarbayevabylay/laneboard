@@ -19,7 +19,7 @@ interface Project {
 async function project(format: 'markdown' | 'json', fields: Record<string, { type: string }>): Promise<Project> {
   const root = tempDir();
   const dir = path.join(root, '.laneboard');
-  expect((await cli(['init', '--prefix', 'IMP', '--statuses', 'todo,in_progress,review,blocked,done'], { cwd: root })).code).toBe(0);
+  expect((await cli(['init', '--description', 'test board', '--prefix', 'IMP', '--statuses', 'todo,in_progress,review,blocked,done'], { cwd: root })).code).toBe(0);
   const configFile = path.join(dir, 'config.json');
   const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   config.fields = { ...config.fields, ...fields };

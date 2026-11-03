@@ -1,0 +1,26 @@
+# view-narrow
+$ laneboard view
+exit 0
+--- stdout
+web-app (prefix LB) - test board
+<ROOT>/.laneboard
+
+todo (2)
+  LB-2  <1m · unassigned  Add dark mode
+  LB-1  <1m · dev-1  Fix login on the checkout pa…
+in_progress (1)
+  LB-3  <1m · dev-2  Cache the product list
+review (0)
+done (1)
+  LB-4  <1m · dev-1  Ship v1
+
+4 active tasks
+--- stderr
+
+
+$ laneboard view --json
+exit 0
+--- stdout
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"name":"web-app","description":"test board","prefix":"LB","columns":[{"status":"todo","known":true,"cards":[{"id":"LB-2","title":"Add dark mode","assignee":null,"labels":[],"status_since":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1},{"id":"LB-1","title":"Fix login on the checkout page when the session cookie has expired","assignee":"dev-1","labels":["ui"],"status_since":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1}]},{"status":"in_progress","known":true,"cards":[{"id":"LB-3","title":"Cache the product list","assignee":"dev-2","labels":[],"status_since":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1}]},{"status":"review","known":true,"cards":[]},{"status":"done","known":true,"cards":[{"id":"LB-4","title":"Ship v1","assignee":"dev-1","labels":["ui"],"status_since":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1}]}],"shown":4,"total":4},"warnings":[]}
+--- stderr
+

@@ -1,5 +1,5 @@
 # error-STORE_EXISTS
-$ laneboard init
+$ laneboard init --description 'test board'
 exit 6
 --- stdout
 
@@ -7,7 +7,7 @@ exit 6
 error STORE_EXISTS: a store already exists at <ROOT>/.laneboard
   fix: use it (laneboard list --dir <ROOT>/.laneboard), or pass --dir <another empty directory>
 
-$ laneboard init --json
+$ laneboard init --description 'test board' --json
 exit 6
 --- stdout
 {"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"STORE_EXISTS","message":"a store already exists at <ROOT>/.laneboard","fix":"use it (laneboard list --dir <ROOT>/.laneboard), or pass --dir <another empty directory>"}}

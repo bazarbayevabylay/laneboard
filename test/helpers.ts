@@ -38,7 +38,7 @@ export interface TestStore {
 export async function newStore(opts: { prefix?: string; statuses?: string[] } = {}): Promise<TestStore> {
   const root = tempDir();
   const dir = path.join(root, '.laneboard');
-  await initStore(dir, { prefix: opts.prefix ?? 'LB', statuses: opts.statuses });
+  await initStore(dir, { prefix: opts.prefix ?? 'LB', statuses: opts.statuses, name: 'test', description: 'test board' });
   return { root, dir, store: { dir } };
 }
 

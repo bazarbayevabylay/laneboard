@@ -5,8 +5,9 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, IdInput, locate, normalizeId, notFound, parseInput, toTaskView } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, IdInput, locate, normalizeId, notFound, parseInput, toTaskView, unique } from './common.ts';
 import type { FieldInfo, OpContext, OpResult, TaskView } from './common.ts';
+import type { ActorSource } from '../agent-name.ts';
 
 export const GetInput = z.strictObject({
   id: IdInput,
@@ -88,6 +89,19 @@ function byUpdatedDesc(a: TaskT, b: TaskT): number {
   return idNumber(b.id) - idNumber(a.id);
 }
 
+// One filter for list and view: status, assignee (or none), every label, text in id/title/description/labels (any case).
+function taskMatches(task: TaskT, f: { status?: string[]; assignee?: string; unassigned?: boolean; labels?: string[]; text?: string }): boolean {
+  if (f.status?.length && !f.status.includes(task.status)) return false;
+  if (f.assignee !== undefined && task.assignee !== f.assignee) return false;
+  if (f.unassigned && task.assignee !== null) return false;
+  if (f.labels?.length && !f.labels.every((l) => task.labels.includes(l))) return false;
+  if (f.text !== undefined) {
+    const haystack = [task.id, task.title, task.description, ...task.labels].join('\n').toLowerCase();
+    if (!haystack.includes(f.text.toLowerCase())) return false;
+  }
+  return true;
+}
+
 // List tasks with filters; the envelope always states scope, limit, offset and total.
 export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpResult<ListResult>> {
   const p = parseInput(ListInput, input);
@@ -101,18 +115,7 @@ export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpRe
   const { config, tasks } = await scopedTasks(ctx, scope, warnings);
   (p.status ?? []).forEach((s) => checkStatus(config, s));
   checkLimit(config, limit);
-  const text = p.text?.toLowerCase();
-  const matches = tasks.filter(({ task }) => {
-    if (p.status?.length && !p.status.includes(task.status)) return false;
-    if (p.assignee !== undefined && task.assignee !== p.assignee) return false;
-    if (p.unassigned && task.assignee !== null) return false;
-    if (p.labels?.length && !p.labels.every((l) => task.labels.includes(l))) return false;
-    if (text !== undefined) {
-      const haystack = [task.id, task.title, task.description, ...task.labels].join('\n').toLowerCase();
-      if (!haystack.includes(text)) return false;
-    }
-    return true;
-  });
+  const matches = tasks.filter(({ task }) => taskMatches(task, p));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListItem(task, archived));
   return { data: { items, scope, limit, offset, total: matches.length }, warnings };
@@ -146,6 +149,8 @@ export interface EventItem {
   task_id: string;
   at: string;
   actor: string;
+  // explicit or the session's default name; null when not recorded (older events, imported history).
+  actor_source: ActorSource | null;
   type: EventType;
   data: Record<string, unknown>;
 }
@@ -183,11 +188,11 @@ export async function listEvents(ctx: OpContext, input: EventsInputT): Promise<O
   for (const task of tasks) {
     for (const e of task.events) {
       if (p.since !== undefined && !(e.at > p.since)) continue;
-      all.push({ task_id: task.id, at: e.at, actor: e.actor, type: e.type, data: e.data, seq: seq++ });
+      all.push({ task_id: task.id, at: e.at, actor: e.actor, actor_source: e.actor_source ?? null, type: e.type, data: e.data, seq: seq++ });
     }
   }
   all.sort((a, b) => (a.at !== b.at ? (a.at < b.at ? 1 : -1) : b.seq - a.seq));
-  const items = all.slice(0, limit).map((e) => ({ task_id: e.task_id, at: e.at, actor: e.actor, type: e.type, data: e.data }));
+  const items = all.slice(0, limit).map((e) => ({ task_id: e.task_id, at: e.at, actor: e.actor, actor_source: e.actor_source, type: e.type, data: e.data }));
   return { data: { items, scope, limit, total: all.length }, warnings };
 }
 
@@ -200,6 +205,9 @@ export type SummaryInputT = z.infer<typeof SummaryInput>;
 export interface SummaryResult {
   // Id prefix of this store (shown so an agent sees whose store it writes to).
   prefix: string;
+  // Board name and description from config (null for stores made before they existed).
+  name: string | null;
+  description: string | null;
   // Active tasks per configured status (in config order), then statuses no longer in config.
   statuses: Array<{ status: string; count: number }>;
   // The first configured status: where new tasks start.
@@ -230,6 +238,8 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   return {
     data: {
       prefix: config.prefix,
+      name: config.name ?? null,
+      description: config.description ?? null,
       statuses: [...counts].map(([status, count]) => ({ status, count })),
       first_status: config.statuses[0] ?? '',
       final_status: finalStatus,
@@ -240,4 +250,60 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
     },
     warnings,
   };
+}
+
+export const ViewInput = z.strictObject({
+  assignee: z.string().optional(),
+  labels: z.array(z.string()).optional(),
+  text: z.string().min(1).optional(),
+});
+export type ViewInputT = z.infer<typeof ViewInput>;
+
+export interface ViewCard {
+  id: string;
+  title: string;
+  assignee: string | null;
+  labels: string[];
+  // When the task entered its current status (its last status event, else its creation).
+  status_since: string;
+  rev: number;
+}
+
+export interface ViewResult {
+  name: string | null;
+  description: string | null;
+  prefix: string;
+  // Columns in config order, then statuses no longer in config (`known: false`); cards newest update first.
+  columns: Array<{ status: string; known: boolean; cards: ViewCard[] }>;
+  // Cards shown after the filters / active tasks in total.
+  shown: number;
+  total: number;
+}
+
+// When a task entered its current status: the newest `status` event that set it, else created_at (also when older events were dropped).
+function statusSince(task: TaskT): string {
+  for (let i = task.events.length - 1; i >= 0; i--) {
+    const e = task.events[i];
+    if (e?.type === 'status' && (e.data as { to?: unknown }).to === task.status) return e.at;
+  }
+  return task.created_at;
+}
+
+// Kanban view of the active tasks (CLI `laneboard view`, for people): columns by configured status, lock-free (active.json only).
+export async function viewBoard(ctx: OpContext, input: ViewInputT): Promise<OpResult<ViewResult>> {
+  const p = parseInput(ViewInput, input);
+  if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
+  (p.labels ?? []).forEach(checkLabel);
+  const warnings: string[] = [];
+  const { config, tasks } = await scopedTasks(ctx, 'active', warnings);
+  const shown = tasks.filter(({ task }) => taskMatches(task, p)).map(({ task }) => task);
+  shown.sort(byUpdatedDesc);
+  const unknown = unique(shown.map((t) => t.status).filter((st) => !config.statuses.includes(st)));
+  const columns = [...config.statuses.map((status) => ({ status, known: true })), ...unknown.map((status) => ({ status, known: false }))].map((c) => ({
+    ...c,
+    cards: shown
+      .filter((t) => t.status === c.status)
+      .map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, labels: [...t.labels], status_since: statusSince(t), rev: t.rev })),
+  }));
+  return { data: { name: config.name ?? null, description: config.description ?? null, prefix: config.prefix, columns, shown: shown.length, total: tasks.length }, warnings };
 }

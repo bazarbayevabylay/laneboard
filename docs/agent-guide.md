@@ -10,7 +10,7 @@ Conventions in this guide:
 |---|---|
 | The project folder | the current directory; its store is `./.laneboard` |
 | Your agent name | `dev-1` (use your own; letters, digits, `. _ : @ -`) |
-| Task ids | `DEMO-<n>`: the prefix is set by `laneboard init --prefix DEMO` |
+| Task ids | `DEMO-<n>`: the prefix comes from the board name, `laneboard init --name demo` |
 | A command that fails on purpose | ends with `# exit <code>` |
 
 ## 1. Install
@@ -39,10 +39,12 @@ laneboard --version
 
 ### 1.1 Create the store and connect a harness
 
-Run both in the project root. `init` creates `./.laneboard`; `setup` registers the MCP server and adds a 3-line instruction block, pinned to that store.
+Run both in the project root. `init` creates the board `./.laneboard` and adds it to this machine's registry; `setup` registers the MCP server
+and adds a 3-line instruction block, pinned to that store. A board has a name and a one-line description (whose project, what work);
+the id prefix is derived from the name and must be free on this machine (a taken one fails with a free one in `fix`).
 
 ```sh
-laneboard init --prefix DEMO
+laneboard init --name demo --description "Demo project: the examples of this guide"
 laneboard setup claude-code
 ```
 
@@ -59,7 +61,7 @@ What `setup` writes:
 
 | Harness | MCP server entry | Instructions | Store pin |
 |---|---|---|---|
-| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` in `.claude/settings.json`, plus SessionStart and PostToolUse hooks |
+| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (in a folder inside another git repository: `.claude/settings.json`), plus SessionStart and PostToolUse hooks in `.claude/settings.json` |
 | codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<store>` in the instructions; the entry forwards `LANEBOARD_DIR` (`env_vars`) |
 | cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
@@ -98,7 +100,7 @@ laneboard setup gemini --remove
 
 - Before your first file change: claim your task or create one. Comment each meaningful step. When done: set the final status and add a result comment.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
-- Always pass `--json` and your name (`--as <name>` or `export LANEBOARD_AGENT=<name>`). MCP write tools take `actor`.
+- Always pass `--json`. Your name: `--as <name>` or `export LANEBOARD_AGENT=<name>` (MCP: `actor`); without them Claude Code sessions write under their default name (2.5).
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) and the declared fields.
 
 ### 2.2 A task from start to end
@@ -161,11 +163,12 @@ laneboard update DEMO-2 --title "Release notes" --expected-rev 3 --json
 | 3 | not found | `TASK_NOT_FOUND`, `ATTACHMENT_NOT_FOUND` | `laneboard list --scope all --text <words>` |
 | 4 | conflict | `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` | `REV_CONFLICT`: re-apply your change on `error.details.task` with its rev; `ALREADY_CLAIMED`: do not take over, comment |
 | 5 | busy | `LOCK_TIMEOUT`, `LOCK_LOST` | retry the same command once |
-| 6 | store | `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS`, `SETUP_*` | `STORE_NOT_FOUND`: `export LANEBOARD_DIR=<abs>/.laneboard`; never `init` unless asked |
+| 6 | store | `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS`, `STORE_READ_ONLY`, `SETUP_*` | `STORE_NOT_FOUND`: find your board with `laneboard boards --json`; none for this project: `init --name <name> --description "<…>"` (3.4) |
 
 ### 2.4 MCP tools
 
-The same operations as the CLI, with snake_case parameters; every write tool needs `actor`.
+The same operations as the CLI, with snake_case parameters. Write tools take `actor`; without it the server uses `LANEBOARD_AGENT`,
+else the default name of the session that started it. Every result has a second text block `{"store", "prefix", "warnings"}`, like the CLI envelope.
 
 | Tool | CLI |
 |---|---|
@@ -173,7 +176,26 @@ The same operations as the CLI, with snake_case parameters; every write tool nee
 | `task_claim`, `task_comment`, `task_attach` | `claim`, `comment`, `attach` |
 | `task_archive`, `task_restore`, `task_delete`, `task_events` | `archive`, `restore`, `delete`, `events` |
 
-`init`, `setup`, `prime`, `doctor`, `migrate` and `import` are CLI-only.
+`init`, `config`, `setup`, `prime`, `view`, `boards`, `doctor`, `migrate` and `import` are CLI-only.
+
+### 2.5 Your name
+
+Every write is signed with a name, in this order: `--as` (MCP `actor`), `LANEBOARD_AGENT`, the session's default name.
+In Claude Code the default is `claude-code@<git user.name or OS user>:<first 8 characters of the session id>`: `setup` writes the base
+(`LANEBOARD_DEFAULT_AGENT`), Claude Code sets `CLAUDE_CODE_SESSION_ID` for Bash, hooks and MCP servers. Two parallel sessions therefore
+get two names, and `claim` keeps them apart. Each event records `actor_source`: `explicit` or `default`.
+
+```sh
+unset LANEBOARD_AGENT
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=aaaa1111 laneboard create "Session A work" --status todo --json
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=aaaa1111 laneboard claim DEMO-3 --json
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=bbbb2222 laneboard claim DEMO-3 --json  # exit 4
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=bbbb2222 laneboard prime
+export LANEBOARD_AGENT=dev-1
+```
+
+Subagents of one session share its default name: give each its own `--as`. Codex, Cursor, Gemini CLI and OpenCode get no default name
+(they expose no session id, and one shared name would merge parallel sessions again), so pass `--as` there.
 
 ## 3. Configure
 
@@ -215,7 +237,7 @@ The first match wins, and every `--json` reply names it in `store` and `prefix`.
 |---|---|
 | 1 | `--dir <path to .laneboard>` |
 | 2 | `LANEBOARD_DIR` |
-| 3 | `.laneboard/` in the current directory or a parent (a parent's store adds a warning: it may be another project's) |
+| 3 | `.laneboard/` in the current directory or a parent; a parent's store adds a warning when a project marker (`.git`, `.claude`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) lies between, because then it is another project's board |
 
 ### 3.3 Several agents, several stores
 
@@ -224,9 +246,9 @@ Each agent uses its own name; a task claimed by another agent fails with `ALREAD
 
 ```sh
 laneboard create "Profile the export" --status todo --as dev-2 --json
-laneboard claim DEMO-4 --as dev-2 --json
-laneboard claim DEMO-4 --as dev-1 --json  # exit 4
-laneboard comment DEMO-4 "I can take the CSV part" --as dev-1 --json
+laneboard claim DEMO-5 --as dev-2 --json
+laneboard claim DEMO-5 --as dev-1 --json  # exit 4
+laneboard comment DEMO-5 "I can take the CSV part" --as dev-1 --json
 ```
 
 Each project (or agent folder) gets its own store and setup; `--dir` pins a store that is not `./.laneboard`.
@@ -234,9 +256,38 @@ Folders nested inside another project need their own `init`, or they would find 
 
 ```sh
 mkdir -p services/billing
-(cd services/billing && laneboard init --prefix BILL && laneboard setup cursor)
+(cd services/billing && laneboard init --prefix BILL --description "Billing service: invoices and payments" && laneboard setup cursor)
 laneboard create "Invoice rounding" --status todo --dir services/billing/.laneboard --as dev-1 --json
 (cd services/billing && laneboard list --json)
+```
+
+### 3.4 Boards on this machine
+
+`init` and `setup` add each board to `~/.laneboard/boards.json`. `laneboard boards` lists them: prefix, name, active tasks per status,
+last change, path and description; a path without a store any more is `missing`. Not sure which board is yours (no store found, or the
+warning above)? Pick yours from `boards --json` by `description` and `path`; none for this project: `init --name --description` in its root.
+
+```sh
+laneboard boards --json
+laneboard config --name demo --description "Demo project: the examples of this guide, billing included"
+```
+
+`--board <prefix|name|path>` opens another board read-only for `view`, `list`, `get` and `events`; a write through it fails with `STORE_READ_ONLY`.
+
+```sh
+laneboard list --board BILL --json
+laneboard create "Not here" --status todo --board BILL --json  # exit 6
+```
+
+### 3.5 The board for people
+
+`laneboard view` draws the board in the terminal: one column per configured status, each card with id, title, assignee and time in status;
+a narrow terminal gets a list grouped by status, and colors appear only on a terminal without `NO_COLOR`. Filters: `--assignee`, `--label`,
+`--text`. `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
+
+```sh
+laneboard view --board BILL
+COLUMNS=60 laneboard view --text export
 ```
 
 ## 4. Migrate: import existing tasks

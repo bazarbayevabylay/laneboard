@@ -1,0 +1,16 @@
+# boards
+$ laneboard boards
+exit 0
+--- stdout
+PREFIX  NAME     TASKS                          UPDATED                   PATH
+LB      web-app  todo 2, in_progress 1, done 1  YYYY-MM-DDTHH:MM:SS.mmmZ  <ROOT>/.laneboard
+  test board
+--- stderr
+
+
+$ laneboard boards --json
+exit 0
+--- stdout
+{"ok":true,"store":null,"prefix":null,"data":{"registry":"<ROOT>/home/.laneboard/boards.json","boards":[{"path":"<ROOT>/.laneboard","name":"web-app","prefix":"LB","description":"test board","missing":false,"problem":null,"counts":[{"status":"todo","count":2},{"status":"in_progress","count":1},{"status":"review","count":0},{"status":"done","count":1}],"total":4,"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ"}]},"warnings":[]}
+--- stderr
+

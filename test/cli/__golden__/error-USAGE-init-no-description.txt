@@ -1,0 +1,15 @@
+# error-USAGE-init-no-description
+$ laneboard init --name shop
+exit 2
+--- stdout
+
+--- stderr
+error USAGE: --description is required
+  fix: laneboard init --name shop --description "<one line: whose project and what work>"
+
+$ laneboard init --name shop --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":null,"error":{"code":"USAGE","message":"--description is required","fix":"laneboard init --name shop --json --description \"<one line: whose project and what work>\""}}
+--- stderr
+

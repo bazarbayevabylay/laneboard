@@ -10,6 +10,7 @@ export const events: CommandDef = {
   usage: 'events [--task id] [--since ts] [--limit N] [--scope active|archive|all]',
   summary: 'Event feed, newest first.',
   options: { task: { type: 'string' }, since: { type: 'string' }, limit: { type: 'string' }, scope: { type: 'string' } },
+  readOnly: true,
   args: { min: 0, max: 0 },
   async run(c) {
     const r = await listEvents(c.op(), {

@@ -1,14 +1,15 @@
 # init-options
-$ laneboard init --prefix WEB --statuses todo,doing,done --no-gitignore
+$ laneboard init --description 'test board' --prefix WEB --statuses todo,doing,done --no-gitignore
 exit 0
 --- stdout
-initialized <ROOT>/.laneboard (prefix WEB; statuses: todo, doing, done)
+initialized <ROOT>/.laneboard (web-app, prefix WEB; statuses: todo, doing, done)
+  test board
 --- stderr
+warning: HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards
 
-
-$ laneboard init --prefix WEB --statuses todo,doing,done --no-gitignore --json
+$ laneboard init --description 'test board' --prefix WEB --statuses todo,doing,done --no-gitignore --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WEB","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WEB","statuses":["todo","doing","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_ed25519*"]},"board":{"port":7420}}},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WEB","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WEB","name":"web-app","description":"test board","statuses":["todo","doing","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_ed25519*"]},"board":{"port":7420}},"registered":false},"warnings":["HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards"]}
 --- stderr
 

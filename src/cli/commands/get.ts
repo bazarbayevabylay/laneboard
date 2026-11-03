@@ -9,6 +9,7 @@ export const get: CommandDef = {
   usage: 'get <id> [--events N]',
   summary: 'Show one task (searches the archive too; the result has "archived").',
   options: { events: { type: 'string' } },
+  readOnly: true,
   args: { min: 1, max: 1 },
   async run(c) {
     const r = await getTask(c.op(), { id: c.positionals[0] ?? '', events: int(c.values, 'events') });

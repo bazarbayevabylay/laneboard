@@ -1,7 +1,7 @@
 // `laneboard setup <harness> [--remove] [--dry-run]`: write (or roll back) laneboard's MCP entry and instruction block for one harness.
 import fs from 'node:fs';
 import path from 'node:path';
-import { LaneboardError, suggestClosest } from '../core/index.ts';
+import { isLiveBoard, LaneboardError, suggestClosest } from '../core/index.ts';
 import { applyPlan, planAdd, planKeep, planRemove, readText } from './files.ts';
 import type { FileResult, PlannedFile } from './files.ts';
 import { claudeCode } from './harnesses/claude-code.ts';
@@ -11,7 +11,7 @@ import { cursor } from './harnesses/cursor.ts';
 import { gemini } from './harnesses/gemini.ts';
 import { opencode } from './harnesses/opencode.ts';
 
-export { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, PRIME_HOOK_COMMAND } from './harnesses/common.ts';
+export { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, PRIME_HOOK_COMMAND } from './harnesses/common.ts';
 
 export const HARNESSES: readonly Harness[] = [claudeCode, codex, cursor, gemini, opencode];
 export const HARNESS_NAMES = HARNESSES.map((h) => h.name);
@@ -109,7 +109,7 @@ function planWarnings(plan: readonly PlannedFile[], users: ReadonlyMap<string, s
 }
 
 // Plan every file first (an unparseable or unwritable file stops everything before any write), then write unless dry run.
-export function runSetup(input: SetupInput): { data: SetupResult; warnings: string[] } {
+export function runSetup(input: SetupInput): { data: SetupResult; warnings: string[]; registered: boolean } {
   const harness = findHarness(input.harness);
   const home = input.env.HOME;
   if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so global harness files cannot be found', { fix: 'export HOME=<your home directory> and run setup again' });
@@ -117,7 +117,9 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir) };
   const roots = [cwd, home];
   const users = new Map<string, string[]>();
-  const plan = harness.files.map((f) => {
+  // A file that does not apply here (Claude Code's local settings in a folder inside another repository) is not written; --remove still checks it.
+  const files = input.remove ? harness.files : harness.files.filter((f) => f.applies?.(context) ?? true);
+  const plan = files.map((f) => {
     const { file, shown, moved } = locate(f, context);
     // A directory the harness was pointed to (CODEX_HOME) is the user's, never removed.
     if (moved) roots.push(path.dirname(file));
@@ -131,12 +133,15 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
     return (input.remove ? planRemove : planAdd)(file, shown, f.scope, f.edit(shown, context));
   });
   if (!input.dryRun) applyPlan(plan, roots);
+  // After an install, an existing store at the pin is added to the machine registry by the caller.
+  const registered = !input.dryRun && !input.remove && isLiveBoard(context.storeDir);
   const warnings = [...planWarnings(plan, users), ...(input.remove ? [] : (harness.warnings?.(context) ?? []))];
   // The pin is written either way (init may follow), but a pin to nothing makes every laneboard command fail until then.
   if (!input.remove && !fs.existsSync(path.join(context.storeDir, 'config.json'))) {
     warnings.push(`no laneboard store at ${context.storeDir} yet: run laneboard init in ${cwd}, or run setup again with --dir <the project's .laneboard>`);
   }
   return {
+    registered,
     data: {
       harness: harness.name,
       store: context.storeDir,

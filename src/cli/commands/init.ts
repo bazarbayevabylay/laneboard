@@ -5,9 +5,17 @@ import type { CommandDef } from './types.ts';
 
 export const init: CommandDef = {
   name: 'init',
-  usage: 'init [--prefix P] [--statuses a,b,c] [--no-gitignore]',
-  summary: 'Create .laneboard/ here (or at --dir / LANEBOARD_DIR) with an explicit config.',
-  options: { prefix: { type: 'string' }, statuses: { type: 'string' }, 'no-gitignore': { type: 'boolean' } },
+  usage: 'init --description "<whose project, what work>" [--name N] [--prefix P] [--statuses a,b,c] [--no-gitignore]',
+  summary:
+    'Create the board .laneboard/ here (or at --dir / LANEBOARD_DIR) with an explicit config and add it to the machine registry (laneboard boards). ' +
+    'The name defaults to the folder name; the id prefix is derived from the name and must be free on this machine.',
+  options: {
+    name: { type: 'string' },
+    description: { type: 'string' },
+    prefix: { type: 'string' },
+    statuses: { type: 'string' },
+    'no-gitignore': { type: 'boolean' },
+  },
   args: { min: 0, max: 0 },
   async run(c) {
     const target = initTarget(c.discovery);
@@ -16,12 +24,15 @@ export const init: CommandDef = {
     const r = await initStore(
       target,
       {
+        name: str(c.values, 'name'),
+        description: str(c.values, 'description'),
         prefix: str(c.values, 'prefix'),
         statuses: statuses === undefined ? undefined : statuses.split(',').map((s) => s.trim()),
         gitignore: !flag(c.values, 'no-gitignore'),
       },
-      { lockWaitMs: c.io.lockWaitMs },
+      { lockWaitMs: c.io.lockWaitMs, home: c.io.env.HOME || undefined },
     );
-    return { ...r, human: `initialized ${r.data.store} (prefix ${r.data.config.prefix}; statuses: ${r.data.config.statuses.join(', ')})` };
+    const cfg = r.data.config;
+    return { ...r, human: `initialized ${r.data.store} (${cfg.name ?? '-'}, prefix ${cfg.prefix}; statuses: ${cfg.statuses.join(', ')})\n  ${cfg.description ?? ''}` };
   },
 };

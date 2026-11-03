@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import type { ErrorCode } from '../errors.ts';
+import type { ActorSource } from '../agent-name.ts';
 import { ACTOR_RE, ID_RE, LABEL_RE, LINK_KINDS } from '../schema.ts';
 import type { ConfigT, EventType, FieldType, LinkT, StoreFileT, TaskEventT, TaskT } from '../schema.ts';
 import type { StoreRef } from '../store.ts';
@@ -10,8 +11,12 @@ import type { Faults, TransactOptions } from '../transact.ts';
 // Everything an op needs besides its input: the store, who acts, and test-only options.
 export interface OpContext {
   store: StoreRef;
-  // Required for writes; facades take it from --as / LANEBOARD_AGENT / the MCP `actor` param.
+  // Required for writes; facades take it from --as / the MCP `actor` param / LANEBOARD_AGENT, else the default name (agent-name.ts).
   actor?: string;
+  // Where the actor's name came from (recorded on events); explicit when not given.
+  actorSource?: ActorSource;
+  // Home directory of the machine board registry (CLI: HOME); ops that register a board need it.
+  home?: string;
   faults?: Faults;
   lockWaitMs?: number;
   // Write deadline after the lock acquire (tests only; default LOCK_MAX_HOLD_MS).
@@ -110,6 +115,11 @@ export function suggestClosest(value: string, candidates: readonly string[]): st
   if (same.length === 1) return same[0];
   const near = candidates.filter((c) => distance(value.toLowerCase(), c.toLowerCase()) === 1);
   return near.length === 1 ? near[0] : undefined;
+}
+
+// Where the acting name came from, for events (explicit unless the facade used the default name).
+export function actorSourceOf(ctx: OpContext): ActorSource {
+  return ctx.actorSource ?? 'explicit';
 }
 
 // Writes need an actor; validate its format.
@@ -364,8 +374,9 @@ export function checkExpectedRev(task: TaskT, archived: boolean, expected: numbe
 }
 
 // Append an event (core only) and drop the oldest over limits.events_per_task.
-export function addEvent(task: TaskT, config: ConfigT, at: string, actor: string, type: EventType, data: Record<string, unknown>): void {
-  const event: TaskEventT = { at, actor, type, data };
+// `source` is set for events of a caller (explicit or default name); imported history events have none.
+export function addEvent(task: TaskT, config: ConfigT, at: string, actor: string, type: EventType, data: Record<string, unknown>, source?: ActorSource): void {
+  const event: TaskEventT = source === undefined ? { at, actor, type, data } : { at, actor, actor_source: source, type, data };
   task.events.push(event);
   const over = task.events.length - config.limits.events_per_task;
   if (over > 0) {
@@ -393,7 +404,8 @@ export interface TaskView {
   links: LinkT[];
   fields: Record<string, unknown>;
   attachments: TaskT['attachments'];
-  events: Array<{ at: string; actor: string; type: EventType; data: Record<string, unknown> }>;
+  // actor_source: explicit or the session's default name; null for events written before it was recorded (and imported history).
+  events: Array<{ at: string; actor: string; actor_source: ActorSource | null; type: EventType; data: Record<string, unknown> }>;
   events_dropped: number;
   created_at: string;
   created_by: string;
@@ -417,7 +429,7 @@ export function toTaskView(task: TaskT, archived: boolean, eventsLimit?: number)
     links: task.links.map((l) => ({ kind: l.kind, ref: l.ref })),
     fields: { ...task.fields },
     attachments: task.attachments.map((a) => ({ name: a.name, size: a.size, sha256: a.sha256, mime: a.mime, added_by: a.added_by, added_at: a.added_at })),
-    events: events.map((e) => ({ at: e.at, actor: e.actor, type: e.type, data: e.data })),
+    events: events.map((e) => ({ at: e.at, actor: e.actor, actor_source: e.actor_source ?? null, type: e.type, data: e.data })),
     events_dropped: task.events_dropped,
     created_at: task.created_at,
     created_by: task.created_by,

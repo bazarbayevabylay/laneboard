@@ -34,7 +34,12 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     expect(rules).toContain('`error.details.task`');
     expect(rules).toContain('the last one is final');
     expect(rules).toContain('type `commented`');
-    expect(rules).toContain('never run `laneboard init` unless the user asks');
+    // Unsure which board: the registry first, then a board of its own with a name and description (owner's rule, S2c).
+    expect(rules).toContain('`laneboard boards --json`, pick yours by `description` and `path`');
+    expect(rules).toContain('`laneboard init --name <name> --description "<whose project, what work>"`');
+    expect(rules).not.toContain('unless the user asks');
+    // An agent without a name is told that its writes use the session's default name.
+    expect(rules).toContain("without them writes use the session's default name");
   });
 
   it('rule 1 makes task tracking mandatory for any work, also when nobody asks for tasks and the board is empty (usability test 03.11)', () => {
@@ -79,7 +84,7 @@ describe('Claude Code plugin', () => {
     const s = await newStore();
     const r = spawnSync('/bin/sh', ['-c', EDIT_HOOK_COMMAND], { cwd: s.root, env: { PATH: `${bin}:/usr/bin:/bin`, LANEBOARD_AGENT: 'dev-1' }, input: '{"tool_name":"Edit"}', encoding: 'utf8' });
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout).hookSpecificOutput).toMatchObject({ hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('no task claimed - run laneboard prime') });
+    expect(JSON.parse(r.stdout).hookSpecificOutput).toMatchObject({ hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('laneboard: no task is in progress for dev-1') });
     const outside = spawnSync('/bin/sh', ['-c', EDIT_HOOK_COMMAND], { cwd: tempDir(), env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8' });
     expect([outside.status, outside.stdout, outside.stderr]).toEqual([0, '', '']);
   });

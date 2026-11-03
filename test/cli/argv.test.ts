@@ -9,7 +9,7 @@ afterAll(cleanupTemp);
 async function seeded(): Promise<{ root: string; run: (argv: string[]) => ReturnType<typeof cli> }> {
   const root = tempDir();
   const run = (argv: string[]): ReturnType<typeof cli> => cli(argv, { cwd: root });
-  expect((await run(['init', '--prefix', 'LB'])).code).toBe(0);
+  expect((await run(['init', '--description', 'test board', '--prefix', 'LB'])).code).toBe(0);
   expect((await run(['create', 'Fix login', '--status', 'todo', '--as', 'a'])).code).toBe(0);
   return { root, run };
 }

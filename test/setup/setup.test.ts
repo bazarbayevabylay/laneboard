@@ -131,6 +131,7 @@ describe.each(HARNESS_NAMES)('setup %s', (harness) => {
 describe('setup details', () => {
   it('writes the MCP entry and the 3-line block each harness documents', async () => {
     const s = sandbox();
+    plant(s, { 'h:.gitconfig': '[user]\n\tname = Test Person\n' });
     for (const h of HARNESS_NAMES) await ok(s, ['setup', h]);
     const read = (rel: string): unknown => JSON.parse(fs.readFileSync(path.join(s.cwd, rel), 'utf8'));
     const store = path.join(s.cwd, '.laneboard');
@@ -149,8 +150,9 @@ describe('setup details', () => {
         ],
         PostToolUse: [{ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }],
       },
-      env: { LANEBOARD_DIR: store },
     });
+    // Outside a git repository Claude Code reads the local file from this folder: the machine path and the name stay out of commits.
+    expect(read('.claude/settings.local.json')).toEqual({ env: { LANEBOARD_DIR: store, LANEBOARD_DEFAULT_AGENT: 'claude-code@Test-Person' } });
     expect(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8')).toBe(
       '# laneboard:start\n[mcp_servers.laneboard]\ncommand = "laneboard"\nargs = ["mcp"]\nenv_vars = ["LANEBOARD_DIR"]\n# laneboard:end\n',
     );
@@ -162,17 +164,19 @@ describe('setup details', () => {
     expect(lines[1]).toContain('No untracked work.');
     expect(lines[2]).toContain('LANEBOARD_AGENT');
     expect(fs.readFileSync(path.join(s.cwd, 'GEMINI.md'), 'utf8')).toBe(agents);
-    // Claude Code gets the pin from .claude/settings.json; the rest of the block is the same.
+    // Claude Code gets the pin from .claude/settings.local.json (no path in the committed CLAUDE.md) and a default name per session.
     const claude = fs.readFileSync(path.join(s.cwd, 'CLAUDE.md'), 'utf8').split('\n').slice(1, -2);
-    expect(claude[0]).toContain(`Its store is ${store} (LANEBOARD_DIR is set for this project in .claude/settings.json).`);
-    expect(claude.slice(1)).toEqual(lines.slice(1));
+    expect(claude[0]).toContain('Its store is pinned by LANEBOARD_DIR in .claude/settings.local.json (kept out of git; `laneboard prime` shows the path).');
+    expect(claude[0]).not.toContain(store);
+    expect(claude[1]).toBe(lines[1]);
+    expect(claude[2]).toContain("Without `--as` your writes use this session's default name");
   });
 
   it('pins --dir (or LANEBOARD_DIR) instead of ./.laneboard, never a store found in a parent directory; warns when no store is there yet', async () => {
     const s = sandbox();
     const sub = path.join(s.cwd, 'sub');
     fs.mkdirSync(sub);
-    expect((await cli(['init', '--prefix', 'PARENT'], { cwd: s.cwd })).code).toBe(0);
+    expect((await cli(['init', '--description', 'test board', '--prefix', 'PARENT'], { cwd: s.cwd })).code).toBe(0);
     const inSub = { run: (argv: string[], env: Record<string, string> = {}) => cli(argv, { cwd: sub, env: { HOME: s.home, ...env } }) };
     const plain = JSON.parse((await inSub.run(['setup', 'gemini', '--json'])).stdout);
     expect(plain.data.store).toBe(path.join(sub, '.laneboard'));
@@ -285,11 +289,11 @@ describe('setup details', () => {
     const viaEnv = sandbox();
     const cache = tempDir();
     fs.mkdirSync(path.join(cache, 'cache', 'other-market', 'laneboard'), { recursive: true });
-    await viaEnv.run(['init', '--prefix', 'LB']);
+    await viaEnv.run(['init', '--description', 'test board', '--prefix', 'LB']);
     const r2 = await viaEnv.run(['setup', 'claude-code', '--json'], { CLAUDE_CODE_PLUGIN_CACHE_DIR: cache });
     expect(JSON.parse(r2.stdout).warnings).toHaveLength(1);
     const clean = sandbox();
-    await clean.run(['init', '--prefix', 'LB']);
+    await clean.run(['init', '--description', 'test board', '--prefix', 'LB']);
     expect(JSON.parse((await clean.run(['setup', 'claude-code', '--json'])).stdout).warnings).toEqual([]);
   });
 
@@ -394,14 +398,18 @@ describe('setup backups and exact edits', () => {
   it('JSON: only our key changes, every other byte stays (arrays on one line, 1.0, escapes, big numbers, other indent)', async () => {
     const s = sandbox();
     const original = '{\n  "permissions": { "allow": ["Bash(npm test)", "Read"], "deny": [] },\n  "env": { "BIG": 12345678901234567890, "F": 1.0, "U": "caf\\u00e9" }\n}\n';
-    plant(s, { 'p:.claude/settings.json': original });
+    // A git worktree (`.git` file): Claude Code reads the main checkout's local file, so the env goes into settings.json here.
+    plant(s, { 'p:.claude/settings.json': original, 'p:.git': 'gitdir: /elsewhere/.git/worktrees/x\n', 'h:.gitconfig': '[user]\n  name = "Test Person"\n' });
     await ok(s, ['setup', 'claude-code']);
     const hook = JSON.stringify({ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'" }] }, null, 2);
     const edit = JSON.stringify({ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }, null, 2);
     const indent = (text: string): string => text.split('\n').join('\n      ');
     const inserted = `,\n  "hooks": {\n    "SessionStart": [\n      ${indent(hook)}\n    ],\n    "PostToolUse": [\n      ${indent(edit)}\n    ]\n  }`;
     const file = path.join(s.cwd, '.claude', 'settings.json');
-    const pinned = original.replace('"caf\\u00e9" }', `"caf\\u00e9",${JSON.stringify('LANEBOARD_DIR')}:${JSON.stringify(path.join(s.cwd, '.laneboard'))} }`);
+    const pinned = original.replace(
+      '"caf\\u00e9" }',
+      `"caf\\u00e9",${JSON.stringify('LANEBOARD_DIR')}:${JSON.stringify(path.join(s.cwd, '.laneboard'))},"LANEBOARD_DEFAULT_AGENT":"claude-code@Test-Person" }`,
+    );
     expect(fs.readFileSync(file, 'utf8')).toBe(pinned.replace('" }\n}\n', `" }${inserted}\n}\n`));
     // The user changes something else after setup: --remove takes only our part out and keeps every other byte.
     const edited = fs.readFileSync(file, 'utf8').replace('"deny": []', '"deny": ["Bash(rm)"]');
@@ -598,5 +606,57 @@ describe("setup --remove never deletes what is not laneboard's", () => {
     const removed = await ok(s, ['setup', 'codex', '--remove']);
     expect(removed.files[0]?.result).toBe('restored');
     expect(fs.readFileSync(file, 'utf8')).toBe('model = "o4"\n');
+  });
+});
+
+describe('Claude Code store pin and default name (S2c)', () => {
+  it("the user's own env.LANEBOARD_DIR is never overwritten: SETUP_CONFLICT with --dir <their value>; with it, --remove gives the file back byte for byte", async () => {
+    const s = sandbox();
+    const theirs = '/shared/team/.laneboard';
+    const original = `{\n  "env": { "LANEBOARD_DIR": ${JSON.stringify(theirs)}, "FOO": "1" }\n}\n`;
+    plant(s, { 'p:.claude/settings.local.json': original });
+    const before = snapshot(s);
+    const refused = await s.run(['setup', 'claude-code', '--json']);
+    expect(refused.code).toBe(6);
+    expect(JSON.parse(refused.stdout).error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `laneboard setup claude-code --dir ${theirs}`, details: { value: theirs } });
+    expect(snapshot(s)).toEqual(before);
+    // Run as the fix says: the pin is theirs, so the file gets a backup and its value stays.
+    const r = await ok(s, ['setup', 'claude-code', '--dir', theirs]);
+    expect(r.files.find((f) => f.path === '.claude/settings.local.json')?.result).toBe('updated');
+    const local = JSON.parse(fs.readFileSync(path.join(s.cwd, '.claude', 'settings.local.json'), 'utf8'));
+    expect(local.env).toMatchObject({ LANEBOARD_DIR: theirs, FOO: '1' });
+    const removed = await ok(s, ['setup', 'claude-code', '--remove']);
+    expect(removed.files.find((f) => f.path === '.claude/settings.local.json')?.result).toBe('restored');
+    expect(fs.readFileSync(path.join(s.cwd, '.claude', 'settings.local.json'), 'utf8')).toBe(original);
+  });
+
+  it('a value the user pinned in the shared settings.json is a conflict too (the local file would silently win over it)', async () => {
+    const s = sandbox();
+    plant(s, { 'p:.claude/settings.json': '{ "env": { "LANEBOARD_DIR": "../other/.laneboard" } }\n' });
+    const r = JSON.parse((await s.run(['setup', 'claude-code', '--json'])).stdout);
+    expect(r.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: 'laneboard setup claude-code --dir ../other/.laneboard' });
+  });
+
+  it('settings.local.json at the root of a git repository; settings.json in a folder inside another repository (its local file is the root one)', async () => {
+    const root = tempDir();
+    const home = tempDir();
+    fs.mkdirSync(path.join(root, '.git'));
+    const nested = path.join(root, 'agents', 'b');
+    fs.mkdirSync(nested, { recursive: true });
+    const run = (cwd: string) => cli(['setup', 'claude-code', '--json'], { cwd, env: { HOME: home, USER: 'tester' } });
+    expect((await run(root)).code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.local.json'), 'utf8')).env).toEqual({ LANEBOARD_DIR: path.join(root, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')).env).toBeUndefined();
+    expect((await run(nested)).code).toBe(0);
+    expect(fs.existsSync(path.join(nested, '.claude', 'settings.local.json'))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env).toEqual({ LANEBOARD_DIR: path.join(nested, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
+    expect(fs.readFileSync(path.join(nested, 'CLAUDE.md'), 'utf8')).toContain('(LANEBOARD_DIR is set for this project in .claude/settings.json)');
+  });
+
+  it('a default name the user already set is kept', async () => {
+    const s = sandbox();
+    plant(s, { 'p:.claude/settings.local.json': '{ "env": { "LANEBOARD_DEFAULT_AGENT": "claude-code@me" } }\n' });
+    await ok(s, ['setup', 'claude-code']);
+    expect(JSON.parse(fs.readFileSync(path.join(s.cwd, '.claude', 'settings.local.json'), 'utf8')).env.LANEBOARD_DEFAULT_AGENT).toBe('claude-code@me');
   });
 });

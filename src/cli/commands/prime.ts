@@ -1,28 +1,50 @@
 // laneboard prime
-import { agentRules, LaneboardError, parentStoreWarning, taskSummary, toLaneboardError } from '../../core/index.ts';
-import type { OpContext, SummaryResult } from '../../core/index.ts';
+import path from 'node:path';
+import { agentRules, LaneboardError, parentStoreWarning, resolveActor, separateProjectMarker, taskSummary, toLaneboardError } from '../../core/index.ts';
+import type { ActorSource, OpContext, SummaryResult } from '../../core/index.ts';
 import { primeText } from '../format.ts';
 import type { PrimeData } from '../format.ts';
 import { flag } from './args.ts';
 import type { CommandDef, CommandOutput } from './types.ts';
 
-// What an agent may do when no store is found: point to an existing one; creating a store is the user's call.
-const NO_STORE_FIX = 'if this project has a store: export LANEBOARD_DIR=<abs>/.laneboard; do not run laneboard init unless the user asks';
+// What an agent does when no store is found: find this project's board, else create it (agent rule 12).
+const NO_STORE_FIX =
+  'find this project\'s board: laneboard boards --json (pick it by description and path, then export LANEBOARD_DIR=<its path>); none for this project: laneboard init --name <name> --description "<whose project, what work>" in its root';
 
-// Claude Code PostToolUse hook output after Edit/Write: a reminder for Claude when no task is in progress (code.claude.com/docs/en/hooks).
-function editReminder(summary: SummaryResult, store: string): string {
-  const text = `laneboard: no task claimed - run laneboard prime, then create or claim your task before more file changes (store ${store}, prefix ${summary.prefix}). No untracked work.`;
+// Claude Code PostToolUse output: text added to Claude's context next to the tool result (code.claude.com/docs/en/hooks).
+// It states facts, not orders: imperative out-of-band text can trigger prompt-injection defenses (same page, "Add context for Claude").
+function hookContext(text: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } });
 }
 
-// `prime --edit-hook`: the reminder, or nothing at all (a task is in progress, no store, any error); it never fails a tool call.
-async function editHook(op: () => OpContext, agent: string | undefined): Promise<CommandOutput> {
+// Reminder after an edit when nothing is in progress for the agent.
+function editReminder(summary: SummaryResult, store: string, agent: string | undefined): string {
+  const who = agent === undefined ? '' : ` for ${agent}`;
+  return hookContext(
+    `laneboard: no task is in progress${who} in store ${store} (prefix ${summary.prefix}). ` +
+      'This project tracks every change in a laneboard task (agent rule 1); `laneboard prime` prints the create command.',
+  );
+}
+
+// Note after an edit in a folder that looks like its own project while the store found above belongs to another one.
+function foreignStoreNote(store: string, prefix: string, cwd: string, marker: string): string {
+  return hookContext(
+    `laneboard: ${path.resolve(cwd)} has no laneboard store of its own; the store found above it, ${store} (prefix ${prefix}), belongs to another project (this folder has ${marker}). ` +
+      'Tasks for this folder do not go there; `laneboard boards --json` lists the boards on this machine with their descriptions.',
+  );
+}
+
+// `prime --edit-hook`: a note, or nothing at all (a task is in progress, no store, any error); it never fails a tool call.
+async function editHook(op: () => OpContext, agent: string | undefined, cwd: string): Promise<CommandOutput> {
   const quiet: CommandOutput = { data: null, warnings: [], human: '', silent: true };
   try {
     const ctx = op();
     const r = await taskSummary(ctx, { assignee: agent });
     if (r.data.in_progress > 0) return quiet;
-    return { data: null, warnings: [], human: editReminder(r.data, ctx.store.dir), storeWarningInText: true };
+    // Never nudge towards another project's store: name the situation instead of asking for a task there.
+    const marker = ctx.store.found === 'parent' ? separateProjectMarker(ctx.store.dir, cwd) : undefined;
+    if (marker !== undefined) return { data: null, warnings: [], human: foreignStoreNote(ctx.store.dir, r.data.prefix, cwd, marker), storeWarningInText: true };
+    return { data: null, warnings: [], human: editReminder(r.data, ctx.store.dir, agent), storeWarningInText: true };
   } catch {
     // A hook must not disturb the session: no store, a broken store or a bad name all mean "say nothing".
     return quiet;
@@ -33,7 +55,7 @@ export const prime: CommandDef = {
   name: 'prime',
   usage: 'prime [--hook | --edit-hook]',
   summary:
-    'Print the agent rules, the store and its prefix, statuses, fields and your tasks (--as / LANEBOARD_AGENT), or the command to create one. ' +
+    'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the command to create one. ' +
     '--hook: plain text for a SessionStart hook, never fails. --edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing.',
   options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' } },
   args: { min: 0, max: 0 },
@@ -42,8 +64,13 @@ export const prime: CommandDef = {
     const edit = flag(c.values, 'edit-hook');
     if ((hook || edit) && c.values.json === true) throw new LaneboardError('USAGE', `--${hook ? 'hook' : 'edit-hook'} prints output for a hook; it cannot be combined with --json`);
     if (hook && edit) throw new LaneboardError('USAGE', '--hook and --edit-hook are two different hooks; pass one of them');
-    const agent = typeof c.values.as === 'string' ? c.values.as : c.io.env.LANEBOARD_AGENT || undefined;
-    if (edit) return editHook(c.op, agent);
+    // The same name a write would use: --as, LANEBOARD_AGENT, else the session's default name.
+    const named = resolveActor(typeof c.values.as === 'string' ? c.values.as : undefined, c.io.env);
+    const agent = named.actor;
+    const agentSource: ActorSource | null = named.actorSource ?? null;
+    // A default name says little in the hook: an agent that passed its own --as owns its task under that name, so the reminder
+    // looks at anybody's work in progress then (a session without a task is not reminded while another one has one).
+    if (edit) return editHook(c.op, agentSource === 'default' ? undefined : agent, c.io.cwd);
     const rules = agentRules();
     let summary: SummaryResult | undefined;
     let ctx: OpContext | undefined;
@@ -65,6 +92,9 @@ export const prime: CommandDef = {
     const data: PrimeData = {
       rules,
       agent: agent ?? null,
+      agent_source: agentSource,
+      name: summary?.name ?? null,
+      description: summary?.description ?? null,
       store: summary && ctx ? ctx.store.dir : null,
       prefix: summary?.prefix ?? null,
       store_warning: (summary && ctx && parentStoreWarning(ctx.store, c.io.cwd, summary.prefix)) || null,

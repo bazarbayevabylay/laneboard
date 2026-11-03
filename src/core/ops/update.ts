@@ -4,6 +4,7 @@ import { LaneboardError } from '../errors.ts';
 import type { LinkT } from '../schema.ts';
 import { transact } from '../transact.ts';
 import {
+  actorSourceOf,
   addEvent,
   checkActor,
   checkExpectedRev,
@@ -135,14 +136,14 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
         return toTaskView(task, false);
       }
       touch(task, s.now, actor);
-      if (Object.keys(diff).length) addEvent(task, s.config, s.now, actor, 'updated', diff);
+      if (Object.keys(diff).length) addEvent(task, s.config, s.now, actor, 'updated', diff, actorSourceOf(ctx));
       if (statusChange) {
         task.status = statusChange.to;
-        addEvent(task, s.config, s.now, actor, 'status', statusChange);
+        addEvent(task, s.config, s.now, actor, 'status', statusChange, actorSourceOf(ctx));
       }
       if (assignChange) {
         task.assignee = assignChange.to;
-        addEvent(task, s.config, s.now, actor, 'assigned', assignChange);
+        addEvent(task, s.config, s.now, actor, 'assigned', assignChange, actorSourceOf(ctx));
       }
       return toTaskView(task, false);
     },
@@ -187,11 +188,11 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       touch(task, s.now, actor);
       if (assignChange) {
         task.assignee = actor;
-        addEvent(task, s.config, s.now, actor, 'assigned', assignChange);
+        addEvent(task, s.config, s.now, actor, 'assigned', assignChange, actorSourceOf(ctx));
       }
       if (statusChange) {
         task.status = statusChange.to;
-        addEvent(task, s.config, s.now, actor, 'status', statusChange);
+        addEvent(task, s.config, s.now, actor, 'status', statusChange, actorSourceOf(ctx));
       }
       return toTaskView(task, false);
     },
@@ -218,7 +219,7 @@ export async function commentTask(ctx: OpContext, input: CommentInputT): Promise
       const id = normalizeId(p.id, s.config.prefix);
       const task = requireActiveTask(s, id);
       touch(task, s.now, actor);
-      addEvent(task, s.config, s.now, actor, 'commented', { text: p.text });
+      addEvent(task, s.config, s.now, actor, 'commented', { text: p.text }, actorSourceOf(ctx));
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),

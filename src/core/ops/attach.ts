@@ -9,7 +9,7 @@ import { ensureDir, removeFile, writeFileAtomic } from '../fsio.ts';
 import { ATTACHMENT_NAME_RE } from '../schema.ts';
 import type { ConfigT } from '../schema.ts';
 import { transact } from '../transact.ts';
-import { addEvent, IdInput, normalizeId, parseInput, requireActiveTask, requireActor, toTaskView, touch, txOptions } from './common.ts';
+import { actorSourceOf, addEvent, IdInput, normalizeId, parseInput, requireActiveTask, requireActor, toTaskView, touch, txOptions } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 
 export const AttachInput = z.strictObject({
@@ -149,7 +149,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
         }
         task.attachments.splice(index, 1);
         touch(task, s.now, actor);
-        addEvent(task, s.config, s.now, actor, 'detached', { name });
+        addEvent(task, s.config, s.now, actor, 'detached', { name }, actorSourceOf(ctx));
         // Metadata goes first; the file is removed after the write, still under the lock.
         s.onCommit(() => removeFile(path.join(attachmentDir(storeDir, id), name)));
         return toTaskView(task, false);
@@ -204,7 +204,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
       };
       task.attachments.push(meta);
       touch(task, s.now, actor);
-      addEvent(task, s.config, s.now, actor, 'attached', { name, size: meta.size, sha256: meta.sha256 });
+      addEvent(task, s.config, s.now, actor, 'attached', { name, size: meta.size, sha256: meta.sha256 }, actorSourceOf(ctx));
       return toTaskView(task, false);
     },
     opts,

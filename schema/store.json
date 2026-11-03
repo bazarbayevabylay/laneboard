@@ -169,6 +169,13 @@
                   "type": "string",
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$"
                 },
+                "actor_source": {
+                  "type": "string",
+                  "enum": [
+                    "explicit",
+                    "default"
+                  ]
+                },
                 "type": {
                   "type": "string",
                   "enum": [

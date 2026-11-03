@@ -8,8 +8,9 @@ import { ACTOR_RE, LABEL_RE, Timestamp } from '../schema.ts';
 import type { ConfigT, StoreFileT, TaskT } from '../schema.ts';
 import { maxIdNumber } from '../store.ts';
 import { readBoth, transact } from '../transact.ts';
-import { addEvent, DescriptionInput, fieldInfo, MAX_COMMENT_CHARS, matchesType, parseInput, requireActor, TitleInput, txOptions, unique } from './common.ts';
+import { actorSourceOf, addEvent, DescriptionInput, fieldInfo, MAX_COMMENT_CHARS, matchesType, parseInput, requireActor, TitleInput, txOptions, unique } from './common.ts';
 import type { OpContext, OpResult } from './common.ts';
+import type { ActorSource } from '../agent-name.ts';
 
 // One event of the source's own history, kept with its original time.
 export const ImportEvent = z.strictObject({
@@ -143,7 +144,7 @@ function plan(config: ConfigT, active: StoreFileT, archive: StoreFileT, tasks: r
 }
 
 // Build a stored task: the source history first (original times), then `created` at import time naming the source.
-function buildTask(config: ConfigT, t: ImportTaskT, id: string, now: string, actor: string): TaskT {
+function buildTask(config: ConfigT, t: ImportTaskT, id: string, now: string, actor: string, source: ActorSource): TaskT {
   const task: TaskT = {
     id,
     rev: 1,
@@ -164,7 +165,7 @@ function buildTask(config: ConfigT, t: ImportTaskT, id: string, now: string, act
   };
   const history = [...(t.history ?? [])].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   for (const e of history) addEvent(task, config, e.at, e.actor, e.type, e.data);
-  addEvent(task, config, now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee, imported_from: t.source });
+  addEvent(task, config, now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee, imported_from: t.source }, source);
   return task;
 }
 
@@ -194,7 +195,7 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
       for (const t of fresh) {
         const id = `${s.config.prefix}-${s.active.next_id}`;
         s.active.next_id += 1;
-        s.active.tasks.push(buildTask(s.config, t, id, s.now, actor));
+        s.active.tasks.push(buildTask(s.config, t, id, s.now, actor, actorSourceOf(ctx)));
         created.push({ id, source: t.source, title: t.title });
       }
       return { dry_run: false, created, skipped };

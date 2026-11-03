@@ -342,3 +342,14 @@ export function jsonEdits(file: string, parts: readonly JsonOwned[]): TextEdit {
     },
   };
 }
+
+// The value at `keys` of a JSON/JSONC text (comments allowed), or undefined when the text or the path is missing.
+export function jsonValueAt(text: string | null, keys: readonly string[]): unknown {
+  if (text === null) return undefined;
+  let current: unknown = valueOf(text);
+  for (const key of keys) {
+    if (!isObject(current) || !Object.hasOwn(current, key)) return undefined;
+    current = current[key];
+  }
+  return current;
+}

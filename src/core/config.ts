@@ -9,10 +9,11 @@ import type { ConfigT } from './schema.ts';
 export const DEFAULT_PREFIX = 'LB';
 export const DEFAULT_STATUSES = ['todo', 'in_progress', 'review', 'done'];
 
-// Prefix that init derives from a folder name (`my-web-app` -> MYWEBAPP, `agent-2` -> AGENT2), or undefined when none fits.
+// Prefix that init derives from the board name (by default the project folder's name) (`my-web-app` -> MYWEBAPP, `agent-2` -> AGENT2), or undefined when none fits.
 // Uppercase letters and digits only, starting with a letter, at most 10 characters; a trailing number is kept when the name is cut.
 export function derivePrefix(folder: string): string | undefined {
-  const letters = folder.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[0-9]+/, '');
+  // Accented letters keep their base letter (café -> CAFE) instead of being dropped.
+  const letters = folder.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[0-9]+/, '');
   if (letters === '') return undefined;
   if (letters.length <= 10) return letters;
   const number = /[0-9]+$/.exec(letters)?.[0] ?? '';
@@ -37,10 +38,12 @@ export function configPath(storeDir: string): string {
 }
 
 // Build the full config that init writes: every key explicit, no hidden defaults.
-export function buildConfig(prefix: string, statuses: string[]): ConfigT {
+export function buildConfig(prefix: string, statuses: string[], board: { name?: string; description?: string } = {}): ConfigT {
   return {
     schema: CONFIG_SCHEMA,
     prefix,
+    ...(board.name !== undefined ? { name: board.name } : {}),
+    ...(board.description !== undefined ? { description: board.description } : {}),
     statuses,
     fields: { priority: { type: 'number', description: '0 = highest' } },
     limits: { events_per_task: 500, attachment_bytes: 26214400, list_limit_max: 200 },

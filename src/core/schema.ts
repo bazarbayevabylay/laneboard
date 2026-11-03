@@ -44,9 +44,17 @@ export const Attachment = z.strictObject({
   added_at: Timestamp,
 });
 
+export const ACTOR_SOURCES = ['explicit', 'default'] as const;
+// One line of visible text (board name, board description).
+const ONE_LINE_RE = /^(?=.*\S)[^\u0000-\u001F\u007F]+$/;
+export const BoardName = z.string().min(1).max(60).regex(ONE_LINE_RE, 'name must be one line of visible text');
+export const BoardDescription = z.string().min(1).max(200).regex(ONE_LINE_RE, 'description must be one line of visible text');
+
 export const TaskEvent = z.looseObject({
   at: Timestamp,
   actor: Actor,
+  // How the actor got its name: explicit (--as, MCP actor, LANEBOARD_AGENT) or the session's default name.
+  actor_source: z.enum(ACTOR_SOURCES).optional(),
   type: z.enum(EVENT_TYPES),
   data: z.record(z.string(), z.unknown()),
 });
@@ -94,6 +102,9 @@ export const Config = z
   .strictObject({
     schema: z.string().regex(/^laneboard\/config@[1-9][0-9]*$/),
     prefix: z.string().regex(PREFIX_RE),
+    // Board name and one-line description (whose project, what work); optional for stores made before they existed.
+    name: BoardName.optional(),
+    description: BoardDescription.optional(),
     statuses: z.array(z.string().regex(STATUS_RE)).min(1),
     fields: z.record(z.string().regex(FIELD_KEY_RE), FieldDef),
     limits: z.strictObject({

@@ -52,10 +52,27 @@ const seedArchived = async (e: Env): Promise<void> => {
   await e.run(['archive', 'LB-1', '--as', 'a']);
 };
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 3));
+// A small board for view and boards: tasks in three statuses, one with a long title, one unassigned.
+const seedBoard = async (e: Env): Promise<void> => {
+  await e.run(['create', 'Fix login on the checkout page when the session cookie has expired', '--status', 'todo', '--assignee', 'dev-1', '--label', 'ui', '--as', 'a']);
+  await tick();
+  await e.run(['create', 'Add dark mode', '--status', 'todo', '--as', 'a']);
+  await tick();
+  await e.run(['create', 'Cache the product list', '--status', 'in_progress', '--assignee', 'dev-2', '--as', 'a']);
+  await tick();
+  await e.run(['create', 'Ship v1', '--status', 'done', '--assignee', 'dev-1', '--label', 'ui', '--as', 'a']);
+};
+// Another folder named `other` already has a registered board (prefix OTHER), so `init --dir other/.laneboard` derives a taken prefix.
+const seedOtherBoard = async (e: Env): Promise<void> => {
+  const elsewhere = path.join(e.root, 'elsewhere', 'other');
+  fs.mkdirSync(elsewhere, { recursive: true });
+  const r = await cli(['init', '--description', 'the first board called other'], { cwd: elsewhere, env: { HOME: path.join(e.root, 'home') } });
+  expect(r.code).toBe(0);
+};
 
 const CASES: Case[] = [
-  { name: 'init', argv: ['init'], store: false },
-  { name: 'init-options', argv: ['init', '--prefix', 'WEB', '--statuses', 'todo,doing,done', '--no-gitignore'], store: false },
+  { name: 'init', argv: ['init', '--description', 'Web shop of ACME: checkout and cart work'], store: false },
+  { name: 'init-options', argv: ['init', '--description', 'test board', '--prefix', 'WEB', '--statuses', 'todo,doing,done', '--no-gitignore'], store: false },
   {
     name: 'create',
     argv: ['create', 'Fix login', '--status', 'todo', '--description', 'Users cannot log in', '--assignee', 'dev-1', '--label', 'auth', '--link', 'branch=fix/login', '--field', 'priority=1', '--as', 'a'],
@@ -132,6 +149,13 @@ const CASES: Case[] = [
   { name: 'setup-dry-run', argv: ['setup', 'opencode', '--dry-run'], env: { HOME: '<ROOT>/home' } },
   { name: 'prime', argv: ['prime', '--as', 'dev-1'], setup: async (e) => void (await e.run(['create', 'Fix login', '--status', 'todo', '--assignee', 'dev-1', '--as', 'a'])) },
   { name: 'prime-no-agent', argv: ['prime'], setup: seed },
+  { name: 'config', argv: ['config'] },
+  { name: 'config-change', argv: ['config', '--name', 'Web shop', '--description', 'ACME web shop: checkout and cart'], env: { HOME: '<ROOT>/home' } },
+  { name: 'boards', argv: ['boards'], env: { HOME: '<ROOT>/home' }, setup: seedBoard },
+  { name: 'view', argv: ['view'], env: { COLUMNS: '100' }, setup: seedBoard },
+  { name: 'view-narrow', argv: ['view'], env: { COLUMNS: '50' }, setup: seedBoard },
+  { name: 'view-filtered', argv: ['view', '--assignee', 'dev-1', '--label', 'ui'], env: { COLUMNS: '100' }, setup: seedBoard },
+  { name: 'view-board', argv: ['view', '--board', 'LB'], env: { COLUMNS: '80', HOME: '<ROOT>/home' }, setup: seedBoard },
   { name: 'help', argv: ['--help'], store: false },
   { name: 'help-command', argv: ['create', '--help'], store: false },
   { name: 'version', argv: ['--version'], store: false },
@@ -188,7 +212,10 @@ const CASES: Case[] = [
       writeRaw(path.join(e.dir, 'active.json'), JSON.stringify(data));
     },
   },
-  { name: 'error-STORE_EXISTS', argv: ['init'], error: 'STORE_EXISTS' },
+  { name: 'error-STORE_EXISTS', argv: ['init', '--description', 'test board'], error: 'STORE_EXISTS' },
+  { name: 'error-USAGE-init-no-description', argv: ['init', '--name', 'shop'], error: 'USAGE', store: false },
+  { name: 'error-INVALID_VALUE-prefix-taken', argv: ['init', '--dir', 'other/.laneboard', '--description', 'another board'], error: 'INVALID_VALUE', env: { HOME: '<ROOT>/home' }, setup: seedOtherBoard },
+  { name: 'error-STORE_READ_ONLY', argv: ['create', 'x', '--status', 'todo', '--board', '.', '--as', 'a'], error: 'STORE_READ_ONLY' },
   {
     name: 'error-SETUP_UNPARSEABLE',
     argv: ['setup', 'gemini'],
@@ -239,7 +266,7 @@ async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result
   const caseEnv = Object.fromEntries(Object.entries(c.env ?? {}).map(([k, v]) => [k, v.split('<ROOT>').join(root)]));
   if (caseEnv.HOME) fs.mkdirSync(caseEnv.HOME, { recursive: true });
   const env: Env = { root, dir, run: (argv, stdin) => cli(argv, { cwd: root, stdin, env: caseEnv }) };
-  if (c.store !== false) expect((await env.run(['init', '--prefix', 'LB'])).code).toBe(0);
+  if (c.store !== false) expect((await env.run(['init', '--description', 'test board', '--prefix', 'LB'])).code).toBe(0);
   await c.setup?.(env);
   // `--json` goes before `--`: after it, it would be text.
   const end = c.argv.indexOf('--');

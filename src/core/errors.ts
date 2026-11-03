@@ -20,6 +20,7 @@ export type ErrorCode =
   | 'STORE_INVALID'
   | 'STORE_TOO_NEW'
   | 'STORE_EXISTS'
+  | 'STORE_READ_ONLY'
   | 'SETUP_UNPARSEABLE'
   | 'SETUP_CONFLICT'
   | 'SETUP_WRITE_FAILED';
@@ -46,10 +47,15 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   ATTACHMENT_EXISTS: { exit: 4, http: 409, fix: 'pick another --name, or remove the old one first: laneboard attach <id> --remove <name>' },
   LOCK_TIMEOUT: { exit: 5, http: 503, fix: 'the store is busy: retry the same command once' },
   LOCK_LOST: { exit: 5, http: 503, fix: 'retry the same command once' },
-  STORE_NOT_FOUND: { exit: 6, http: 500, fix: 'laneboard init, or export LANEBOARD_DIR=/abs/path/.laneboard' },
+  STORE_NOT_FOUND: {
+    exit: 6,
+    http: 500,
+    fix: 'find this project\'s board: laneboard boards --json (then export LANEBOARD_DIR=<its path>); none for this project: laneboard init --name <name> --description "<whose project, what work>"',
+  },
   STORE_INVALID: { exit: 6, http: 500, fix: 'laneboard doctor; to roll back to the previous good version: laneboard doctor --restore-backup' },
   STORE_TOO_NEW: { exit: 6, http: 500, fix: 'upgrade laneboard: npm i -g laneboard@latest' },
   STORE_EXISTS: { exit: 6, http: 409, fix: 'use the existing store, or pass --dir <another empty directory>' },
+  STORE_READ_ONLY: { exit: 6, http: 409, fix: 'write to your own board without --board' },
   SETUP_UNPARSEABLE: { exit: 6, http: 500, fix: 'add the snippet from `details` to the file by hand, or fix the file and run setup again' },
   SETUP_CONFLICT: { exit: 6, http: 409, fix: 'remove the laneboard entry that is outside the laneboard block and run setup again, or add the snippet from `details` by hand' },
   SETUP_WRITE_FAILED: { exit: 6, http: 500, fix: 'make the file and its directory writable and run setup again' },

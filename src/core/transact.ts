@@ -116,6 +116,12 @@ function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: Ar
 
 // The only mutation path for CLI, MCP, board and import: every call reads fresh files (W3).
 export async function transact<T>(store: StoreRef, spec: { files: readonly FileKind[] }, fn: (s: State) => T, opts: TransactOptions = {}): Promise<T> {
+  // A board opened with --board is someone else's: reading it is fine, writing to it never is.
+  if (store.readOnly) {
+    throw new LaneboardError('STORE_READ_ONLY', `${store.dir} was opened with --board, which is read-only`, {
+      fix: 'write to your own board without --board (laneboard boards --json shows which one is yours by its path and description)',
+    });
+  }
   const warnings = opts.warnings ?? [];
   return withLock(store, opts, (lock) => {
     // Orphans can only come from crashed writers, because live writers hold this lock (W4).

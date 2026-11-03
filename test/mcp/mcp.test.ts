@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterAll, describe, expect, it } from 'vitest';
-import { agentRules, archiveTasks, claimTask, createTask, OPS } from '../../src/core/index.ts';
+import { agentRules, archiveTasks, claimTask, createTask, ERRORS, OPS } from '../../src/core/index.ts';
 import { TOOL_LIST, TOOLS } from '../../src/mcp/tools.ts';
 import { as, cleanupTemp, cli, CLI_SOURCE, newStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
@@ -126,7 +126,7 @@ const CASES: ParityCase[] = [
     tool: 'task_update',
     args: { id: 'LB-1', actor: 'a' },
     error: 'USAGE',
-    mcpFix: 'call task_update with these parameters (? = optional): id, actor, title?, description?, status?, assignee?, add_labels?, remove_labels?, add_links?, remove_links?, fields?, unset_fields?, expected_rev?',
+    mcpFix: 'call task_update with these parameters (? = optional): id, title?, description?, status?, assignee?, add_labels?, remove_labels?, add_links?, remove_links?, fields?, unset_fields?, expected_rev?, actor?',
   },
 ];
 
@@ -147,8 +147,10 @@ describe('MCP server over stdio (SDK client)', () => {
       for (const t of tools) {
         expect(t.inputSchema.additionalProperties, t.name).toBe(false);
         expect(t.description?.length ?? 0, t.name).toBeGreaterThan(10);
+        // Write tools take an optional actor (else LANEBOARD_AGENT, else the session default name); reads take none.
         const required = (t.inputSchema.required ?? []) as string[];
-        expect(required.includes('actor'), t.name).toBe(t.annotations?.readOnlyHint === false);
+        expect(required.includes('actor'), t.name).toBe(false);
+        expect('actor' in (t.inputSchema.properties ?? {}), t.name).toBe(t.annotations?.readOnlyHint === false);
         expect('field_args' in (t.inputSchema.properties ?? {}), t.name).toBe(false);
       }
       const instructions = mcp.client.getInstructions() ?? '';
@@ -194,7 +196,8 @@ describe('MCP server over stdio (SDK client)', () => {
       // A no-op update is not an error; its warning comes as a second text item.
       const same = await mcp.call('task_update', { id: 'LB-1', status: 'todo', actor: 'm' });
       expect(same.isError).toBe(false);
-      expect(JSON.parse(same.text[1] ?? '{}')).toEqual({ warnings: ['no changes: LB-1 already has these values'] });
+      // Like the CLI envelope: store and prefix next to the warnings (agent rule 11).
+      expect(JSON.parse(same.text[1] ?? '{}')).toEqual({ store: path.join(root, '.laneboard'), prefix: 'LB', warnings: ['no changes: LB-1 already has these values'] });
     } finally {
       await mcp.close();
     }
@@ -254,7 +257,7 @@ describe('MCP server over stdio (SDK client)', () => {
       const r = await mcp.call('task_create', { title: 'x', status: 'todo', field_args: ['priority=1'], actor: 'a' });
       expect(r.isError).toBe(true);
       expect(r.structured).toMatchObject({ code: 'USAGE', message: 'unknown parameter: field_args' });
-      expect(r.structured.fix).toBe('call task_create with these parameters (? = optional): title, status, actor, description?, assignee?, labels?, links?, fields?');
+      expect(r.structured.fix).toBe('call task_create with these parameters (? = optional): title, status, description?, assignee?, labels?, links?, fields?, actor?');
       const read = await mcp.call('task_get', { id: 'LB-1', actor: 'a' });
       expect(read.structured).toMatchObject({ code: 'USAGE', message: 'unknown parameter: actor' });
     } finally {
@@ -276,7 +279,7 @@ describe('MCP server over stdio (SDK client)', () => {
     try {
       const r = await empty.call('task_list', {});
       expect(r.isError).toBe(true);
-      expect(r.structured).toMatchObject({ code: 'STORE_NOT_FOUND', fix: 'laneboard init, or export LANEBOARD_DIR=/abs/path/.laneboard' });
+      expect(r.structured).toMatchObject({ code: 'STORE_NOT_FOUND', fix: ERRORS.STORE_NOT_FOUND.fix });
     } finally {
       await empty.close();
     }

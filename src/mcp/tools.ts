@@ -14,6 +14,7 @@ import {
   ListInput,
   OPS,
   parentStoreWarning,
+  resolveActor,
   resolveStore,
   RestoreInput,
   storePrefix,
@@ -21,7 +22,7 @@ import {
   toLaneboardError,
   UpdateInput,
 } from '../core/index.ts';
-import type { ErrorObject, OpContext, OpName, OpResult } from '../core/index.ts';
+import type { ErrorObject, OpContext, OpName, OpResult, StoreRef } from '../core/index.ts';
 
 export interface ToolDef {
   name: string;
@@ -43,9 +44,12 @@ export interface ToolEnv {
   lockWaitMs?: number;
 }
 
-const actor = z.string().describe('your name, e.g. dev-1 (the same one in every call)');
+const actor = z
+  .string()
+  .optional()
+  .describe('your name, e.g. dev-1 (the same one in every call); omitted: LANEBOARD_AGENT, else the session default name');
 
-// Advertised parameters of a write tool: the op input plus a required actor.
+// Advertised parameters of a write tool: the op input plus the actor (explicit, else LANEBOARD_AGENT, else the session default).
 function writeParams(input: z.ZodObject): z.ZodObject {
   return input.extend({ actor });
 }
@@ -124,6 +128,9 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   migrateStore: 'cli-only',
   doctor: 'cli-only',
   importTasks: 'cli-only',
+  configureStore: 'cli-only',
+  viewBoard: 'cli-only',
+  listBoards: 'cli-only',
 };
 
 interface ToolEntry {
@@ -186,6 +193,7 @@ function splitArgs(def: ToolDef, args: Record<string, unknown>): { actor?: strin
 // Run one tool call: parse arguments, call the core op, map the result (thin adapter).
 export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Promise<ToolResult> {
   const entry = TOOL_LIST.find((t) => t.def.name === name);
+  let store: StoreRef | undefined;
   try {
     if (!entry) {
       throw new LaneboardError('USAGE', `unknown tool "${name}"`, { allowed: TOOL_LIST.map((t) => t.def.name), fix: 'call one of the tools in `allowed`' });
@@ -193,21 +201,25 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     const args = rawArgs ?? {};
     if (typeof args !== 'object' || Array.isArray(args)) throw new LaneboardError('USAGE', 'arguments must be an object');
     const { actor: who, input } = splitArgs(entry.def, args as Record<string, unknown>);
-    const ctx: OpContext = {
-      store: resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd }),
-      actor: who === '' ? undefined : who,
-      lockWaitMs: env.lockWaitMs,
-    };
+    store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd });
+    // Same order as the CLI: the actor parameter, LANEBOARD_AGENT, then the session's default name (recorded as such on events).
+    const named = entry.def.write ? resolveActor(who, env.env) : {};
+    const ctx: OpContext = { store, ...named, lockWaitMs: env.lockWaitMs };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     const result = await op(ctx, input);
     // Same notice as the CLI: a store found in a parent directory may belong to another project.
-    const parent = parentStoreWarning(ctx.store, env.cwd, storePrefix(ctx.store.dir));
+    const prefix = storePrefix(store.dir);
+    const parent = parentStoreWarning(store, env.cwd, prefix);
     const warnings = parent ? [parent, ...result.warnings] : result.warnings;
-    const content = [{ type: 'text' as const, text: JSON.stringify(result.data) }];
-    if (warnings.length) content.push({ type: 'text', text: JSON.stringify({ warnings }) });
+    // The CLI envelope's store, prefix and warnings, next to the data (structuredContent stays the CLI `data`).
+    const content = [
+      { type: 'text' as const, text: JSON.stringify(result.data) },
+      { type: 'text' as const, text: JSON.stringify({ store: store.dir, prefix, warnings }) },
+    ];
     return { content, structuredContent: result.data };
   } catch (raw) {
     const error = mcpError(toLaneboardError(raw), entry?.def);
-    return { content: [{ type: 'text', text: JSON.stringify(error) }], structuredContent: { ...error }, isError: true };
+    const where = { store: store?.dir ?? null, prefix: store ? storePrefix(store.dir) : null };
+    return { content: [{ type: 'text', text: JSON.stringify(error) }, { type: 'text', text: JSON.stringify(where) }], structuredContent: { ...error }, isError: true };
   }
 }

@@ -35,16 +35,23 @@ const TASK_RULE =
 
 const NAME_LINE = 'Writes need your name: pass `--as <your-name>` on every command (or `export LANEBOARD_AGENT=<your-name>`).';
 
-// How the block pins the store: Claude Code reads LANEBOARD_DIR from .claude/settings.json; other harnesses get it inline.
-export type StorePin = 'settings-env' | 'inline';
+// Claude Code sets a default name per session (LANEBOARD_DEFAULT_AGENT plus the session id), so an agent without a name still writes as itself.
+const DEFAULT_NAME_LINE =
+  'Without `--as` your writes use this session\'s default name (`laneboard prime` shows it); subagents and parallel workers of one session pass their own `--as <name>`.';
+
+// How the block pins the store: Claude Code reads LANEBOARD_DIR from .claude/settings.local.json (not committed) or
+// .claude/settings.json (a folder inside another repository); other harnesses get it inline.
+export type StorePin = 'settings-local-env' | 'settings-env' | 'inline';
 
 // Instruction block body (3 lines) for CLAUDE.md / AGENTS.md / GEMINI.md: what laneboard is and which store, the task rule, the name.
 export function instructionLines(storeDir: string, pin: StorePin): string {
   const where =
-    pin === 'settings-env'
-      ? `Its store is ${storeDir} (LANEBOARD_DIR is set for this project in .claude/settings.json).`
-      : `Its store is ${storeDir}: run every laneboard command with it, \`LANEBOARD_DIR=${shellWord(storeDir)} laneboard <command>\` (or export LANEBOARD_DIR=${shellWord(storeDir)} once).`;
-  return [`This project tracks work with laneboard (task board & CLI for AI coding agents). ${where}`, TASK_RULE, NAME_LINE].join('\n');
+    pin === 'settings-local-env'
+      ? 'Its store is pinned by LANEBOARD_DIR in .claude/settings.local.json (kept out of git; `laneboard prime` shows the path).'
+      : pin === 'settings-env'
+        ? `Its store is ${storeDir} (LANEBOARD_DIR is set for this project in .claude/settings.json).`
+        : `Its store is ${storeDir}: run every laneboard command with it, \`LANEBOARD_DIR=${shellWord(storeDir)} laneboard <command>\` (or export LANEBOARD_DIR=${shellWord(storeDir)} once).`;
+  return [`This project tracks work with laneboard (task board & CLI for AI coding agents). ${where}`, TASK_RULE, pin === 'inline' ? NAME_LINE : DEFAULT_NAME_LINE].join('\n');
 }
 
 export interface HarnessContext {
@@ -62,6 +69,8 @@ export interface HarnessFile {
   edit: (shown: string, c: HarnessContext) => TextEdit;
   // Absolute path the harness itself reads instead, when its environment moves the file (e.g. CODEX_HOME).
   moved?: (c: HarnessContext) => string | undefined;
+  // Install writes this file only when true (default always); --remove looks at it either way.
+  applies?: (c: HarnessContext) => boolean;
 }
 
 export interface Harness {

@@ -1,7 +1,7 @@
 // CLI runner: parse argv strictly, call one core op, print one result (thin adapter, testable in-process).
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
-import { ERRORS, LaneboardError, parentStoreWarning, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
+import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { StoreRef } from '../core/index.ts';
 import { jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
@@ -14,8 +14,12 @@ const GLOBAL_OPTIONS: OptionSpec = {
   json: { type: 'boolean' },
   dir: { type: 'string' },
   as: { type: 'string' },
+  board: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 };
+
+// Commands that may open another board with --board (they only read).
+const READ_COMMANDS = (): string[] => COMMANDS.filter((c) => c.readOnly).map((c) => c.name);
 
 // Package version from package.json (same relative path from src/cli and dist/cli).
 export function version(): string {
@@ -34,7 +38,8 @@ export function globalHelp(): string {
     'Global options (every command):',
     '  --json         print one JSON document on stdout, also on errors',
     '  --dir <path>   store directory (.laneboard); else LANEBOARD_DIR; else search up from cwd',
-    '  --as <actor>   who is writing; else LANEBOARD_AGENT (required for writes)',
+    '  --as <actor>   who is writing; else LANEBOARD_AGENT; else the session default name (LANEBOARD_DEFAULT_AGENT, Claude Code session)',
+    `  --board <b>    open another board read-only by prefix, name or path (${READ_COMMANDS().join(', ')})`,
     '  --help, -h     usage of a command: laneboard <command> --help',
     '  --version      print the version',
     '  --             end of options: text that starts with "-" goes after it',
@@ -51,7 +56,7 @@ function commandHelp(def: CommandDef): string {
     '',
     def.summary,
     '',
-    'Global options: --json, --dir <path>, --as <actor>, --help',
+    `Global options: --json, --dir <path>, --as <actor>, --help${def.readOnly ? ', --board <prefix|name|path> (read-only)' : ''}`,
     'Text that starts with "-": after -- (options first), or as --option=<value>.',
   ].join('\n');
 }
@@ -71,7 +76,7 @@ function flagMessage(err: LaneboardError, def: CommandDef | undefined): Laneboar
   const name = m?.[1];
   if (err.code !== 'USAGE' || !name || !def) return err;
   const flagName = def.flags?.[name] ?? `--${name.replace(/_/g, '-')}`;
-  return new LaneboardError('USAGE', `${flagName} is required`, { fix: err.fix });
+  return new LaneboardError('USAGE', `${flagName} is required`, { fix: err.fix, ...(err.input ? { input: err.input } : {}) });
 }
 
 interface Printed {
@@ -120,18 +125,26 @@ export async function runCli(io: CliIo): Promise<number> {
       envDir: io.env.LANEBOARD_DIR,
       cwd: io.cwd,
     };
+    const board = typeof values.board === 'string' ? values.board : undefined;
+    // Another board is opened only to read it: a write never reaches it (transact refuses read-only stores too).
+    if (board !== undefined && !command.readOnly) {
+      throw new LaneboardError('STORE_READ_ONLY', `--board opens another board read-only; ${command.name} is not a read command (${READ_COMMANDS().join(', ')})`, {
+        fix: `drop --board: laneboard ${command.name} works on your own board (--dir / LANEBOARD_DIR; laneboard boards --json shows which one is yours)`,
+      });
+    }
+    if (board !== undefined && discovery.dir !== undefined) throw new LaneboardError('USAGE', '--board and --dir cannot be combined');
     let store: StoreRef | undefined;
-    const actor = typeof values.as === 'string' ? values.as : io.env.LANEBOARD_AGENT;
+    const named = resolveActor(typeof values.as === 'string' ? values.as : undefined, io.env);
     const result = await command.run({
       values,
       positionals,
       io,
       discovery,
       op: () => {
-        store ??= resolveStore(discovery);
+        store ??= board !== undefined ? resolveBoard(io.env.HOME, board, io.cwd) : resolveStore(discovery);
         out.store = store.dir;
         out.ref = store;
-        return { store, actor: actor === '' ? undefined : actor, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
+        return { store, ...named, home: io.env.HOME || undefined, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
       },
       setStore: (dir) => {
         out.store = dir;

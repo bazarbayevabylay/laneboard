@@ -19,6 +19,7 @@ export const list: CommandDef = {
     limit: { type: 'string' },
     offset: { type: 'string' },
   },
+  readOnly: true,
   args: { min: 0, max: 0 },
   async run(c) {
     const r = await listTasks(c.op(), {

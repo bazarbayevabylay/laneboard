@@ -9,13 +9,24 @@ import type { FileKind, StoreFileT, TaskT } from './schema.ts';
 
 export const STORE_DIR_NAME = '.laneboard';
 
-// How a store was found: --dir, LANEBOARD_DIR, in the current directory, or in a parent of it (walk-up).
-export type StoreSource = 'dir' | 'env' | 'cwd' | 'parent';
+// How a store was found: --dir, LANEBOARD_DIR, in the current directory, in a parent of it (walk-up), or --board (read-only).
+export type StoreSource = 'dir' | 'env' | 'cwd' | 'parent' | 'board';
 
 // A resolved store: absolute path of the `.laneboard` directory (and how discovery found it, when it did).
 export interface StoreRef {
   dir: string;
   found?: StoreSource;
+  // Opened with --board: another board, readable only (transact refuses every write).
+  readOnly?: boolean;
+}
+
+// Files and folders that mark a project root of its own (a nested agent folder, a separate repository). package.json is not one:
+// packages of a monorepo have it and share the repository's board.
+export const PROJECT_MARKERS = ['.git', '.claude', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md'] as const;
+
+// Is `dir` the machine's board registry (`~/.laneboard` holds boards.json and no config.json), not a store?
+function isRegistryDir(dir: string): boolean {
+  return !fs.existsSync(path.join(dir, 'config.json')) && fs.existsSync(path.join(dir, 'boards.json'));
 }
 
 export interface DiscoveryInput {
@@ -44,7 +55,7 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
     const dir = path.resolve(input.cwd, explicit);
     if (!isDir(dir)) {
       throw new LaneboardError('STORE_NOT_FOUND', `${source} points to ${dir}, which is not a directory`, {
-        fix: `laneboard init --dir ${dir}, or fix ${source}`,
+        fix: `fix ${source} (laneboard boards --json lists this machine's boards with their paths); if this project has no board yet: laneboard init --dir ${dir} --name <name> --description "<whose project, what work>"`,
       });
     }
     return { dir, found: input.dir !== undefined ? 'dir' : 'env' };
@@ -53,7 +64,7 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
   let current = start;
   for (;;) {
     const candidate = path.join(current, STORE_DIR_NAME);
-    if (isDir(candidate)) return { dir: candidate, found: current === start ? 'cwd' : 'parent' };
+    if (isDir(candidate) && !isRegistryDir(candidate)) return { dir: candidate, found: current === start ? 'cwd' : 'parent' };
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -61,12 +72,26 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
   throw new LaneboardError('STORE_NOT_FOUND', `no ${STORE_DIR_NAME} directory in ${path.resolve(input.cwd)} or any parent`);
 }
 
-// Warning for a store found in a parent directory: another project's store (a nested agent directory) would be used silently otherwise.
+// First project marker between cwd (included) and the folder that holds the store (excluded), as a path relative to cwd.
+export function separateProjectMarker(storeDir: string, cwd: string): string | undefined {
+  const owner = path.dirname(storeDir);
+  const start = path.resolve(cwd);
+  for (let current = start; current !== owner && path.dirname(current) !== current; current = path.dirname(current)) {
+    const marker = PROJECT_MARKERS.find((m) => fs.existsSync(path.join(current, m)));
+    if (marker) return path.relative(start, path.join(current, marker));
+  }
+  return undefined;
+}
+
+// Warning for a store found in a parent directory that looks like another project's (a project marker lies between):
+// a nested agent folder would otherwise write silently into it. A plain subfolder of the same project gets none.
 export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | null): string | undefined {
   if (ref.found !== 'parent') return undefined;
+  const marker = separateProjectMarker(ref.dir, cwd);
+  if (marker === undefined) return undefined;
   return (
-    `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} found in a parent directory, not in ${path.resolve(cwd)}; ` +
-    `fine if it is this project's store, otherwise stop and ask the user (pin the right one: export LANEBOARD_DIR=<abs>/.laneboard)`
+    `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} found in a parent directory, but ${path.resolve(cwd)} looks like a separate project (it has ${marker}); ` +
+    `unless this folder is part of that project, find its own board with laneboard boards --json (pin it: export LANEBOARD_DIR=<its path>), or create one: laneboard init --name <name> --description "<whose project, what work>"`
   );
 }
 

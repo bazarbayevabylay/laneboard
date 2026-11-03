@@ -43,6 +43,21 @@ function replaceValue(argv: readonly string[], err: LaneboardError): string | un
   return commandLine(out, placeholders);
 }
 
+// Options that init derives or requires: when the value came from elsewhere (a derived prefix, a missing description), the fix adds the option.
+const ADDABLE_OPTIONS = new Set(['prefix', 'description']);
+
+// The user's command plus `--<field> <suggestion or placeholder>` when that option is not in argv yet.
+function addMissingOption(argv: readonly string[], err: LaneboardError): string | undefined {
+  const input = err.input;
+  if (!input || !ADDABLE_OPTIONS.has(input.field)) return undefined;
+  const flag = `--${input.field}`;
+  if (argv.some((t) => t === flag || t.startsWith(`${flag}=`))) return undefined;
+  const value = input.suggestion ?? input.format;
+  if (value === undefined) return undefined;
+  const out = withOptions(argv, [flag, value]);
+  return commandLine(out, input.suggestion === undefined ? new Set([out.indexOf(value)]) : new Set());
+}
+
 // argv with extra option tokens inserted before `--` (after it they would be read as text).
 function withOptions(argv: readonly string[], extra: readonly string[]): string[] {
   const end = argv.indexOf('--');
@@ -51,7 +66,7 @@ function withOptions(argv: readonly string[], extra: readonly string[]): string[
 
 // The fix shown to a CLI user: a corrected command when one can be built, else the usage line, else the core fix.
 export function cliFix(err: LaneboardError, argv: readonly string[], command: { name: string; usage: string } | undefined): string {
-  const rebuilt = replaceValue(argv, err);
+  const rebuilt = replaceValue(argv, err) ?? addMissingOption(argv, err);
   if (rebuilt) return rebuilt;
   if (err.code === 'ACTOR_REQUIRED') {
     // Only the command, so it can be run as given; the LANEBOARD_AGENT alternative is in the CLI message (cliMessage).
@@ -108,6 +123,11 @@ function inline(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// An event's actor for people: a default name is marked, so it is not mistaken for a name somebody chose.
+function actorText(e: { actor: string; actor_source: 'explicit' | 'default' | null }): string {
+  return e.actor_source === 'default' ? `${e.actor} (default name)` : e.actor;
+}
+
 // Human view of one task.
 export function taskText(t: TaskView): string {
   const lines = [`${t.id}  ${t.title}`];
@@ -124,7 +144,7 @@ export function taskText(t: TaskView): string {
   }
   const dropped = t.events_dropped ? `, ${t.events_dropped} older dropped` : '';
   lines.push(`  events (${t.events.length} shown${dropped}):`);
-  for (const e of t.events) lines.push(`    ${e.at}  ${e.actor}  ${e.type}  ${inline(e.data)}`);
+  for (const e of t.events) lines.push(`    ${e.at}  ${actorText(e)}  ${e.type}  ${inline(e.data)}`);
   return lines.join('\n');
 }
 
@@ -147,7 +167,7 @@ export function eventsText(r: EventsResult): string {
   const lines: string[] = [];
   if (r.items.length) {
     const rows = [['AT', 'TASK', 'ACTOR', 'TYPE', 'DATA']];
-    for (const e of r.items) rows.push([e.at, e.task_id, e.actor, e.type, inline(e.data)]);
+    for (const e of r.items) rows.push([e.at, e.task_id, actorText(e), e.type, inline(e.data)]);
     lines.push(...table(rows));
   }
   lines.push(`${r.items.length} of ${r.total} shown (scope ${r.scope}, newest first)`);
@@ -168,6 +188,11 @@ export const PRIME_MAX_CHARS = 4000;
 export interface PrimeData {
   rules: string;
   agent: string | null;
+  // Where the name came from: explicit (--as, LANEBOARD_AGENT) or the session's default name; null without a name.
+  agent_source: 'explicit' | 'default' | null;
+  // Board name and description from config (null without a store or for older stores).
+  name: string | null;
+  description: string | null;
   // The store in use and its id prefix (null without a store).
   store: string | null;
   prefix: string | null;
@@ -201,6 +226,15 @@ function noTaskText(d: PrimeData): string {
       'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).',
     ].join('\n');
   }
+  if (d.agent_source === 'default') {
+    // The default name is used without --as, so commands copied from here stay "default" in the task events.
+    const plain = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name} --json`;
+    return [
+      `You have no task in progress. Your name is the session default ${d.agent} (writes use it without --as; pick your own with --as <name> or LANEBOARD_AGENT). Create one now:`,
+      plain,
+      'Given a task id instead: laneboard claim <ID> --json',
+    ].join('\n');
+  }
   return ['You have no task in progress. Create one now:', create, `Given a task id instead: laneboard claim <ID> --as ${name} --json`].join('\n');
 }
 
@@ -212,7 +246,8 @@ export function primeText(d: PrimeData): string {
   const listed = d.agent !== null && d.tasks.length > 0;
   // Without a name the agent's own tasks are unknown, so the create command is always shown.
   const closing = [d.agent === null || d.in_progress === 0 ? noTaskText(d) : '', listed ? `Your active tasks (${d.agent}), newest update first:` : ''].filter(Boolean).join('\n');
-  const store = [`Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`, ...(d.store_warning ? [`warning: ${d.store_warning}`] : [])].join('\n');
+  const board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
+  const store = [`Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})${board}`, ...(d.store_warning ? [`warning: ${d.store_warning}`] : [])].join('\n');
   // Status and field lines share what is left after the rules, the store, the closing lines and the longest footer.
   const room = PRIME_MAX_CHARS - head.length - store.length - closing.length - (listed ? more(d.tasks.length).length : 0) - 4;
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;

@@ -37,10 +37,11 @@ laneboard --version
 
 ## Быстрый старт
 
-Три шага в корне проекта. `init` создаёт хранилище `./.laneboard`, `setup` подключает харнес, дальше агент работает сам.
+Три шага в корне проекта. `init` создаёт доску `./.laneboard` и заносит её в реестр машины, `setup` подключает харнес, дальше агент работает сам.
+У доски есть имя и описание в одну строку: чей проект и что за работа. Префикс id выводится из имени (`web` → `WEB-1`) и не должен совпадать с префиксом другой доски на машине.
 
 ```sh
-laneboard init --prefix WEB
+laneboard init --name web --description "Интернет-магазин ACME: витрина и корзина"
 laneboard setup claude-code
 ```
 
@@ -57,7 +58,8 @@ laneboard setup codex
 | MCP-сервер `laneboard` | `.mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`, `opencode.json`; для Codex — глобальный `~/.codex/config.toml` |
 | Блок из трёх строк с правилами: что за инструмент, какое хранилище, «без задачи не работать» | `CLAUDE.md`, `AGENTS.md` или `GEMINI.md`, между метками `laneboard:start` / `laneboard:end` |
 | Хуки Claude Code: правила в начале сессии, напоминание после правки файла без задачи | `.claude/settings.json` |
-| Привязка проекта к хранилищу | `env.LANEBOARD_DIR` в `.claude/settings.json`, `mcp --dir` в записях Cursor, Gemini, OpenCode, строка `LANEBOARD_DIR=…` в блоке |
+| Привязка проекта к хранилищу и имя агента по умолчанию (Claude Code) | `env.LANEBOARD_DIR` и `env.LANEBOARD_DEFAULT_AGENT` в `.claude/settings.local.json` (не попадает в git); в папке внутри чужого git-репозитория — в `.claude/settings.json` |
+| Привязка для остальных харнесов | `mcp --dir` в записях Cursor, Gemini, OpenCode, строка `LANEBOARD_DIR=…` в блоке |
 
 Агенту больше ничего не нужно: правила приходят из блока и из `laneboard prime`.
 Так выглядит работа агента — те же команды он выполняет сам:
@@ -70,7 +72,45 @@ laneboard update WEB-1 --status done --expected-rev 3 --as dev-1 --json
 laneboard list --scope all --json
 ```
 
-Человеку удобнее без `--json`: `laneboard list`, `laneboard get WEB-1`, `laneboard events`.
+Человеку удобнее без `--json`: `laneboard list`, `laneboard get WEB-1`, `laneboard events`, а доску целиком показывает `laneboard view` (ниже).
+
+## Имена агентов
+
+Каждая запись подписана именем агента. Имя берётся по порядку: `--as` (в MCP — `actor`), `LANEBOARD_AGENT`, имя по умолчанию.
+
+| Что | Как |
+|---|---|
+| Имя по умолчанию в Claude Code | `claude-code@<git user.name или пользователь ОС>:<8 символов id сессии>`; основу пишет `setup`, id сессии Claude Code даёт сам (`CLAUDE_CODE_SESSION_ID`) |
+| Две параллельные сессии без имён | получают разные имена, поэтому `claim` второй сессии даёт `ALREADY_CLAIMED` |
+| Откуда имя у записи | в каждом событии задачи поле `actor_source`: `explicit` или `default`; `get` помечает такое имя `(default name)` |
+| Сабагенты одной сессии | делят её имя по умолчанию, поэтому передают своё `--as` |
+| Codex, Cursor, Gemini, OpenCode | имени по умолчанию нет: id сессии они не дают, общее имя склеило бы параллельные сессии; нужно `--as` |
+
+```sh
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "Без имени" --status todo --json
+laneboard prime
+```
+
+## Просмотр досок
+
+`laneboard view` показывает доску человеку: колонки по статусам из конфига, в карточке id, заголовок, исполнитель и сколько задача в этом статусе.
+Фильтры — `--assignee`, `--label`, `--text`. В узком терминале колонки становятся списком по статусам; без терминала и с `NO_COLOR` цветов нет.
+`laneboard view --watch` перерисовывает доску после каждой записи в хранилище, выход — Ctrl+C.
+
+```sh
+laneboard view
+laneboard view --assignee dev-1
+```
+
+`laneboard boards` — все доски машины из реестра `~/.laneboard/boards.json` (его пополняют `init` и `setup`): префикс, имя, задачи по статусам, последнее изменение, путь и описание.
+Путь, где доски больше нет, помечен как `missing`. `--board <префикс|имя|путь>` открывает чужую доску только на чтение: `view`, `list`, `get`, `events`; запись через `--board` отклоняется (`STORE_READ_ONLY`).
+Имя и описание своей доски меняет `laneboard config --name … --description …`; префикс остаётся.
+
+```sh
+laneboard boards
+laneboard view --board WEB
+laneboard config --description "Интернет-магазин ACME: витрина, корзина и оплата"
+```
 
 ## Как устроено хранилище
 
@@ -105,14 +145,16 @@ laneboard doctor
 |---|---|
 | Какое хранилище берёт команда | `--dir <путь>`, иначе `LANEBOARD_DIR`, иначе `.laneboard/` в текущей папке или выше |
 | Проект привязан к своему хранилищу | `setup` записывает путь (`env`, `--dir`, блок инструкций), поиск вверх ему не нужен |
-| Хранилище нашлось в родительской папке | каждая команда предупреждает: возможно, это чужой проект |
-| Вложенная папка-агент с собственными задачами | свой `laneboard init` в этой папке, затем `setup` там же |
-| Несколько агентов в одном хранилище | у каждого имя (`--as` или `LANEBOARD_AGENT`); `claim` не даёт взять чужую задачу (`ALREADY_CLAIMED`) |
+| Хранилище нашлось выше, а между ним и текущей папкой есть признак своего проекта (`.git`, `.claude`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) | каждая команда предупреждает: это доска другого проекта; хук Claude Code не просит завести в ней задачу |
+| Обычная подпапка того же проекта | без предупреждения |
+| Агент не уверен, какая доска его | `laneboard boards --json`, выбрать по описанию и пути; своей нет — `init --name … --description …` в корне своего проекта |
+| Несколько агентов в одном хранилище | у каждого своё имя (см. «Имена агентов»); `claim` не даёт взять чужую задачу (`ALREADY_CLAIMED`) |
 
 ```sh
 mkdir -p agents/reviewer
-(cd agents/reviewer && laneboard init --prefix REV && laneboard setup gemini)
+(cd agents/reviewer && laneboard init --prefix REV --description "Агент-ревьюер: замечания к PR" && laneboard setup gemini)
 laneboard list --dir agents/reviewer/.laneboard --json
+laneboard boards --json
 ```
 
 ## Перенос существующих задач
@@ -140,5 +182,5 @@ laneboard setup claude-code --remove
 | Только macOS и Linux | атомарный rename и блокировка проверены только там; Windows нет в CI |
 | Одна машина | блокировка — каталог в файловой системе; сетевые диски и синхронизация папок между машинами не поддерживаются |
 | До ~10 000 задач в хранилище | каждая команда читает файл целиком; старые задачи стоит архивировать |
-| Абсолютный путь хранилища в файлах проекта | `setup` пишет путь этой машины; на другой машине нужно запустить `setup` заново |
+| Абсолютный путь хранилища в файлах проекта | Claude Code в корне репозитория или без git — путь только в `.claude/settings.local.json`; в остальных случаях и для других харнесов `setup` пишет путь этой машины в файлы проекта, на другой машине его нужно запустить заново |
 | Доска в браузере | ещё не готова, сейчас есть CLI и MCP |

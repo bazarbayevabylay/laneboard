@@ -17,6 +17,15 @@ export interface CliIo {
   lockWaitMs?: number;
   // Override of the 5 s write deadline after the lock acquire (tests only).
   lockMaxHoldMs?: number;
+  // Terminal width and whether stdout is a terminal (view layout and colors); undefined when stdout is not a terminal.
+  columns?: number;
+  isTTY?: boolean;
+  // Aborted on Ctrl+C (SIGINT): ends `view --watch`.
+  signal?: AbortSignal;
+  // Poll interval of `view --watch` (tests only; default 2 s).
+  watchPollMs?: number;
+  // Leave fs.watch out, so only the poll notices changes (tests only).
+  watchNoEvents?: boolean;
 }
 
 export interface CommandContext {
@@ -48,5 +57,7 @@ export interface CommandDef {
   args: { min: number; max: number };
   // Op parameter name -> CLI flag, for messages like "status is required".
   flags?: Record<string, string>;
+  // Only reads a store, so it may open another board with --board (read-only).
+  readOnly?: boolean;
   run(c: CommandContext): Promise<CommandOutput>;
 }

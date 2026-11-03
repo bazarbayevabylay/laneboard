@@ -12,6 +12,6 @@ YYYY-MM-DDTHH:MM:SS.mmmZ  LB-1  a      created    {"title":"Fix login","status":
 $ laneboard events --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"items":[{"task_id":"LB-1","at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"b","type":"commented","data":{"text":"looking"}},{"task_id":"LB-1","at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}}],"scope":"active","limit":20,"total":2},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"items":[{"task_id":"LB-1","at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"b","actor_source":"explicit","type":"commented","data":{"text":"looking"}},{"task_id":"LB-1","at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","actor_source":"explicit","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}}],"scope":"active","limit":20,"total":2},"warnings":[]}
 --- stderr
 

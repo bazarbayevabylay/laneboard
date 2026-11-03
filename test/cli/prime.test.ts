@@ -1,4 +1,6 @@
 // `laneboard prime [--hook]`: agent rules plus the agent's active tasks, at most 4000 characters, never fails as a hook.
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, claimTask, createTask } from '../../src/core/index.ts';
 import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
@@ -18,7 +20,7 @@ describe('prime', () => {
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
     expect(r.stdout).toBe(
-      `${agentRules()}\n\nStore: ${s.dir} (prefix LB)\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1, done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
+      `${agentRules()}\n\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1, done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
     );
     const json = JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(json).toMatchObject({ store: s.dir, prefix: 'LB', warnings: [] });
@@ -70,25 +72,45 @@ describe('prime', () => {
     expect(JSON.parse(none.stdout)).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
-        additionalContext: `laneboard: no task claimed - run laneboard prime, then create or claim your task before more file changes (store ${s.dir}, prefix LB). No untracked work.`,
+        // Facts, not orders (code.claude.com/docs/en/hooks: imperative context can trigger prompt-injection defenses).
+        additionalContext: `laneboard: no task is in progress for dev-1 in store ${s.dir} (prefix LB). This project tracks every change in a laneboard task (agent rule 1); \`laneboard prime\` prints the create command.`,
       },
     });
     // Without a name any assigned task in progress counts; unassigned or finished ones do not.
     await createTask(as(s, 'a'), { title: 'unassigned', status: 'in_progress' });
     await createTask(as(s, 'a'), { title: 'finished', status: 'done', assignee: 'dev-1' });
-    expect((await hook()).stdout).toContain('no task claimed');
-    expect((await hook({ LANEBOARD_AGENT: 'dev-1' })).stdout).toContain('no task claimed');
+    expect((await hook()).stdout).toContain('laneboard: no task is in progress in store');
+    expect((await hook({ LANEBOARD_AGENT: 'dev-1' })).stdout).toContain('no task is in progress for dev-1');
     await createTask(as(s, 'a'), { title: 'mine', status: 'todo', assignee: 'dev-1' });
     for (const env of [{ LANEBOARD_AGENT: 'dev-1' }, {}] as Array<Record<string, string>>) {
       const quiet = await hook(env);
       expect(quiet).toEqual({ code: 0, stdout: '', stderr: '' });
     }
-    expect((await hook({ LANEBOARD_AGENT: 'dev-2' })).stdout).toContain('no task claimed');
+    expect((await hook({ LANEBOARD_AGENT: 'dev-2' })).stdout).toContain('no task is in progress for dev-2');
     // No store, a broken store, a bad name: nothing at all, exit 0.
     expect(await hook({}, tempDir())).toEqual({ code: 0, stdout: '', stderr: '' });
     expect(await hook({ LANEBOARD_AGENT: 'bad name!' })).toEqual({ code: 0, stdout: '', stderr: '' });
     writeRaw(`${s.dir}/active.json`, '{"schema":');
     expect(await hook({ LANEBOARD_AGENT: 'dev-1' })).toEqual({ code: 0, stdout: '', stderr: '' });
+  });
+
+  it('--edit-hook in a nested project folder without its own store: never asks for a task in the parent store, names the situation', async () => {
+    const s = await newStore();
+    const agentB = path.join(s.root, 'agent-b');
+    fs.mkdirSync(agentB);
+    fs.writeFileSync(path.join(agentB, 'CLAUDE.md'), 'Agent B.\n');
+    const r = await cli(['prime', '--edit-hook'], { cwd: agentB, env: { LANEBOARD_AGENT: 'dev-b' } });
+    expect(r.code).toBe(0);
+    const text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string;
+    expect(text).toBe(
+      `laneboard: ${agentB} has no laneboard store of its own; the store found above it, ${s.dir} (prefix LB), belongs to another project (this folder has CLAUDE.md). ` +
+        'Tasks for this folder do not go there; `laneboard boards --json` lists the boards on this machine with their descriptions.',
+    );
+    expect(text).not.toMatch(/create|claim/);
+    // A plain subfolder of the same project (no marker in between) still gets the normal reminder.
+    const sub = path.join(s.root, 'src');
+    fs.mkdirSync(sub);
+    expect((await cli(['prime', '--edit-hook'], { cwd: sub, env: { LANEBOARD_AGENT: 'dev-b' } })).stdout).toContain('no task is in progress for dev-b');
   });
 
   it('--edit-hook cannot be combined with --json or --hook', async () => {
@@ -110,17 +132,22 @@ describe('prime', () => {
     expect(shown + Number(more?.[1])).toBe(120);
   });
 
-  it('no store: the hook prints one line without the rules; plain prime prints the rules; neither tells the agent to init', async () => {
+  it('no store: the hook prints one line without the rules; plain prime prints the rules; both point to the registry first, then to init with a description', async () => {
     const cwd = tempDir();
     const hook = await cli(['prime', '--hook'], { cwd });
     expect(hook.code).toBe(0);
-    expect(hook.stdout).toBe(`laneboard: no .laneboard directory in ${cwd} or any parent (STORE_NOT_FOUND); if this project has a store: export LANEBOARD_DIR=<abs>/.laneboard; do not run laneboard init unless the user asks\n`);
+    expect(hook.stdout).toBe(
+      `laneboard: no .laneboard directory in ${cwd} or any parent (STORE_NOT_FOUND); find this project's board: laneboard boards --json (pick it by description and path, then export LANEBOARD_DIR=<its path>); ` +
+        'none for this project: laneboard init --name <name> --description "<whose project, what work>" in its root\n',
+    );
     const plain = await cli(['prime'], { cwd });
     expect(plain.code).toBe(0);
     expect(plain.stdout).toContain(agentRules());
     expect(plain.stdout).toContain('laneboard store: STORE_NOT_FOUND');
-    expect(plain.stdout).toContain('do not run laneboard init unless the user asks');
-    expect(plain.stdout).not.toContain('fix: laneboard init');
+    expect(plain.stdout).toContain('find this project\'s board: laneboard boards --json');
+    expect(plain.stdout).toContain('laneboard init --name <name> --description "<whose project, what work>"');
+    // A bare init (no name, no description) is never suggested.
+    expect(plain.stdout).not.toMatch(/laneboard init(?! --(name|dir))/);
   });
 
   it('a broken store fails plain prime but is one line in the hook', async () => {
@@ -142,6 +169,10 @@ describe('prime', () => {
   const data = (n: number, len: number, statuses = ['todo', 'in_progress', 'review', 'done']): PrimeData => ({
     rules: agentRules(),
     agent: 'dev-1',
+    agent_source: 'explicit',
+    // The longest name and description a board may have, so the cap holds for every board.
+    name: 'n'.repeat(60),
+    description: 'd'.repeat(200),
     store: '/home/someone/projects/a-project-with-a-long-name/.laneboard',
     prefix: 'ABCDEFGHIJ',
     store_warning: null,
