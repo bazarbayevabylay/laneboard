@@ -1,6 +1,7 @@
 // Apply or roll back laneboard's part of harness files: idempotent, `.laneboard.bak` of the original, exact restore on --remove.
 import fs from 'node:fs';
 import path from 'node:path';
+import { LaneboardError } from '../core/index.ts';
 
 // How laneboard edits one file's text; null = the file does not exist.
 export interface TextEdit {
@@ -8,13 +9,15 @@ export interface TextEdit {
   add(text: string | null): string;
   // Text without our part (the same text when it has none).
   strip(text: string): string;
+  // Does the text hold our part (in any version: an edited entry is still ours)?
+  owns(text: string): boolean;
   // Same content for restore purposes (deep-equal JSON, equal text ignoring trailing whitespace).
   same(a: string, b: string): boolean;
   // Nothing left but an empty shell ({} or blank).
   isEmpty(text: string): boolean;
 }
 
-export type FileResult = 'created' | 'updated' | 'unchanged' | 'removed' | 'restored' | 'deleted';
+export type FileResult = 'created' | 'updated' | 'unchanged' | 'removed' | 'restored' | 'deleted' | 'kept';
 
 export interface PlannedFile {
   // Absolute path.
@@ -29,8 +32,12 @@ export interface PlannedFile {
   write?: string | null;
   // Restore from the backup: also delete the backup.
   dropBackup?: boolean;
-  // Write the backup of the original first (first change of a pre-existing file).
+  // Write the backup of the original first (first change of a file that holds no laneboard part yet).
   backup?: string;
+  // File text before this run (null = missing): what a failed apply puts back.
+  before: string | null;
+  // A backup that stays after this run (reported, so it is not forgotten or committed).
+  keptBackup?: boolean;
 }
 
 // Backup path of a harness file.
@@ -39,7 +46,7 @@ export function backupOf(file: string): string {
 }
 
 // File text, or null when missing.
-function readText(file: string): string | null {
+export function readText(file: string): string | null {
   try {
     return fs.readFileSync(file, 'utf8');
   } catch (err) {
@@ -56,41 +63,139 @@ function lineDiff(before: string, after: string): string[] {
   return [...a.filter((l) => !b.includes(l)).map((l) => `- ${l}`), ...b.filter((l) => !a.includes(l)).map((l) => `+ ${l}`)];
 }
 
+// Closest directory on the way up that exists (where a missing file or directory would be created).
+function existingAncestor(dir: string): string {
+  let current = dir;
+  while (!fs.existsSync(current) && path.dirname(current) !== current) current = path.dirname(current);
+  return current;
+}
+
+// Fails before any write when this file (or the directory it is created or deleted in) is not writable.
+function checkWritable(p: PlannedFile): PlannedFile {
+  if (p.write === undefined) return p;
+  const dir = path.dirname(p.file);
+  const targets = fs.existsSync(p.file) ? [p.file] : [existingAncestor(dir)];
+  // The backup is created next to the file, and a delete or a dropped backup unlinks in that directory.
+  if (fs.existsSync(p.file) && (p.backup !== undefined || p.write === null || p.dropBackup)) targets.push(dir);
+  for (const target of targets) {
+    try {
+      fs.accessSync(target, fs.constants.W_OK);
+    } catch (err) {
+      // Not writable (or vanished): stop the whole setup before anything is written.
+      const code = (err as NodeJS.ErrnoException).code ?? 'EACCES';
+      throw new LaneboardError('SETUP_WRITE_FAILED', `cannot write ${target === p.file ? p.shown : `the directory of ${p.shown}`} (${code}); nothing was written`, {
+        details: { file: p.shown },
+        fix: `make ${target} writable (chmod u+w ${target}) and run setup again`,
+      });
+    }
+  }
+  return p;
+}
+
 // Plan the install of our part into one file (reads only).
 export function planAdd(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
   const before = readText(file);
   const after = edit.add(before);
-  if (before === after) return { file, shown, scope, result: 'unchanged' };
-  if (before === null) return { file, shown, scope, result: 'created', write: after };
-  const backup = readText(backupOf(file)) === null ? before : undefined;
-  return { file, shown, scope, result: 'updated', write: after, diff: lineDiff(before, after), ...(backup !== undefined ? { backup } : {}) };
+  if (before === after) return { file, shown, scope, result: 'unchanged', before };
+  if (before === null) return checkWritable({ file, shown, scope, result: 'created', write: after, before });
+  // The backup is the file as it was without laneboard: never a text that already holds our part, never overwritten.
+  const backup = !edit.owns(before) && readText(backupOf(file)) === null ? before : undefined;
+  return checkWritable({ file, shown, scope, result: 'updated', write: after, diff: lineDiff(before, after), before, ...(backup !== undefined ? { backup } : {}) });
 }
 
 // Plan the removal of our part: restore the original bytes when nothing else changed, delete a file we created.
 export function planRemove(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
   const before = readText(file);
-  if (before === null) return { file, shown, scope, result: 'unchanged' };
-  const stripped = edit.strip(before);
-  if (stripped === before) return { file, shown, scope, result: 'unchanged' };
   const original = readText(backupOf(file));
-  if (original !== null && edit.same(edit.strip(original), stripped)) return { file, shown, scope, result: 'restored', write: original, dropBackup: true };
-  if (original === null && edit.isEmpty(stripped)) return { file, shown, scope, result: 'deleted', write: null };
-  return { file, shown, scope, result: 'removed', write: stripped };
+  const keptBackup = original !== null;
+  if (before === null || !edit.owns(before)) return { file, shown, scope, result: 'unchanged', before, keptBackup };
+  const stripped = edit.strip(before);
+  // The backup itself is compared (not the backup without our part): one that holds our part never matches, so it never brings the entry back.
+  if (original !== null && edit.same(original, stripped)) {
+    return checkWritable({ file, shown, scope, result: 'restored', write: original, dropBackup: true, before });
+  }
+  if (original === null && edit.isEmpty(stripped)) return checkWritable({ file, shown, scope, result: 'deleted', write: null, before });
+  return checkWritable({ file, shown, scope, result: 'removed', write: stripped, before, keptBackup });
 }
 
-// Write a plan: backups first, then files; a deleted file also takes its now-empty directory (not the project or home root).
+// A shared file that another harness still needs: left as it is.
+export function planKeep(file: string, shown: string, scope: PlannedFile['scope']): PlannedFile {
+  return { file, shown, scope, result: 'kept', before: readText(file) };
+}
+
+// Put a file back to `text` (null: it did not exist); `created` is the first directory this run made for it.
+function putBack(file: string, text: string | null, created?: string): void {
+  if (readText(file) === text) return;
+  if (text !== null) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+    return;
+  }
+  fs.rmSync(file, { force: true });
+  if (created) fs.rmSync(created, { recursive: true, force: true });
+}
+
+// Write a plan: backups first (with the original's mode), then files; a deleted file also takes its now-empty directory
+// (not a root). When a write fails, everything this run changed is put back and one SETUP_WRITE_FAILED reports it.
 export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]): void {
-  for (const p of plan) if (p.backup !== undefined) fs.writeFileSync(backupOf(p.file), p.backup);
-  for (const p of plan) {
-    if (p.write === undefined) continue;
-    if (p.write === null) {
-      fs.unlinkSync(p.file);
-      const dir = path.dirname(p.file);
-      if (!roots.includes(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
-      continue;
+  // Undo steps, each with the file it puts back.
+  const undo: Array<{ shown: string; run: () => void }> = [];
+  let current: PlannedFile | undefined;
+  try {
+    for (const p of plan) {
+      if (p.backup === undefined) continue;
+      current = p;
+      const bak = backupOf(p.file);
+      const mode = fs.statSync(p.file).mode & 0o777;
+      undo.push({ shown: `${p.shown}.laneboard.bak`, run: () => fs.rmSync(bak, { force: true }) });
+      fs.writeFileSync(bak, p.backup, { mode });
+      // The mode given at creation is narrowed by umask; set it exactly (a 0600 config keeps a 0600 backup).
+      fs.chmodSync(bak, mode);
     }
-    fs.mkdirSync(path.dirname(p.file), { recursive: true });
-    fs.writeFileSync(p.file, p.write);
-    if (p.dropBackup) fs.unlinkSync(backupOf(p.file));
+    for (const p of plan) {
+      if (p.write === undefined) continue;
+      current = p;
+      if (p.write === null) {
+        undo.push({ shown: p.shown, run: () => putBack(p.file, p.before) });
+        fs.unlinkSync(p.file);
+        const dir = path.dirname(p.file);
+        if (!roots.includes(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+        continue;
+      }
+      const created = fs.mkdirSync(path.dirname(p.file), { recursive: true });
+      undo.push({ shown: p.shown, run: () => putBack(p.file, p.before, created) });
+      fs.writeFileSync(p.file, p.write);
+      if (p.dropBackup) {
+        const bak = backupOf(p.file);
+        const restored = p.write;
+        const mode = fs.statSync(bak).mode & 0o777;
+        undo.push({
+          shown: `${p.shown}.laneboard.bak`,
+          run: () => {
+            fs.writeFileSync(bak, restored, { mode });
+            fs.chmodSync(bak, mode);
+          },
+        });
+        fs.unlinkSync(bak);
+      }
+    }
+  } catch (err) {
+    // A write failed after the plan passed its checks (disk full, a dangling symlink, a race): undo this run, newest first.
+    const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
+    const stuck: string[] = [];
+    for (const step of undo.reverse()) {
+      try {
+        step.run();
+      } catch {
+        // Keep undoing the other files; the ones that could not be put back are named in the error.
+        stuck.push(step.shown);
+      }
+    }
+    const shown = current?.shown ?? 'a file';
+    const after = stuck.length ? `; could not put back: ${stuck.join(', ')}` : '; the files changed before it were put back';
+    throw new LaneboardError('SETUP_WRITE_FAILED', `writing ${shown} failed (${code})${after}`, {
+      details: { file: shown },
+      fix: `make ${shown} and its directory writable (a symlink must point to a writable place) and run setup again`,
+    });
   }
 }

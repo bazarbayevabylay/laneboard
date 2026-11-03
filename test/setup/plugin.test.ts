@@ -22,6 +22,18 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     expect(rules).toContain('-- "- item"');
     expect(rules.length).toBeLessThanOrEqual(4096);
   });
+
+  it('at most 15 lines; name what the usability test showed agents had to guess (create, rev after writes, details.task, final status, commented)', () => {
+    const rules = agentRules();
+    expect(rules.split('\n').length).toBeLessThanOrEqual(15);
+    expect(rules).toContain('`laneboard create "<title>" --status <status> --as <you> --json`');
+    expect(rules).toContain('rev from your last read or write');
+    expect(rules).toContain('`--description` replaces the whole text');
+    expect(rules).toContain('`error.details.task`');
+    expect(rules).toContain('the last one is final');
+    expect(rules).toContain('type `commented`');
+    expect(rules).toContain('never run `laneboard init` unless the user asks');
+  });
 });
 
 describe('Claude Code plugin', () => {

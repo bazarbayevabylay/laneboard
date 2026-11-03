@@ -173,14 +173,37 @@ export function unique<T>(items: readonly T[], key: (item: T) => string = String
   });
 }
 
-// Field key must be declared in config.fields.
+// Declared fields as agents need them: type, description, an example `key=value` (UNKNOWN_FIELD details, prime).
+export interface FieldInfo {
+  type: FieldType;
+  description?: string;
+  example: string;
+}
+
+export function fieldInfo(config: ConfigT): Record<string, FieldInfo> {
+  return Object.fromEntries(
+    Object.entries(config.fields).map(([key, def]) => [key, { type: def.type, ...(def.description ? { description: def.description } : {}), example: `${key}=${FIELD_EXAMPLE[def.type]}` }]),
+  );
+}
+
+// One-line list of declared fields: `priority (number, 0 = highest)`.
+export function fieldsLine(fields: Record<string, FieldInfo>): string {
+  return Object.entries(fields)
+    .map(([key, f]) => `${key} (${[f.type, f.description].filter(Boolean).join(', ')})`)
+    .join(', ');
+}
+
+// Field key must be declared in config.fields; the error names each declared field with its type.
 function fieldType(config: ConfigT, key: string): FieldType {
   const def = Object.hasOwn(config.fields, key) ? config.fields[key] : undefined;
   if (!def) {
     const allowed = Object.keys(config.fields);
     const suggestion = suggestClosest(key, allowed);
-    throw new LaneboardError('UNKNOWN_FIELD', `field "${key}" is not declared in config.fields`, {
+    const fields = fieldInfo(config);
+    const declared = allowed.length ? `declared: ${fieldsLine(fields)}` : 'no fields are declared';
+    throw new LaneboardError('UNKNOWN_FIELD', `field "${key}" is not declared in config.fields (${declared})`, {
       allowed,
+      details: { fields },
       input: suggestion ? { field: 'field', value: key, suggestion } : { field: 'field', value: key },
     });
   }
@@ -208,9 +231,11 @@ export function checkFields(config: ConfigT, fields: Record<string, unknown>): v
   for (const [key, value] of Object.entries(fields)) {
     const type = fieldType(config, key);
     if (!matchesType(type, value)) {
-      throw new LaneboardError('INVALID_VALUE', `field ${key} must be ${type}, got ${JSON.stringify(value)}`, {
+      const example = FIELD_JSON_EXAMPLE[type];
+      throw new LaneboardError('INVALID_VALUE', `field ${key} must be ${type} (e.g. {"${key}": ${example}}), got ${JSON.stringify(value)}`, {
         input: { field: key, value: JSON.stringify(value) },
-        fix: `pass ${key} as a ${type} value`,
+        details: { field: key, type, example: `{"${key}": ${example}}` },
+        fix: `pass ${key} as a ${type} value, e.g. fields: {"${key}": ${example}}`,
       });
     }
   }
@@ -219,6 +244,8 @@ export function checkFields(config: ConfigT, fields: Record<string, unknown>): v
 // Expected value format and an example per field type, for fixes.
 const FIELD_FORMAT: Record<FieldType, string> = { string: 'text', number: 'number', boolean: 'true|false', 'string[]': 'a,b,c', json: 'json' };
 const FIELD_EXAMPLE: Record<FieldType, string> = { string: 'text', number: '1', boolean: 'true', 'string[]': 'a,b', json: '{"k":1}' };
+// The same examples as JSON values (MCP `fields`).
+const FIELD_JSON_EXAMPLE: Record<FieldType, string> = { string: '"text"', number: '1', boolean: 'true', 'string[]': '["a", "b"]', json: '{"k": 1}' };
 
 // Parse CLI-style `key=value` field arguments using the declared field types.
 export function parseFieldArgs(config: ConfigT, args: readonly string[]): Record<string, unknown> {
@@ -232,8 +259,9 @@ export function parseFieldArgs(config: ConfigT, args: readonly string[]): Record
     const raw = arg.slice(eq + 1);
     const type = fieldType(config, key);
     const bad = (expected: string): LaneboardError =>
-      new LaneboardError('INVALID_VALUE', `field ${key} is ${type}: expected ${expected}, got "${raw}"`, {
+      new LaneboardError('INVALID_VALUE', `field ${key} is ${type}: expected ${expected} (e.g. ${key}=${FIELD_EXAMPLE[type]}), got "${raw}"`, {
         input: { field: key, value: arg, format: `${key}=<${FIELD_FORMAT[type]}>` },
+        details: { field: key, type, example: `${key}=${FIELD_EXAMPLE[type]}` },
         fix: `pass ${key}=<${FIELD_FORMAT[type]}>, e.g. ${key}=${FIELD_EXAMPLE[type]}`,
       });
     switch (type) {
@@ -331,7 +359,7 @@ export function checkExpectedRev(task: TaskT, archived: boolean, expected: numbe
   if (expected === undefined || expected === task.rev) return;
   throw new LaneboardError('REV_CONFLICT', `task ${task.id} is at rev ${task.rev}, you expected rev ${expected}`, {
     details: { task: toTaskView(task, archived) },
-    fix: `laneboard get ${task.id} --json, then re-apply your change with --expected-rev ${task.rev}`,
+    fix: `details.task is the current ${task.id} (rev ${task.rev}): re-apply your change on it (merge, do not overwrite others' edits) with --expected-rev ${task.rev}`,
   });
 }
 

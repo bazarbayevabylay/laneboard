@@ -1,5 +1,6 @@
 // MCP over stdio with the real SDK client: exactly 11 tools (C3), instructions = agent rules, every tool called,
 // CLI/MCP parity on cloned stores (same data, same error objects), fresh reads per call (W3).
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -70,6 +71,8 @@ interface ParityCase {
   error?: string;
   // Expected MCP fix when it differs from the CLI fix on purpose (CLI rebuilds argv; MCP names tool parameters).
   mcpFix?: string;
+  // Expected MCP message when the CLI adds CLI-only advice to it (ACTOR_REQUIRED names LANEBOARD_AGENT).
+  mcpMessage?: string;
 }
 
 // Cases share the base store; `<FILE>` is replaced by the absolute path of the file to attach.
@@ -115,6 +118,7 @@ const CASES: ParityCase[] = [
     args: { title: 'x', status: 'todo' },
     error: 'ACTOR_REQUIRED',
     mcpFix: 'pass actor: "<your-name>" (e.g. dev-1) to task_create',
+    mcpMessage: 'this command changes the store and needs an actor',
   },
   {
     name: 'USAGE nothing to change',
@@ -214,14 +218,33 @@ describe('MCP server over stdio (SDK client)', () => {
       }
       expect(envelope.error?.code).toBe(c.error);
       expect(r.isError).toBe(true);
-      const { fix: cliFix, ...cliRest } = envelope.error ?? {};
-      const { fix: mcpFix, ...mcpRest } = r.structured;
+      const { fix: cliFix, message: cliMessage, ...cliRest } = envelope.error ?? {};
+      const { fix: mcpFix, message: mcpMessage, ...mcpRest } = r.structured;
       expect(normalize(mcpRest)).toEqual(normalize(cliRest));
       expect(mcpFix).toBe(c.mcpFix ?? cliFix);
+      expect(mcpMessage).toBe(c.mcpMessage ?? cliMessage);
       expect(JSON.parse(r.text[0] ?? '{}')).toEqual(r.structured);
     } finally {
       await mcp.close();
     }
+  });
+
+  it('exits with code 0 within a second after stdin closes', async () => {
+    const s = await newStore();
+    const child = spawn(process.execPath, [CLI_SOURCE, 'mcp'], { cwd: s.root, env: { PATH: process.env.PATH ?? '', HOME: s.root }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout.on('data', (b: Buffer) => (stdout += b.toString()));
+    const initialized = new Promise<void>((resolve) => child.stdout.on('data', () => stdout.includes('"id":0') && resolve()));
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } })}\n`);
+    await initialized;
+    const started = Date.now();
+    const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+    child.stdin.end();
+    const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000).unref());
+    const result = await Promise.race([exited, timeout]);
+    if (result === 'timeout') child.kill();
+    expect(result).toBe(0);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it('rejects unknown parameters (field_args is CLI-only) with the tool parameters as fix', async () => {

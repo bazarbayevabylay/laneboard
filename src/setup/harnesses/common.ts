@@ -14,17 +14,19 @@ export const INSTRUCTION_LINES = [
   'Writes need your name: `export LANEBOARD_AGENT=<your-name>` or pass `--as <your-name>`.',
 ].join('\n');
 
+export interface HarnessContext {
+  cwd: string;
+  home: string;
+  env: Record<string, string | undefined>;
+}
+
 export interface HarnessFile {
   // Path relative to the project (cwd) or to home.
   path: string;
   scope: 'project' | 'global';
   edit: (shown: string) => TextEdit;
-}
-
-export interface HarnessContext {
-  cwd: string;
-  home: string;
-  env: Record<string, string | undefined>;
+  // Absolute path the harness itself reads instead, when its environment moves the file (e.g. CODEX_HOME).
+  moved?: (c: HarnessContext) => string | undefined;
 }
 
 export interface Harness {

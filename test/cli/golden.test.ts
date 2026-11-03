@@ -196,7 +196,26 @@ const CASES: Case[] = [
     env: { HOME: '<ROOT>/home' },
     setup: async (e) => {
       fs.mkdirSync(path.join(e.root, '.gemini'));
-      fs.writeFileSync(path.join(e.root, '.gemini', 'settings.json'), '{ // comment\n}\n');
+      fs.writeFileSync(path.join(e.root, '.gemini', 'settings.json'), '{ "theme": dark }\n');
+    },
+  },
+  {
+    name: 'error-SETUP_CONFLICT',
+    argv: ['setup', 'codex'],
+    error: 'SETUP_CONFLICT',
+    env: { HOME: '<ROOT>/home' },
+    setup: async (e) => {
+      fs.mkdirSync(path.join(e.root, 'home', '.codex'), { recursive: true });
+      fs.writeFileSync(path.join(e.root, 'home', '.codex', 'config.toml'), '[mcp_servers]\nlaneboard = { command = "old", args = [] }\n');
+    },
+  },
+  {
+    name: 'error-SETUP_WRITE_FAILED',
+    argv: ['setup', 'gemini'],
+    error: 'SETUP_WRITE_FAILED',
+    env: { HOME: '<ROOT>/home' },
+    setup: async (e) => {
+      fs.writeFileSync(path.join(e.root, 'GEMINI.md'), 'Be brief.\n', { mode: 0o444 });
     },
   },
   { name: 'error-INVALID_VALUE-harness', argv: ['setup', 'claude'], error: 'INVALID_VALUE', env: { HOME: '<ROOT>/home' } },

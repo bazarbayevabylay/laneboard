@@ -5,19 +5,20 @@ exit 0
 laneboard agent rules (task board & CLI for AI coding agents):
 1. Use only `laneboard` commands (or the task_* MCP tools). Never read-modify-write .laneboard/*.json by hand.
 2. Always pass `--json` and `--as <your-name>` (or set LANEBOARD_AGENT). MCP write tools take `actor`.
-3. Start work: `laneboard claim <ID> --status <status> --as <you> --json`.
-4. Change anything: `laneboard update <ID> ... --expected-rev <rev from your last read>`.
-5. REV_CONFLICT: run `laneboard get <ID> --json`, re-apply your change on the new rev. Never retry blindly.
+3. New task: `laneboard create "<title>" --status <status> --as <you> --json`. Start work: `laneboard claim <ID> --status <status> --as <you> --json`.
+4. Change anything: `laneboard update <ID> ... --expected-rev <rev>`, the rev from your last read or write (every write, comments too, returns the new rev). `--description` replaces the whole text.
+5. REV_CONFLICT: the current task is in `error.details.task`; re-apply your change on it (keep the other edits, e.g. merge the description) with its rev. Never retry blindly.
 6. ALREADY_CLAIMED: do not take over; comment or ask the orchestrator.
-7. Statuses and fields come from config; on UNKNOWN_* copy a value from `allowed`.
-8. Notes and results: `laneboard comment <ID> "<text>"`. Files: `laneboard attach <ID> <path>`.
+7. Statuses (in order; the last one is final) and fields with their types come from config, `laneboard prime` lists them. On UNKNOWN_* copy a value from `allowed`.
+8. Notes and results: `laneboard comment <ID> "<text>"` (shown in `get` as events of type `commented`). Files: `laneboard attach <ID> <path>`.
 9. Branches, PRs, commits: `--add-link branch=<name>` / `pr=<url>` / `commit=<sha>`.
-10. Done tasks: `laneboard archive <ID>`. Find old ones: `laneboard list --scope all --text <q>`.
-11. Ids are exact, e.g. LB-12. Store not found: export LANEBOARD_DIR=<abs>/.laneboard.
+10. Done (final status) tasks: `laneboard archive <ID>`. Find old ones: `laneboard list --scope all --text <q>`.
+11. Ids are exact, e.g. LB-12. Store not found: export LANEBOARD_DIR=<abs>/.laneboard; never run `laneboard init` unless the user asks.
 12. Every error has `fix`: run it or adapt it. Exit codes: 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store.
 13. Text starting with "-" or "--" (list items, "--- section"): options first, then `--`, then the text (`laneboard comment <ID> --as <you> -- "- item"`); option values as `--description="- item"`.
 
-Active tasks per status: todo 1, in_progress 0, review 0, done 0
+Statuses in order (final: done), active tasks: todo 1, in_progress 0, review 0, done 0
+Fields (--field key=value): priority (number, 0 = highest)
 Your active tasks (dev-1), newest update first:
   LB-1  [todo]  rev 1  Fix login
 --- stderr
@@ -26,6 +27,6 @@ Your active tasks (dev-1), newest update first:
 $ laneboard prime --as dev-1 --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","data":{"rules":"laneboard agent rules (task board & CLI for AI coding agents):\n1. Use only `laneboard` commands (or the task_* MCP tools). Never read-modify-write .laneboard/*.json by hand.\n2. Always pass `--json` and `--as <your-name>` (or set LANEBOARD_AGENT). MCP write tools take `actor`.\n3. Start work: `laneboard claim <ID> --status <status> --as <you> --json`.\n4. Change anything: `laneboard update <ID> ... --expected-rev <rev from your last read>`.\n5. REV_CONFLICT: run `laneboard get <ID> --json`, re-apply your change on the new rev. Never retry blindly.\n6. ALREADY_CLAIMED: do not take over; comment or ask the orchestrator.\n7. Statuses and fields come from config; on UNKNOWN_* copy a value from `allowed`.\n8. Notes and results: `laneboard comment <ID> \"<text>\"`. Files: `laneboard attach <ID> <path>`.\n9. Branches, PRs, commits: `--add-link branch=<name>` / `pr=<url>` / `commit=<sha>`.\n10. Done tasks: `laneboard archive <ID>`. Find old ones: `laneboard list --scope all --text <q>`.\n11. Ids are exact, e.g. LB-12. Store not found: export LANEBOARD_DIR=<abs>/.laneboard.\n12. Every error has `fix`: run it or adapt it. Exit codes: 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store.\n13. Text starting with \"-\" or \"--\" (list items, \"--- section\"): options first, then `--`, then the text (`laneboard comment <ID> --as <you> -- \"- item\"`); option values as `--description=\"- item\"`.","agent":"dev-1","store_problem":null,"statuses":[{"status":"todo","count":1},{"status":"in_progress","count":0},{"status":"review","count":0},{"status":"done","count":0}],"tasks":[{"id":"LB-1","title":"Fix login","status":"todo","assignee":"dev-1","labels":[],"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","rev":1,"archived":false}]},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","data":{"rules":"laneboard agent rules (task board & CLI for AI coding agents):\n1. Use only `laneboard` commands (or the task_* MCP tools). Never read-modify-write .laneboard/*.json by hand.\n2. Always pass `--json` and `--as <your-name>` (or set LANEBOARD_AGENT). MCP write tools take `actor`.\n3. New task: `laneboard create \"<title>\" --status <status> --as <you> --json`. Start work: `laneboard claim <ID> --status <status> --as <you> --json`.\n4. Change anything: `laneboard update <ID> ... --expected-rev <rev>`, the rev from your last read or write (every write, comments too, returns the new rev). `--description` replaces the whole text.\n5. REV_CONFLICT: the current task is in `error.details.task`; re-apply your change on it (keep the other edits, e.g. merge the description) with its rev. Never retry blindly.\n6. ALREADY_CLAIMED: do not take over; comment or ask the orchestrator.\n7. Statuses (in order; the last one is final) and fields with their types come from config, `laneboard prime` lists them. On UNKNOWN_* copy a value from `allowed`.\n8. Notes and results: `laneboard comment <ID> \"<text>\"` (shown in `get` as events of type `commented`). Files: `laneboard attach <ID> <path>`.\n9. Branches, PRs, commits: `--add-link branch=<name>` / `pr=<url>` / `commit=<sha>`.\n10. Done (final status) tasks: `laneboard archive <ID>`. Find old ones: `laneboard list --scope all --text <q>`.\n11. Ids are exact, e.g. LB-12. Store not found: export LANEBOARD_DIR=<abs>/.laneboard; never run `laneboard init` unless the user asks.\n12. Every error has `fix`: run it or adapt it. Exit codes: 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store.\n13. Text starting with \"-\" or \"--\" (list items, \"--- section\"): options first, then `--`, then the text (`laneboard comment <ID> --as <you> -- \"- item\"`); option values as `--description=\"- item\"`.","agent":"dev-1","store_problem":null,"statuses":[{"status":"todo","count":1},{"status":"in_progress","count":0},{"status":"review","count":0},{"status":"done","count":0}],"final_status":"done","fields":{"priority":{"type":"number","description":"0 = highest","example":"priority=1"}},"tasks":[{"id":"LB-1","title":"Fix login","status":"todo","assignee":"dev-1","labels":[],"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false}]},"warnings":[]}
 --- stderr
 

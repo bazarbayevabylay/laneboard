@@ -20,7 +20,9 @@ export type ErrorCode =
   | 'STORE_INVALID'
   | 'STORE_TOO_NEW'
   | 'STORE_EXISTS'
-  | 'SETUP_UNPARSEABLE';
+  | 'SETUP_UNPARSEABLE'
+  | 'SETUP_CONFLICT'
+  | 'SETUP_WRITE_FAILED';
 
 export interface ErrorSpec {
   exit: number;
@@ -49,6 +51,8 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   STORE_TOO_NEW: { exit: 6, http: 500, fix: 'upgrade laneboard: npm i -g laneboard@latest' },
   STORE_EXISTS: { exit: 6, http: 409, fix: 'use the existing store, or pass --dir <another empty directory>' },
   SETUP_UNPARSEABLE: { exit: 6, http: 500, fix: 'add the snippet from `details` to the file by hand, or fix the file and run setup again' },
+  SETUP_CONFLICT: { exit: 6, http: 409, fix: 'remove the laneboard entry that is outside the laneboard block and run setup again, or add the snippet from `details` by hand' },
+  SETUP_WRITE_FAILED: { exit: 6, http: 500, fix: 'make the file and its directory writable and run setup again' },
 };
 
 // All error codes, in registry order.

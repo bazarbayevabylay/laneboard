@@ -4,17 +4,7 @@ exit 0
 --- stdout
 updated .cursor/mcp.json
     - {"mcpServers":{"laneboard":{"command":"npx"}}}
-    + {
-    +   "mcpServers": {
-    +     "laneboard": {
-    +       "type": "stdio",
-    +       "command": "laneboard",
-    +       "args": [
-    +         "mcp"
-    +       ]
-    +     }
-    +   }
-    + }
+    + {"mcpServers":{"laneboard":{"type":"stdio","command":"laneboard","args":["mcp"]}}}
 created AGENTS.md
 next: open the project in Cursor and enable the "laneboard" MCP server in its settings if it is off
 --- stderr
@@ -23,6 +13,6 @@ next: open the project in Cursor and enable the "laneboard" MCP server in its se
 $ laneboard setup cursor --json
 exit 0
 --- stdout
-{"ok":true,"store":null,"data":{"harness":"cursor","mode":"install","dry_run":false,"files":[{"path":".cursor/mcp.json","scope":"project","result":"updated","diff":["- {\"mcpServers\":{\"laneboard\":{\"command\":\"npx\"}}}","+ {","+   \"mcpServers\": {","+     \"laneboard\": {","+       \"type\": \"stdio\",","+       \"command\": \"laneboard\",","+       \"args\": [","+         \"mcp\"","+       ]","+     }","+   }","+ }"]},{"path":"AGENTS.md","scope":"project","result":"created"}],"notes":["open the project in Cursor and enable the \"laneboard\" MCP server in its settings if it is off"]},"warnings":[]}
+{"ok":true,"store":null,"data":{"harness":"cursor","mode":"install","dry_run":false,"files":[{"path":".cursor/mcp.json","scope":"project","result":"updated","diff":["- {\"mcpServers\":{\"laneboard\":{\"command\":\"npx\"}}}","+ {\"mcpServers\":{\"laneboard\":{\"type\":\"stdio\",\"command\":\"laneboard\",\"args\":[\"mcp\"]}}}"]},{"path":"AGENTS.md","scope":"project","result":"created"}],"notes":["open the project in Cursor and enable the \"laneboard\" MCP server in its settings if it is off"]},"warnings":[]}
 --- stderr
 

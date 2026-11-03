@@ -5,11 +5,11 @@ exit 4
 
 --- stderr
 error REV_CONFLICT: task LB-1 is at rev 1, you expected rev 5
-  fix: laneboard get LB-1 --json, then re-apply your change with --expected-rev 1
+  fix: details.task is the current LB-1 (rev 1): re-apply your change on it (merge, do not overwrite others' edits) with --expected-rev 1
 
 $ laneboard update LB-1 --title y --expected-rev 5 --as a --json
 exit 4
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"REV_CONFLICT","message":"task LB-1 is at rev 1, you expected rev 5","fix":"laneboard get LB-1 --json, then re-apply your change with --expected-rev 1","details":{"task":{"id":"LB-1","rev":1,"title":"Fix login","description":"","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false}}}}
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"REV_CONFLICT","message":"task LB-1 is at rev 1, you expected rev 5","fix":"details.task is the current LB-1 (rev 1): re-apply your change on it (merge, do not overwrite others' edits) with --expected-rev 1","details":{"task":{"id":"LB-1","rev":1,"title":"Fix login","description":"","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false}}}}
 --- stderr
 

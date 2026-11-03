@@ -1,11 +1,11 @@
 // `laneboard setup <harness> [--remove] [--dry-run]`: write (or roll back) laneboard's MCP entry and instruction block for one harness.
 import path from 'node:path';
 import { LaneboardError, suggestClosest } from '../core/index.ts';
-import { applyPlan, planAdd, planRemove } from './files.ts';
-import type { FileResult } from './files.ts';
+import { applyPlan, planAdd, planKeep, planRemove, readText } from './files.ts';
+import type { FileResult, PlannedFile } from './files.ts';
 import { claudeCode } from './harnesses/claude-code.ts';
 import { codex } from './harnesses/codex.ts';
-import type { Harness } from './harnesses/common.ts';
+import type { Harness, HarnessContext, HarnessFile } from './harnesses/common.ts';
 import { cursor } from './harnesses/cursor.ts';
 import { gemini } from './harnesses/gemini.ts';
 import { opencode } from './harnesses/opencode.ts';
@@ -54,20 +54,79 @@ function findHarness(name: string): Harness {
   });
 }
 
-// Plan every file first (an unparseable file stops everything before any write), then write unless dry run.
+// Where a harness file is: absolute path and how it is shown (project-relative, ~/… under home, else absolute).
+function locate(f: HarnessFile, c: HarnessContext): { file: string; shown: string; moved: boolean } {
+  const moved = f.moved?.(c);
+  if (moved === undefined) {
+    const file = path.join(f.scope === 'project' ? c.cwd : c.home, f.path);
+    return { file, shown: f.scope === 'project' ? f.path : `~/${f.path}`, moved: false };
+  }
+  const rel = path.relative(c.home, moved);
+  return { file: moved, shown: rel.startsWith('..') || path.isAbsolute(rel) ? moved : `~/${rel}`, moved: true };
+}
+
+// Other harnesses that share this file (AGENTS.md) and still have their own laneboard entry installed.
+function otherUsers(harness: Harness, f: HarnessFile, c: HarnessContext): string[] {
+  const sameFile = (g: HarnessFile): boolean => g.path === f.path && g.scope === f.scope;
+  return HARNESSES.filter((h) => h !== harness && h.files.some(sameFile))
+    .filter((h) =>
+      h.files
+        .filter((g) => !sameFile(g))
+        .some((g) => {
+          const { file, shown } = locate(g, c);
+          try {
+            const text = readText(file);
+            return text !== null && g.edit(shown).owns(text);
+          } catch {
+            // That file cannot be read or parsed, so it may still hold the entry: keep the shared block.
+            return true;
+          }
+        }),
+    )
+    .map((h) => h.name);
+}
+
+// Warnings about backups (written or left behind) and shared files kept for another harness.
+function planWarnings(plan: readonly PlannedFile[], users: ReadonlyMap<string, string[]>): string[] {
+  const out: string[] = [];
+  for (const p of plan) {
+    const bak = `${p.shown}.laneboard.bak`;
+    if (p.backup !== undefined) {
+      out.push(`wrote ${bak} (your file before setup; setup --remove restores it)${p.scope === 'project' ? '; do not commit it: add *.laneboard.bak to .gitignore' : ''}`);
+    }
+    if (p.result === 'kept') {
+      const names = users.get(p.file) ?? [];
+      out.push(`kept the laneboard block in ${p.shown}: ${names.join(', ')} still use${names.length === 1 ? 's' : ''} it (laneboard setup ${names[0] ?? '<harness>'} --remove removes it)`);
+    }
+    if (p.keptBackup) out.push(`kept ${bak} (your file before setup; not restored because the file changed since): delete it when not needed`);
+  }
+  return out;
+}
+
+// Plan every file first (an unparseable or unwritable file stops everything before any write), then write unless dry run.
 export function runSetup(input: SetupInput): { data: SetupResult; warnings: string[] } {
   const harness = findHarness(input.harness);
   const home = input.env.HOME;
   if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so global harness files cannot be found', { fix: 'export HOME=<your home directory> and run setup again' });
   const cwd = path.resolve(input.cwd);
+  const context: HarnessContext = { cwd, home, env: input.env };
+  const roots = [cwd, home];
+  const users = new Map<string, string[]>();
   const plan = harness.files.map((f) => {
-    const root = f.scope === 'project' ? cwd : home;
-    const file = path.join(root, f.path);
-    const shown = f.scope === 'project' ? f.path : `~/${f.path}`;
+    const { file, shown, moved } = locate(f, context);
+    // A directory the harness was pointed to (CODEX_HOME) is the user's, never removed.
+    if (moved) roots.push(path.dirname(file));
+    if (input.remove) {
+      const others = otherUsers(harness, f, context);
+      if (others.length) {
+        users.set(file, others);
+        return planKeep(file, shown, f.scope);
+      }
+    }
     return (input.remove ? planRemove : planAdd)(file, shown, f.scope, f.edit(shown));
   });
-  if (!input.dryRun) applyPlan(plan, [cwd, home]);
-  const warnings = input.remove ? [] : (harness.warnings?.({ cwd, home, env: input.env }) ?? []);
+  if (!input.dryRun) applyPlan(plan, roots);
+  const warnings = [...planWarnings(plan, users), ...(input.remove ? [] : (harness.warnings?.(context) ?? []))];
   return {
     data: {
       harness: harness.name,

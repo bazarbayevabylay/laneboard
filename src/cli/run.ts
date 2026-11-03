@@ -6,7 +6,7 @@ import type { StoreRef } from '../core/index.ts';
 import { jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
-import { cliFix, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
+import { cliFix, cliMessage, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
 
 export type { CliIo } from './commands/types.ts';
 
@@ -137,7 +137,7 @@ export async function runCli(io: CliIo): Promise<number> {
     if (result.silent) return 0;
     return print(io, out, result.data, result.warnings, result.human);
   } catch (raw) {
-    const err = flagMessage(toLaneboardError(raw), def);
+    const err = cliMessage(flagMessage(toLaneboardError(raw), def));
     const fix = cliFix(err, argv, def);
     if (out.json) io.stdout(errorEnvelope(out.store, err, fix));
     else io.stderr(errorText(err, fix));

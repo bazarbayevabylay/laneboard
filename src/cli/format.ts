@@ -1,6 +1,6 @@
 // Output for the CLI: JSON envelopes, human text, and error fixes rebuilt from argv.
-import { ERRORS, toErrorObject } from '../core/index.ts';
-import type { DoctorResult, EventsResult, LaneboardError, ListItem, ListResult, TaskView } from '../core/index.ts';
+import { ERRORS, fieldsLine, LaneboardError, toErrorObject } from '../core/index.ts';
+import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
 import type { SetupResult } from '../setup/index.ts';
 
 // Quote one argv token for a copy-pasteable shell command.
@@ -53,13 +53,20 @@ export function cliFix(err: LaneboardError, argv: readonly string[], command: { 
   const rebuilt = replaceValue(argv, err);
   if (rebuilt) return rebuilt;
   if (err.code === 'ACTOR_REQUIRED') {
+    // Only the command, so it can be run as given; the LANEBOARD_AGENT alternative is in the CLI message (cliMessage).
     const out = withOptions(argv, ['--as', '<your-name>']);
-    return `${commandLine(out, new Set([out.indexOf('<your-name>')]))}   (or export LANEBOARD_AGENT=<your-name>)`;
+    return commandLine(out, new Set([out.indexOf('<your-name>')]));
   }
   if ((err.code === 'USAGE' || err.code === 'UNKNOWN_OPTION') && err.fix === ERRORS[err.code].fix) {
     return command ? `laneboard ${command.usage}` : 'laneboard <command from allowed> [options]';
   }
   return command ? err.fix.replace('<command>', command.name) : err.fix;
+}
+
+// The message a CLI user sees: ACTOR_REQUIRED also names the environment variable (the fix holds only the command).
+export function cliMessage(err: LaneboardError): LaneboardError {
+  if (err.code !== 'ACTOR_REQUIRED') return err;
+  return new LaneboardError(err.code, `${err.message}: pass --as <your-name>, or export LANEBOARD_AGENT=<your-name> once for the session`, { fix: err.fix });
 }
 
 // Success envelope (one JSON document on stdout).
@@ -162,28 +169,36 @@ export interface PrimeData {
   agent: string | null;
   store_problem: string | null;
   statuses: Array<{ status: string; count: number }>;
+  // The last configured status (work there is done); null without a store.
+  final_status: string | null;
+  fields: Record<string, FieldInfo>;
   tasks: ListItem[];
 }
 
-// Rules, then the agent's active tasks (or counts and a hint), at most PRIME_MAX_CHARS characters.
+// `line` cut to `room` characters, marked with an ellipsis when cut.
+function fit(line: string, room: number): string {
+  return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
+}
+
+// Rules, statuses (final one named), fields, then the agent's active tasks (or a hint); at most PRIME_MAX_CHARS characters.
 export function primeText(d: PrimeData): string {
-  const head = [d.rules, ''];
-  if (d.store_problem !== null) {
-    head.push(`laneboard store: ${d.store_problem}`);
-    return head.join('\n').slice(0, PRIME_MAX_CHARS);
+  const head = `${d.rules}\n`;
+  if (d.store_problem !== null) return fit(`${head}\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
+  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'} --json`;
+  let closing: string;
+  if (d.agent === null) closing = 'Set your name to see your tasks: export LANEBOARD_AGENT=<your-name> (or pass --as <your-name>).';
+  else if (!d.tasks.length) closing = `Your active tasks (${d.agent}): none. Find work: laneboard list --unassigned --json`;
+  else closing = `Your active tasks (${d.agent}), newest update first:`;
+  // Status and field lines share what is left after the rules, the closing line and the longest footer.
+  const room = PRIME_MAX_CHARS - head.length - closing.length - (d.agent !== null && d.tasks.length ? more(d.tasks.length).length : 0) - 3;
+  let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;
+  let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
+  if (status.length + 1 + fields.length > room) {
+    fields = fit(fields, Math.floor(room / 3));
+    status = fit(status, room - 1 - fields.length);
   }
-  head.push(`Active tasks per status: ${d.statuses.map((s) => `${s.status} ${s.count}`).join(', ') || 'none'}`);
-  if (d.agent === null) {
-    head.push('Set your name to see your tasks: export LANEBOARD_AGENT=<your-name> (or pass --as <your-name>).');
-    return head.join('\n').slice(0, PRIME_MAX_CHARS);
-  }
-  if (!d.tasks.length) {
-    head.push(`Your active tasks (${d.agent}): none. Find work: laneboard list --unassigned --json`);
-    return head.join('\n').slice(0, PRIME_MAX_CHARS);
-  }
-  head.push(`Your active tasks (${d.agent}), newest update first:`);
-  let text = head.join('\n');
-  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent} --json`;
+  let text = [head, status, fields, closing].join('\n');
+  if (d.agent === null || !d.tasks.length) return fit(text, PRIME_MAX_CHARS);
   for (const [i, t] of d.tasks.entries()) {
     const line = `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
     const left = d.tasks.length - i - 1;

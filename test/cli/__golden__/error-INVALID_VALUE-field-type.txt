@@ -4,12 +4,12 @@ exit 2
 --- stdout
 
 --- stderr
-error INVALID_VALUE: field priority is number: expected a number, got "high"
+error INVALID_VALUE: field priority is number: expected a number (e.g. priority=1), got "high"
   fix: laneboard update LB-1 --field priority=<number> --as a
 
 $ laneboard update LB-1 --field priority=high --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"INVALID_VALUE","message":"field priority is number: expected a number, got \"high\"","fix":"laneboard update LB-1 --field priority=<number> --as a --json"}}
+{"ok":false,"store":"<ROOT>/.laneboard","error":{"code":"INVALID_VALUE","message":"field priority is number: expected a number (e.g. priority=1), got \"high\"","fix":"laneboard update LB-1 --field priority=<number> --as a --json","details":{"field":"priority","type":"number","example":"priority=1"}}}
 --- stderr
 

@@ -24,6 +24,8 @@ const EXPECTED_EXIT: Record<ErrorCode, number> = {
   STORE_TOO_NEW: 6,
   STORE_EXISTS: 6,
   SETUP_UNPARSEABLE: 6,
+  SETUP_CONFLICT: 6,
+  SETUP_WRITE_FAILED: 6,
 };
 
 describe('error registry (C5)', () => {

@@ -1,0 +1,15 @@
+# error-SETUP_WRITE_FAILED
+$ laneboard setup gemini
+exit 6
+--- stdout
+
+--- stderr
+error SETUP_WRITE_FAILED: cannot write GEMINI.md (EACCES); nothing was written
+  fix: make <ROOT>/GEMINI.md writable (chmod u+w <ROOT>/GEMINI.md) and run setup again
+
+$ laneboard setup gemini --json
+exit 6
+--- stdout
+{"ok":false,"store":null,"error":{"code":"SETUP_WRITE_FAILED","message":"cannot write GEMINI.md (EACCES); nothing was written","fix":"make <ROOT>/GEMINI.md writable (chmod u+w <ROOT>/GEMINI.md) and run setup again","details":{"file":"GEMINI.md"}}}
+--- stderr
+

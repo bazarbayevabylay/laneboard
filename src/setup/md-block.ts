@@ -23,19 +23,29 @@ function findBlock(text: string, m: Markers, file: string, body: string): { from
   return { from, to: end + m.end.length };
 }
 
-// Text edit for a marked block; `conflict` reports content outside the block that the block would clash with.
-export function blockEdit(file: string, m: Markers, body: string, conflict?: (outside: string) => string | undefined): TextEdit {
+// What the text outside our block says about it: a clash that makes our block unsafe (SETUP_CONFLICT) or broken syntax (SETUP_UNPARSEABLE).
+export type OutsideCheck = (outside: string) => { conflict: string; fix: string } | { unparseable: string } | undefined;
+
+// Text edit for a marked block; `check` looks at the content outside the block before anything is written.
+export function blockEdit(file: string, m: Markers, body: string, check?: OutsideCheck): TextEdit {
   const block = `${m.start}\n${body}\n${m.end}`;
   return {
     add(text) {
       if (text === null || text.trim() === '') return `${block}\n`;
       const at = findBlock(text, m, file, body);
-      const outside = at ? text.slice(0, at.from) + text.slice(at.to) : text;
-      const clash = conflict?.(outside);
-      if (clash) {
-        throw new LaneboardError('SETUP_UNPARSEABLE', `${file} ${clash}, so laneboard cannot edit it safely; nothing was written`, {
+      // Our block becomes blank lines, so line numbers in a problem report match the file.
+      const outside = at ? text.slice(0, at.from) + '\n'.repeat(text.slice(at.from, at.to).split('\n').length - 1) + text.slice(at.to) : text;
+      const problem = check?.(outside);
+      if (problem && 'conflict' in problem) {
+        throw new LaneboardError('SETUP_CONFLICT', `${file} ${problem.conflict}, so the laneboard block would clash with it; nothing was written`, {
           details: { file, snippet: block },
-          fix: `remove that part from ${file} and run setup again, or keep it and skip setup for this file`,
+          fix: problem.fix,
+        });
+      }
+      if (problem) {
+        throw new LaneboardError('SETUP_UNPARSEABLE', `${file} ${problem.unparseable}; nothing was written`, {
+          details: { file, snippet: block },
+          fix: `fix ${file} and run setup again, or add the snippet (details.snippet) by hand`,
         });
       }
       if (at) return text.slice(0, at.from) + block + text.slice(at.to);
@@ -46,8 +56,12 @@ export function blockEdit(file: string, m: Markers, body: string, conflict?: (ou
       if (!at) return text;
       const before = text.slice(0, at.from);
       const after = text.slice(at.to).replace(/^\n/, '');
-      // The block was appended after a blank line: drop that separator too.
-      return after === '' ? before.replace(/\n\n$/, '\n') : before + after;
+      // The block was appended after a blank line: drop that separator too (also when text was added after the block later).
+      if (after === '') return before.replace(/\n\n$/, '\n');
+      return (before === '' || before.endsWith('\n\n')) && after.startsWith('\n') ? before + after.slice(1) : before + after;
+    },
+    owns(text) {
+      return findBlock(text, m, file, body) !== undefined;
     },
     same(a, b) {
       return a.trimEnd() === b.trimEnd();

@@ -70,7 +70,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   updateTask: {
     name: 'task_update',
-    description: 'Change a task (at least one change); status changes only here. assignee null unassigns. Pass expected_rev from your last read.',
+    description: 'Change a task (at least one change); status changes only here. assignee null unassigns. description replaces the whole text. Pass expected_rev from your last read or write (every write returns the new rev).',
     params: writeParams(UpdateInput.omit({ field_args: true })),
     write: true,
   },
@@ -82,7 +82,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   commentTask: {
     name: 'task_comment',
-    description: 'Add a comment to a task (notes, results).',
+    description: 'Add a comment to a task (notes, results). A comment is a change: rev +1; task_get shows it as an event of type commented.',
     params: writeParams(CommentInput),
     write: true,
   },

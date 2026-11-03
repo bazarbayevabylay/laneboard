@@ -348,7 +348,7 @@ describe('list', () => {
     const all = await listTasks(as(s), {});
     expect(all.data).toMatchObject({ scope: 'active', limit: 20, offset: 0, total: 3 });
     expect(all.data.items.map((i) => i.id)).toEqual(['LB-3', 'LB-2', 'LB-1']);
-    expect(Object.keys(all.data.items[0] ?? {})).toEqual(['id', 'title', 'status', 'assignee', 'labels', 'updated_at', 'rev', 'archived']);
+    expect(Object.keys(all.data.items[0] ?? {})).toEqual(['id', 'title', 'status', 'assignee', 'labels', 'updated_at', 'updated_by', 'rev', 'archived']);
     expect((await listTasks(as(s), { status: ['todo'] })).data.total).toBe(2);
     expect((await listTasks(as(s), { assignee: 'dev-1' })).data.items.map((i) => i.id)).toEqual(['LB-2']);
     expect((await listTasks(as(s), { unassigned: true })).data.total).toBe(2);
@@ -384,5 +384,45 @@ describe('events feed', () => {
     const since = all.data.items[1]?.at ?? '';
     expect((await listEvents(as(s), { since })).data.items.every((e) => e.at > since)).toBe(true);
     await rejectsWith(listEvents(as(s), { since: 'yesterday' }), 'INVALID_VALUE');
+  });
+});
+
+// Usability round 1: what agents had to learn from a second error, they now get from the first one.
+describe('errors and results that answer the next question', () => {
+  it('UNKNOWN_FIELD names each declared field with its type, description and an example', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
+    const err = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-1', field_args: ['prio=3'] }), 'UNKNOWN_FIELD');
+    expect(err.message).toBe('field "prio" is not declared in config.fields (declared: priority (number, 0 = highest))');
+    expect(err.details).toEqual({ fields: { priority: { type: 'number', description: '0 = highest', example: 'priority=1' } } });
+  });
+
+  it('INVALID_VALUE for a field names its type with an example, for key=value and typed fields', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
+    const cli = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-1', field_args: ['priority=zzz'] }), 'INVALID_VALUE');
+    expect(cli.message).toBe('field priority is number: expected a number (e.g. priority=1), got "zzz"');
+    expect(cli.details).toEqual({ field: 'priority', type: 'number', example: 'priority=1' });
+    const typed = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-1', fields: { priority: 'zzz' } }), 'INVALID_VALUE');
+    expect(typed.message).toBe('field priority must be number (e.g. {"priority": 1}), got "zzz"');
+    expect(typed.fix).toBe('pass priority as a number value, e.g. fields: {"priority": 1}');
+  });
+
+  it('a comment returns the new rev, so an update right after it with that rev succeeds; REV_CONFLICT carries the current task', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
+    const commented = await commentTask(as(s, 'a'), { id: 'LB-1', text: 'note' });
+    expect(commented.data.rev).toBe(2);
+    expect((await updateTask(as(s, 'a'), { id: 'LB-1', title: 'y', expected_rev: commented.data.rev })).data.rev).toBe(3);
+    const err = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-1', title: 'z', expected_rev: 2 }), 'REV_CONFLICT');
+    expect(err.details?.task as { rev: number; title: string }).toMatchObject({ rev: 3, title: 'y' });
+    expect(err.fix).toBe("details.task is the current LB-1 (rev 3): re-apply your change on it (merge, do not overwrite others' edits) with --expected-rev 3");
+  });
+
+  it('list items say who changed the task last', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
+    await updateTask(as(s, 'agent-omega'), { id: 'LB-1', status: 'done' });
+    expect((await listTasks(as(s), {})).data.items[0]).toMatchObject({ id: 'LB-1', assignee: null, updated_by: 'agent-omega' });
   });
 });

@@ -1,0 +1,21 @@
+# error-SETUP_CONFLICT
+$ laneboard setup codex
+exit 6
+--- stdout
+
+--- stderr
+error SETUP_CONFLICT: ~/.codex/config.toml already defines mcp_servers.laneboard on line 2, so the laneboard block would clash with it; nothing was written
+  fix: delete that mcp_servers.laneboard entry (line 2) from ~/.codex/config.toml and run setup again (laneboard writes its own in a marked block), or keep yours and skip setup for Codex
+  snippet:
+    # laneboard:start
+    [mcp_servers.laneboard]
+    command = "laneboard"
+    args = ["mcp"]
+    # laneboard:end
+
+$ laneboard setup codex --json
+exit 6
+--- stdout
+{"ok":false,"store":null,"error":{"code":"SETUP_CONFLICT","message":"~/.codex/config.toml already defines mcp_servers.laneboard on line 2, so the laneboard block would clash with it; nothing was written","fix":"delete that mcp_servers.laneboard entry (line 2) from ~/.codex/config.toml and run setup again (laneboard writes its own in a marked block), or keep yours and skip setup for Codex","details":{"file":"~/.codex/config.toml","snippet":"# laneboard:start\n[mcp_servers.laneboard]\ncommand = \"laneboard\"\nargs = [\"mcp\"]\n# laneboard:end"}}}
+--- stderr
+

@@ -7,7 +7,7 @@ export const update: CommandDef = {
   name: 'update',
   usage:
     'update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N]',
-  summary: 'Change a task (at least one change). Status changes only here.',
+  summary: 'Change a task (at least one change). Status changes only here. --description replaces the whole text.',
   options: {
     title: { type: 'string' },
     description: { type: 'string' },

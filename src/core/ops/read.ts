@@ -5,8 +5,8 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, IdInput, locate, normalizeId, notFound, parseInput, toTaskView } from './common.ts';
-import type { OpContext, OpResult, TaskView } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, IdInput, locate, normalizeId, notFound, parseInput, toTaskView } from './common.ts';
+import type { FieldInfo, OpContext, OpResult, TaskView } from './common.ts';
 
 export const GetInput = z.strictObject({
   id: IdInput,
@@ -45,6 +45,8 @@ export interface ListItem {
   assignee: string | null;
   labels: string[];
   updated_at: string;
+  // Who changed the task last (the assignee may be empty or someone else).
+  updated_by: string;
   rev: number;
   archived: boolean;
 }
@@ -125,6 +127,7 @@ function toListItem(task: TaskT, archived: boolean): ListItem {
     assignee: task.assignee,
     labels: [...task.labels],
     updated_at: task.updated_at,
+    updated_by: task.updated_by,
     rev: task.rev,
     archived,
   };
@@ -197,6 +200,10 @@ export type SummaryInputT = z.infer<typeof SummaryInput>;
 export interface SummaryResult {
   // Active tasks per configured status (in config order), then statuses no longer in config.
   statuses: Array<{ status: string; count: number }>;
+  // The last configured status: work there is done.
+  final_status: string;
+  // Declared fields with type, description and an example.
+  fields: Record<string, FieldInfo>;
   assignee: string | null;
   // Active tasks of `assignee`, newest update first (empty without an assignee).
   assigned: ListItem[];
@@ -215,6 +222,8 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   return {
     data: {
       statuses: [...counts].map(([status, count]) => ({ status, count })),
+      final_status: config.statuses.at(-1) ?? '',
+      fields: fieldInfo(config),
       assignee: p.assignee ?? null,
       assigned: assigned.map(({ task, archived }) => toListItem(task, archived)),
     },

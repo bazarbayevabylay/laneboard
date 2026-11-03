@@ -4,7 +4,7 @@ exit 6
 --- stdout
 
 --- stderr
-error SETUP_UNPARSEABLE: .gemini/settings.json is not plain JSON (comments or a syntax error); nothing was written
+error SETUP_UNPARSEABLE: .gemini/settings.json is not valid JSON (InvalidSymbol at line 1, column 12); nothing was written
   fix: add the snippet (details.snippet) to .gemini/settings.json by hand, or fix the file and run setup again
   snippet:
     {
@@ -21,6 +21,6 @@ error SETUP_UNPARSEABLE: .gemini/settings.json is not plain JSON (comments or a 
 $ laneboard setup gemini --json
 exit 6
 --- stdout
-{"ok":false,"store":null,"error":{"code":"SETUP_UNPARSEABLE","message":".gemini/settings.json is not plain JSON (comments or a syntax error); nothing was written","fix":"add the snippet (details.snippet) to .gemini/settings.json by hand, or fix the file and run setup again","details":{"file":".gemini/settings.json","snippet":"{\n  \"mcpServers\": {\n    \"laneboard\": {\n      \"command\": \"laneboard\",\n      \"args\": [\n        \"mcp\"\n      ]\n    }\n  }\n}"}}}
+{"ok":false,"store":null,"error":{"code":"SETUP_UNPARSEABLE","message":".gemini/settings.json is not valid JSON (InvalidSymbol at line 1, column 12); nothing was written","fix":"add the snippet (details.snippet) to .gemini/settings.json by hand, or fix the file and run setup again","details":{"file":".gemini/settings.json","snippet":"{\n  \"mcpServers\": {\n    \"laneboard\": {\n      \"command\": \"laneboard\",\n      \"args\": [\n        \"mcp\"\n      ]\n    }\n  }\n}"}}}
 --- stderr
 

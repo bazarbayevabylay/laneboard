@@ -21,13 +21,15 @@ function sandbox(): Sandbox {
   return { cwd, home, run: (argv, env = {}) => cli(argv, { cwd, env: { HOME: home, ...env } }) };
 }
 
-// Every file under the project and HOME with its bytes (relative paths prefixed p:/h:).
+// Every file under the project and HOME with its bytes, symlinks with their target (relative paths prefixed p:/h:).
 function snapshot(s: Sandbox): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (root: string, prefix: string, dir = root): void => {
     for (const name of fs.readdirSync(dir)) {
       const full = path.join(dir, name);
-      if (fs.statSync(full).isDirectory()) {
+      const stat = fs.lstatSync(full);
+      if (stat.isSymbolicLink()) out[`${prefix}${path.relative(root, full)}`] = `<link to ${fs.readlinkSync(full)}>`;
+      else if (stat.isDirectory()) {
         out[`${prefix}${path.relative(root, full)}/`] = '<dir>';
         walk(root, prefix, full);
       } else out[`${prefix}${path.relative(root, full)}`] = fs.readFileSync(full, 'utf8');
@@ -153,17 +155,18 @@ describe('setup details', () => {
     expect(fs.readFileSync(path.join(s.cwd, 'CLAUDE.md'), 'utf8')).toBe(agents);
   });
 
-  it('a different laneboard entry is replaced and shown as a diff; --remove brings the old one back', async () => {
+  it('a different laneboard entry is replaced and shown as a diff, without a backup; --remove takes laneboard out', async () => {
     const s = sandbox();
-    plant(s, { 'p:.mcp.json': '{ "mcpServers": { "laneboard": { "command": "npx", "args": ["-y", "laneboard", "mcp"] } } }\n' });
-    const original = snapshot(s);
+    plant(s, { 'p:.mcp.json': '{ "mcpServers": { "laneboard": { "command": "npx", "args": ["-y", "laneboard", "mcp"] }, "other": { "command": "x" } } }\n' });
     const r = await ok(s, ['setup', 'claude-code']);
     const mcp = r.files.find((f) => f.path === '.mcp.json');
     expect(mcp?.result).toBe('updated');
     expect(mcp?.diff?.some((l) => l.startsWith('+') && l.includes('"laneboard"'))).toBe(true);
     expect(mcp?.diff?.some((l) => l.startsWith('-') && l.includes('npx'))).toBe(true);
+    // The file already held a laneboard entry, so it is not "the original without laneboard": no backup.
+    expect(snapshot(s)['p:.mcp.json.laneboard.bak']).toBeUndefined();
     await ok(s, ['setup', 'claude-code', '--remove']);
-    expect(snapshot(s)).toEqual(original);
+    expect(snapshot(s)['p:.mcp.json']).toBe('{ "mcpServers": { "other": { "command": "x" } } }\n');
   });
 
   it('a file that already has the same entry (other formatting) is unchanged: no rewrite, no backup', async () => {
@@ -190,25 +193,41 @@ describe('setup details', () => {
     expect(fs.existsSync(`${file}.laneboard.bak`)).toBe(true);
   });
 
-  it('JSON with comments -> SETUP_UNPARSEABLE (exit 6), nothing written, snippet to add by hand', async () => {
+  it('JSON with comments is edited in place: comments and formatting stay, --remove restores the bytes', async () => {
     const s = sandbox();
-    plant(s, { 'p:opencode.json': '{\n  // my config\n  "model": "x"\n}\n' });
-    const before = snapshot(s);
-    const r = await s.run(['setup', 'opencode', '--json']);
-    expect(r.code).toBe(6);
-    const err = JSON.parse(r.stdout).error;
-    expect(err).toMatchObject({ code: 'SETUP_UNPARSEABLE', details: { file: 'opencode.json' } });
-    expect(JSON.parse(err.details.snippet)).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp'], enabled: true } } });
-    expect(snapshot(s)).toEqual(before);
+    const original = '{\n  // my config\n  "model": "x", // trailing note\n}\n';
+    plant(s, { 'p:opencode.json': original });
+    await ok(s, ['setup', 'opencode']);
+    const text = snapshot(s)['p:opencode.json'];
+    expect(text).toBe('{\n  // my config\n  "model": "x",\n  "mcp": {\n    "laneboard": {\n      "type": "local",\n      "command": [\n        "laneboard",\n        "mcp"\n      ],\n      "enabled": true\n    }\n  }, // trailing note\n}\n');
+    await ok(s, ['setup', 'opencode', '--remove']);
+    expect(snapshot(s)['p:opencode.json']).toBe(original);
   });
 
-  it('a Codex table defined outside the block -> SETUP_UNPARSEABLE, nothing written', async () => {
+  it('a JSON syntax error, a byte order mark or a duplicate key on our path -> SETUP_UNPARSEABLE (exit 6), nothing written, snippet', async () => {
+    for (const bad of ['{\n  "model": x\n}\n', '\uFEFF{"mcp":{}}\n', '{"mcp":{"a":{}},"mcp":{}}\n']) {
+      const s = sandbox();
+      plant(s, { 'p:opencode.json': bad });
+      const before = snapshot(s);
+      const r = await s.run(['setup', 'opencode', '--json']);
+      expect(r.code, bad).toBe(6);
+      const err = JSON.parse(r.stdout).error;
+      expect(err).toMatchObject({ code: 'SETUP_UNPARSEABLE', details: { file: 'opencode.json' } });
+      expect(JSON.parse(err.details.snippet)).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp'], enabled: true } } });
+      expect(snapshot(s)).toEqual(before);
+    }
+  });
+
+  it('a Codex table defined outside the block -> SETUP_CONFLICT with a fix, nothing written', async () => {
     const s = sandbox();
     plant(s, { 'h:.codex/config.toml': '[mcp_servers.laneboard]\ncommand = "old"\n' });
     const before = snapshot(s);
     const r = await s.run(['setup', 'codex', '--json']);
     expect(r.code).toBe(6);
-    expect(JSON.parse(r.stdout).error.message).toContain('already defines [mcp_servers.laneboard] outside the laneboard block');
+    const err = JSON.parse(r.stdout).error;
+    expect(err.code).toBe('SETUP_CONFLICT');
+    expect(err.message).toContain('already defines mcp_servers.laneboard on line 1');
+    expect(err.fix).toContain('delete that mcp_servers.laneboard entry (line 1)');
     expect(snapshot(s)).toEqual(before);
   });
 
@@ -246,6 +265,238 @@ describe('setup details', () => {
     const s = sandbox();
     const r = await s.run(['setup', 'codex']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toBe('created ~/.codex/config.toml (global file)\ncreated AGENTS.md\nnext: ~/.codex/config.toml is a global file: the laneboard MCP server is on in every Codex project\n');
+    expect(r.stdout).toBe('created ~/.codex/config.toml (global file)\ncreated AGENTS.md\nnext: the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project\n');
+  });
+});
+
+// Review S2: backups (M1, M2), byte-exact JSON edits (M3), TOML forms (M4), and the minor findings.
+describe('setup backups and exact edits', () => {
+  const mcpFile = (s: Sandbox): string => path.join(s.cwd, '.mcp.json');
+  // Change laneboard's own entry by hand (as a user or an older laneboard version would) and add a key of the user's.
+  const editOurEntry = (s: Sandbox): void => {
+    const j = JSON.parse(fs.readFileSync(mcpFile(s), 'utf8'));
+    j.mcpServers.laneboard.args = ['mcp', '--dir', '/x'];
+    j.mcpServers.mine = { command: 'o' };
+    fs.writeFileSync(mcpFile(s), `${JSON.stringify(j, null, 2)}\n`);
+  };
+
+  it('a created file whose laneboard entry changed: setup takes no backup, --remove really takes the entry out', async () => {
+    const s = sandbox();
+    await ok(s, ['setup', 'claude-code']);
+    editOurEntry(s);
+    const r = await ok(s, ['setup', 'claude-code']);
+    expect(r.files.find((f) => f.path === '.mcp.json')?.result).toBe('updated');
+    expect(fs.existsSync(`${mcpFile(s)}.laneboard.bak`)).toBe(false);
+    const removed = await ok(s, ['setup', 'claude-code', '--remove']);
+    expect(removed.files.find((f) => f.path === '.mcp.json')?.result).toBe('removed');
+    expect(JSON.parse(fs.readFileSync(mcpFile(s), 'utf8'))).toEqual({ mcpServers: { mine: { command: 'o' } } });
+  });
+
+  it('a created CLAUDE.md with text added later and an older block: --remove leaves only the user text', async () => {
+    const s = sandbox();
+    await ok(s, ['setup', 'claude-code']);
+    const file = path.join(s.cwd, 'CLAUDE.md');
+    const old = fs.readFileSync(file, 'utf8').replace('run `laneboard prime`', 'run laneboard prime (old text)');
+    fs.writeFileSync(file, `${old}\n## Mine\n`);
+    expect((await ok(s, ['setup', 'claude-code'])).files.find((f) => f.path === 'CLAUDE.md')?.result).toBe('updated');
+    expect(fs.existsSync(`${file}.laneboard.bak`)).toBe(false);
+    await ok(s, ['setup', 'claude-code', '--remove']);
+    expect(fs.readFileSync(file, 'utf8')).toBe('## Mine\n');
+  });
+
+  it('a pre-existing file: the backup is the original, a second setup after the entry changed keeps it, --remove restores the bytes', async () => {
+    const s = sandbox();
+    const original = '{\n    "mcpServers": {\n        "other": { "command": "x" }\n    }\n}';
+    plant(s, { 'p:.mcp.json': original });
+    await ok(s, ['setup', 'claude-code']);
+    editOurEntry(s);
+    fs.writeFileSync(mcpFile(s), fs.readFileSync(mcpFile(s), 'utf8').replace(',\n    "mine": {\n      "command": "o"\n    }', ''));
+    await ok(s, ['setup', 'claude-code']);
+    expect(fs.readFileSync(`${mcpFile(s)}.laneboard.bak`, 'utf8')).toBe(original);
+    const removed = await ok(s, ['setup', 'claude-code', '--remove']);
+    expect(removed.files.find((f) => f.path === '.mcp.json')?.result).toBe('restored');
+    expect(fs.readFileSync(mcpFile(s), 'utf8')).toBe(original);
+    expect(fs.existsSync(`${mcpFile(s)}.laneboard.bak`)).toBe(false);
+  });
+
+  it('a backup that holds a laneboard entry (older laneboard) is never restored', async () => {
+    const s = sandbox();
+    const ours = '{"mcpServers":{"laneboard":{"command":"laneboard","args":["mcp"]},"o":{"command":"o"}}}\n';
+    plant(s, { 'p:.mcp.json': ours, 'p:.mcp.json.laneboard.bak': ours });
+    const r = await s.run(['setup', 'claude-code', '--remove', '--json']);
+    const data = JSON.parse(r.stdout);
+    expect(data.data.files.find((f: { path: string }) => f.path === '.mcp.json')?.result).toBe('removed');
+    expect(fs.readFileSync(mcpFile(s), 'utf8')).toBe('{"mcpServers":{"o":{"command":"o"}}}\n');
+    expect(data.warnings).toContain('kept .mcp.json.laneboard.bak (your file before setup; not restored because the file changed since): delete it when not needed');
+  });
+
+  it.each([0o600, 0o640])('the backup keeps the mode of the original (%o)', async (mode) => {
+    const s = sandbox();
+    plant(s, { 'h:.codex/config.toml': 'model = "o4"\n[mcp_servers.gh]\nenv = { TOKEN = "secret" }\n' });
+    const file = path.join(s.home, '.codex', 'config.toml');
+    fs.chmodSync(file, mode);
+    await ok(s, ['setup', 'codex']);
+    expect(fs.statSync(`${file}.laneboard.bak`).mode & 0o777).toBe(mode);
+    expect(fs.statSync(file).mode & 0o777).toBe(mode);
+  });
+
+  it('writing a backup is reported (project files: do not commit it)', async () => {
+    const s = sandbox();
+    plant(s, { 'p:CLAUDE.md': '# Project\n' });
+    const r = JSON.parse((await s.run(['setup', 'claude-code', '--json'])).stdout);
+    expect(r.warnings).toContain('wrote CLAUDE.md.laneboard.bak (your file before setup; setup --remove restores it); do not commit it: add *.laneboard.bak to .gitignore');
+    const human = await s.run(['setup', 'claude-code', '--remove']);
+    expect(human.stderr).toBe('');
+  });
+
+  it('JSON: only our key changes, every other byte stays (arrays on one line, 1.0, escapes, big numbers, other indent)', async () => {
+    const s = sandbox();
+    const original = '{\n  "permissions": { "allow": ["Bash(npm test)", "Read"], "deny": [] },\n  "env": { "BIG": 12345678901234567890, "F": 1.0, "U": "caf\\u00e9" }\n}\n';
+    plant(s, { 'p:.claude/settings.json': original });
+    await ok(s, ['setup', 'claude-code']);
+    const hook = JSON.stringify({ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'" }] }, null, 2);
+    const inserted = `,\n  "hooks": {\n    "SessionStart": [\n      ${hook.split('\n').join('\n      ')}\n    ]\n  }`;
+    const file = path.join(s.cwd, '.claude', 'settings.json');
+    expect(fs.readFileSync(file, 'utf8')).toBe(original.replace('" }\n}\n', `" }${inserted}\n}\n`));
+    // The user changes something else after setup: --remove takes only our part out and keeps every other byte.
+    const edited = fs.readFileSync(file, 'utf8').replace('"deny": []', '"deny": ["Bash(rm)"]');
+    fs.writeFileSync(file, edited);
+    const r = await ok(s, ['setup', 'claude-code', '--remove']);
+    expect(r.files.find((f) => f.path === '.claude/settings.json')?.result).toBe('removed');
+    expect(fs.readFileSync(file, 'utf8')).toBe(original.replace('"deny": []', '"deny": ["Bash(rm)"]'));
+  });
+
+  it('JSON on one line stays on one line; an empty object gets an indented entry', async () => {
+    const s = sandbox();
+    plant(s, { 'p:.cursor/mcp.json': '{"mcpServers":{"other":{"command":"x"}}}\n', 'p:.gemini/settings.json': '{\n  "theme": "dark",\n  "mcpServers": {}\n}\n' });
+    await ok(s, ['setup', 'cursor']);
+    await ok(s, ['setup', 'gemini']);
+    expect(snapshot(s)['p:.cursor/mcp.json']).toBe('{"mcpServers":{"other":{"command":"x"},"laneboard":{"type":"stdio","command":"laneboard","args":["mcp"]}}}\n');
+    expect(snapshot(s)['p:.gemini/settings.json']).toBe('{\n  "theme": "dark",\n  "mcpServers": {\n    "laneboard": {\n      "command": "laneboard",\n      "args": [\n        "mcp"\n      ]\n    }\n  }\n}\n');
+  });
+
+  it.each([
+    ['inline table under [mcp_servers]', '[mcp_servers]\nlaneboard = { command = "old", args = [] }\n', 2],
+    ['dotted key under [mcp_servers]', 'model = "o4"\n\n[mcp_servers]\nlaneboard.command = "old"\n', 4],
+    ['quoted key under [mcp_servers]', '[mcp_servers]\n"laneboard" = { command = "old" }\n', 2],
+    ['dotted key at the root', 'mcp_servers.laneboard.command = "old"\n', 1],
+    ['a sub-table', '[mcp_servers.laneboard.env]\nTOKEN = "x"\n', 1],
+    ['spaces and quotes in the header', "[ mcp_servers . 'laneboard' ]\ncommand = \"old\"\n", 1],
+    ['mcp_servers as an inline table', 'mcp_servers = { other = { command = "x" } }\n', 1],
+    ['mcp_servers as an array of tables', '[[mcp_servers]]\nname = "x"\n', 1],
+  ])('Codex: laneboard as %s -> SETUP_CONFLICT, nothing written', async (_name, toml, line) => {
+    const s = sandbox();
+    plant(s, { 'h:.codex/config.toml': toml });
+    const before = snapshot(s);
+    const r = await s.run(['setup', 'codex', '--json']);
+    expect(r.code).toBe(6);
+    const err = JSON.parse(r.stdout).error;
+    expect(err.code).toBe('SETUP_CONFLICT');
+    expect(err.message).toContain(`on line ${line}`);
+    expect(err.fix).toContain(`(line ${line})`);
+    expect(err.details.snippet).toContain('[mcp_servers.laneboard]');
+    expect(snapshot(s)).toEqual(before);
+  });
+
+  it('Codex: look-alikes in strings, comments, arrays and other tables are not conflicts', async () => {
+    const s = sandbox();
+    const toml = [
+      '# [mcp_servers.laneboard]',
+      'note = """',
+      '[mcp_servers.laneboard]',
+      'laneboard = 1"""',
+      "lit = '''",
+      "mcp_servers.laneboard = 2'''",
+      'args = [',
+      '  "[mcp_servers.laneboard]", # comment',
+      '  [1, 2],',
+      ']',
+      '[mcp_servers.laneboard_old]',
+      'command = "x"',
+      '[other.mcp_servers.laneboard]',
+      'command = "y"',
+      '',
+    ].join('\n');
+    plant(s, { 'h:.codex/config.toml': toml });
+    const r = await ok(s, ['setup', 'codex']);
+    expect(r.files.find((f) => f.scope === 'global')?.result).toBe('updated');
+    await ok(s, ['setup', 'codex', '--remove']);
+    expect(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8')).toBe(toml);
+  });
+
+  it('Codex: TOML laneboard cannot read (unterminated string) -> SETUP_UNPARSEABLE, nothing written', async () => {
+    const s = sandbox();
+    plant(s, { 'h:.codex/config.toml': 'model = "o4\n' });
+    const r = await s.run(['setup', 'codex', '--json']);
+    expect(r.code).toBe(6);
+    expect(JSON.parse(r.stdout).error).toMatchObject({ code: 'SETUP_UNPARSEABLE', message: '~/.codex/config.toml is not TOML laneboard can read (an unterminated string on line 1); nothing was written' });
+  });
+
+  it('Codex: CODEX_HOME moves config.toml; the output names the real path and the directory is never removed', async () => {
+    const s = sandbox();
+    const codexHome = path.join(s.home, 'codex-home');
+    const elsewhere = tempDir();
+    fs.mkdirSync(codexHome);
+    const r = await s.run(['setup', 'codex', '--json'], { CODEX_HOME: codexHome });
+    expect(JSON.parse(r.stdout).data.files[0]).toMatchObject({ path: '~/codex-home/config.toml', scope: 'global', result: 'created' });
+    expect(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8')).toContain('[mcp_servers.laneboard]');
+    expect(fs.existsSync(path.join(s.home, '.codex'))).toBe(false);
+    const out = await s.run(['setup', 'codex', '--remove', '--json'], { CODEX_HOME: codexHome });
+    expect(JSON.parse(out.stdout).data.files[0].result).toBe('deleted');
+    expect(fs.readdirSync(codexHome)).toEqual([]);
+    const abs = await s.run(['setup', 'codex', '--json', '--dry-run'], { CODEX_HOME: elsewhere });
+    expect(JSON.parse(abs.stdout).data.files[0].path).toBe(path.join(elsewhere, 'config.toml'));
+  });
+
+  it('AGENTS.md shared by codex and cursor: removing one keeps the block and says who still uses it', async () => {
+    const s = sandbox();
+    plant(s, { 'p:AGENTS.md': '# Agents\n' });
+    await ok(s, ['setup', 'codex']);
+    await ok(s, ['setup', 'cursor']);
+    const r = JSON.parse((await s.run(['setup', 'cursor', '--remove', '--json'])).stdout);
+    expect(r.data.files.find((f: { path: string }) => f.path === 'AGENTS.md')?.result).toBe('kept');
+    expect(r.warnings).toContain('kept the laneboard block in AGENTS.md: codex still uses it (laneboard setup codex --remove removes it)');
+    expect(fs.readFileSync(path.join(s.cwd, 'AGENTS.md'), 'utf8')).toContain('laneboard:start');
+    const last = await ok(s, ['setup', 'codex', '--remove']);
+    expect(last.files.find((f) => f.path === 'AGENTS.md')?.result).toBe('restored');
+    expect(fs.readFileSync(path.join(s.cwd, 'AGENTS.md'), 'utf8')).toBe('# Agents\n');
+  });
+
+  it('a read-only file -> SETUP_WRITE_FAILED before any write', async () => {
+    const s = sandbox();
+    plant(s, { 'p:CLAUDE.md': '# x\n' });
+    fs.chmodSync(path.join(s.cwd, 'CLAUDE.md'), 0o444);
+    const before = snapshot(s);
+    const r = await s.run(['setup', 'claude-code', '--json']);
+    expect(r.code).toBe(6);
+    expect(JSON.parse(r.stdout).error).toMatchObject({ code: 'SETUP_WRITE_FAILED', details: { file: 'CLAUDE.md' } });
+    expect(snapshot(s)).toEqual(before);
+  });
+
+  it('a write that fails midway (symlink into a read-only directory) puts back what was already written', async () => {
+    const s = sandbox();
+    const locked = tempDir();
+    fs.symlinkSync(path.join(locked, 'CLAUDE.md'), path.join(s.cwd, 'CLAUDE.md'));
+    fs.chmodSync(locked, 0o555);
+    try {
+      const before = snapshot(s);
+      const r = await s.run(['setup', 'claude-code', '--json']);
+      expect(r.code).toBe(6);
+      const err = JSON.parse(r.stdout).error;
+      expect(err.code).toBe('SETUP_WRITE_FAILED');
+      expect(err.message).toBe('writing CLAUDE.md failed (EACCES); the files changed before it were put back');
+      expect(snapshot(s)).toEqual(before);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
+  it('text added after the block: --remove leaves no extra blank line', async () => {
+    const s = sandbox();
+    plant(s, { 'p:CLAUDE.md': '# P\n\nUse pnpm.\n' });
+    await ok(s, ['setup', 'claude-code']);
+    fs.appendFileSync(path.join(s.cwd, 'CLAUDE.md'), '\n## Added later\n');
+    await ok(s, ['setup', 'claude-code', '--remove']);
+    expect(fs.readFileSync(path.join(s.cwd, 'CLAUDE.md'), 'utf8')).toBe('# P\n\nUse pnpm.\n\n## Added later\n');
   });
 });
