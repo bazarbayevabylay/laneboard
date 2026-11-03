@@ -1,9 +1,10 @@
 // Codex: [mcp_servers.laneboard] in the global $CODEX_HOME/config.toml, default ~/.codex/config.toml (a project file works only
-// for trusted projects), AGENTS.md block. Sources: learn.chatgpt.com/docs/extend/mcp, learn.chatgpt.com/docs/agent-configuration/agents-md.
+// for trusted projects), AGENTS.md block. The global entry cannot pin one project's store, so it forwards LANEBOARD_DIR (`env_vars`).
+// Sources: learn.chatgpt.com/docs/extend/mcp, learn.chatgpt.com/docs/agent-configuration/agents-md.
 import path from 'node:path';
 import { blockEdit, MD_MARKERS } from '../md-block.ts';
 import { tomlTableEdit } from '../toml-block.ts';
-import { instructionLines, MCP_ARGS, MCP_COMMAND } from './common.ts';
+import { CODEX_ENV_VARS, instructionLines, MCP_ARGS, MCP_COMMAND } from './common.ts';
 import type { Harness } from './common.ts';
 
 export const codex: Harness = {
@@ -12,7 +13,7 @@ export const codex: Harness = {
     {
       path: '.codex/config.toml',
       scope: 'global',
-      edit: (f) => tomlTableEdit(f, 'mcp_servers.laneboard', MCP_COMMAND, MCP_ARGS),
+      edit: (f) => tomlTableEdit(f, 'mcp_servers.laneboard', MCP_COMMAND, MCP_ARGS, [['env_vars', CODEX_ENV_VARS]]),
       moved: (c) => (c.env.CODEX_HOME ? path.join(path.resolve(c.cwd, c.env.CODEX_HOME), 'config.toml') : undefined),
     },
     { path: 'AGENTS.md', scope: 'project', edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, 'inline')) },

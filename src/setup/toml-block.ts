@@ -191,18 +191,48 @@ export function tableClash(defs: readonly TomlDef[], table: readonly string[]): 
   return undefined;
 }
 
-// `[<table>]` with command and args, inside the laneboard markers; the same table (in any form) outside them is a conflict.
-export function tomlTableEdit(file: string, table: string, command: string, args: readonly string[]): TextEdit {
-  const body = [`[${table}]`, `command = ${tomlString(command)}`, `args = [${args.map(tomlString).join(', ')}]`].join('\n');
+// Definitions inside our block that are not our table (or its keys and subtables): another table written into the block
+// (by hand or by a tool that edits config.toml) would be deleted with it, so replace and remove refuse instead.
+function foreignInside(inside: string, firstLine: number, tablePath: readonly string[], file: string): { conflict: string; fix: string } | undefined {
+  const defs = tomlDefinitions(inside);
+  const line = (d: { line: number }): number => firstLine + d.line - 2;
+  if (!Array.isArray(defs)) {
+    return { conflict: `has text laneboard cannot read inside its block (${defs.error.replace(/line (\d+)/, (_, n: string) => `line ${firstLine + Number(n) - 2}`)})`, fix: `move everything that is not laneboard's out of the block between "${TOML_MARKERS.start}" and "${TOML_MARKERS.end}" in ${file}, then run setup again` };
+  }
+  const foreign = defs.filter((d) => !startsWith(d.path, tablePath));
+  const first = foreign[0];
+  if (!first) return undefined;
+  const names = foreign.map((d) => `${d.path.join('.')} (line ${line(d)})`).join(', ');
+  return {
+    conflict: `holds ${names} inside the laneboard block, which is not laneboard's`,
+    fix: `move ${names} above the "${TOML_MARKERS.start}" line in ${file}, then run setup again`,
+  };
+}
+
+// `[<table>]` with command, args and extra keys, inside the laneboard markers; the same table (in any form) outside them is a conflict,
+// and anything else inside them is never replaced or removed.
+export function tomlTableEdit(file: string, table: string, command: string, args: readonly string[], extra: ReadonlyArray<[string, readonly string[]]> = []): TextEdit {
+  const body = [
+    `[${table}]`,
+    `command = ${tomlString(command)}`,
+    `args = [${args.map(tomlString).join(', ')}]`,
+    ...extra.map(([key, values]) => `${key} = [${values.map(tomlString).join(', ')}]`),
+  ].join('\n');
   const tablePath = table.split('.');
-  return blockEdit(file, TOML_MARKERS, body, (outside) => {
-    const defs = tomlDefinitions(outside);
-    if (!Array.isArray(defs)) return { unparseable: `is not TOML laneboard can read (${defs.error})` };
-    const clash = tableClash(defs, tablePath);
-    if (!clash) return undefined;
-    return {
-      conflict: clash.why,
-      fix: `delete that ${table} entry (line ${clash.line}) from ${file} and run setup again (laneboard writes its own in a marked block), or keep yours and skip setup for Codex`,
-    };
-  });
+  return blockEdit(
+    file,
+    TOML_MARKERS,
+    body,
+    (outside) => {
+      const defs = tomlDefinitions(outside);
+      if (!Array.isArray(defs)) return { unparseable: `is not TOML laneboard can read (${defs.error})` };
+      const clash = tableClash(defs, tablePath);
+      if (!clash) return undefined;
+      return {
+        conflict: clash.why,
+        fix: `delete that ${table} entry (line ${clash.line}) from ${file} and run setup again (laneboard writes its own in a marked block), or keep yours and skip setup for Codex`,
+      };
+    },
+    (inside, firstLine) => foreignInside(inside, firstLine, tablePath, file),
+  );
 }

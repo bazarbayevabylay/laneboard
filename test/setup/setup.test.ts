@@ -133,11 +133,12 @@ describe('setup details', () => {
     const s = sandbox();
     for (const h of HARNESS_NAMES) await ok(s, ['setup', h]);
     const read = (rel: string): unknown => JSON.parse(fs.readFileSync(path.join(s.cwd, rel), 'utf8'));
-    expect(read('.mcp.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp'] } } });
-    expect(read('.cursor/mcp.json')).toEqual({ mcpServers: { laneboard: { type: 'stdio', command: 'laneboard', args: ['mcp'] } } });
-    expect(read('.gemini/settings.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp'] } } });
-    expect(read('opencode.json')).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp'], enabled: true } } });
     const store = path.join(s.cwd, '.laneboard');
+    // Claude Code pins the store through env LANEBOARD_DIR (below); the other project MCP entries carry --dir.
+    expect(read('.mcp.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp'] } } });
+    expect(read('.cursor/mcp.json')).toEqual({ mcpServers: { laneboard: { type: 'stdio', command: 'laneboard', args: ['mcp', '--dir', store] } } });
+    expect(read('.gemini/settings.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp', '--dir', store] } } });
+    expect(read('opencode.json')).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp', '--dir', store], enabled: true } } });
     expect(read('.claude/settings.json')).toEqual({
       hooks: {
         SessionStart: [
@@ -150,7 +151,9 @@ describe('setup details', () => {
       },
       env: { LANEBOARD_DIR: store },
     });
-    expect(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8')).toBe('# laneboard:start\n[mcp_servers.laneboard]\ncommand = "laneboard"\nargs = ["mcp"]\n# laneboard:end\n');
+    expect(fs.readFileSync(path.join(s.home, '.codex', 'config.toml'), 'utf8')).toBe(
+      '# laneboard:start\n[mcp_servers.laneboard]\ncommand = "laneboard"\nargs = ["mcp"]\nenv_vars = ["LANEBOARD_DIR"]\n# laneboard:end\n',
+    );
     const agents = fs.readFileSync(path.join(s.cwd, 'AGENTS.md'), 'utf8');
     const lines = agents.split('\n').slice(1, -2);
     expect(lines).toHaveLength(3);
@@ -206,7 +209,7 @@ describe('setup details', () => {
 
   it('a file that already has the same entry (other formatting) is unchanged: no rewrite, no backup', async () => {
     const s = sandbox();
-    plant(s, { 'p:.gemini/settings.json': '{"theme":"dark","mcpServers":{"laneboard":{"args":["mcp"],"command":"laneboard"}}}' });
+    plant(s, { 'p:.gemini/settings.json': `{"theme":"dark","mcpServers":{"laneboard":{"args":["mcp","--dir",${JSON.stringify(path.join(s.cwd, '.laneboard'))}],"command":"laneboard"}}}` });
     const before = snapshot(s);
     const r = await ok(s, ['setup', 'gemini']);
     expect(r.files.find((f) => f.path === '.gemini/settings.json')?.result).toBe('unchanged');
@@ -234,7 +237,7 @@ describe('setup details', () => {
     plant(s, { 'p:opencode.json': original });
     await ok(s, ['setup', 'opencode']);
     const text = snapshot(s)['p:opencode.json'];
-    expect(text).toBe('{\n  // my config\n  "model": "x",\n  "mcp": {\n    "laneboard": {\n      "type": "local",\n      "command": [\n        "laneboard",\n        "mcp"\n      ],\n      "enabled": true\n    }\n  }, // trailing note\n}\n');
+    expect(text).toBe(`{\n  // my config\n  "model": "x",\n  "mcp": {\n    "laneboard": {\n      "type": "local",\n      "command": [\n        "laneboard",\n        "mcp",\n        "--dir",\n        ${JSON.stringify(path.join(s.cwd, '.laneboard'))}\n      ],\n      "enabled": true\n    }\n  }, // trailing note\n}\n`);
     await ok(s, ['setup', 'opencode', '--remove']);
     expect(snapshot(s)['p:opencode.json']).toBe(original);
   });
@@ -248,7 +251,7 @@ describe('setup details', () => {
       expect(r.code, bad).toBe(6);
       const err = JSON.parse(r.stdout).error;
       expect(err).toMatchObject({ code: 'SETUP_UNPARSEABLE', details: { file: 'opencode.json' } });
-      expect(JSON.parse(err.details.snippet)).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp'], enabled: true } } });
+      expect(JSON.parse(err.details.snippet)).toEqual({ mcp: { laneboard: { type: 'local', command: ['laneboard', 'mcp', '--dir', path.join(s.cwd, '.laneboard')], enabled: true } } });
       expect(snapshot(s)).toEqual(before);
     }
   });
@@ -368,7 +371,8 @@ describe('setup backups and exact edits', () => {
     expect(data.warnings).toContain('kept .mcp.json.laneboard.bak (your file before setup; not restored because the file changed since): delete it when not needed');
   });
 
-  it.each([0o600, 0o640])('the backup keeps the mode of the original (%o)', async (mode) => {
+  // 0664 is wider than the 022 umask allows at creation, so only an explicit chmod gives the backup the original's mode.
+  it.each([0o600, 0o640, 0o664])('the backup keeps the mode of the original (%o)', async (mode) => {
     const s = sandbox();
     plant(s, { 'h:.codex/config.toml': 'model = "o4"\n[mcp_servers.gh]\nenv = { TOKEN = "secret" }\n' });
     const file = path.join(s.home, '.codex', 'config.toml');
@@ -412,8 +416,11 @@ describe('setup backups and exact edits', () => {
     plant(s, { 'p:.cursor/mcp.json': '{"mcpServers":{"other":{"command":"x"}}}\n', 'p:.gemini/settings.json': '{\n  "theme": "dark",\n  "mcpServers": {}\n}\n' });
     await ok(s, ['setup', 'cursor']);
     await ok(s, ['setup', 'gemini']);
-    expect(snapshot(s)['p:.cursor/mcp.json']).toBe('{"mcpServers":{"other":{"command":"x"},"laneboard":{"type":"stdio","command":"laneboard","args":["mcp"]}}}\n');
-    expect(snapshot(s)['p:.gemini/settings.json']).toBe('{\n  "theme": "dark",\n  "mcpServers": {\n    "laneboard": {\n      "command": "laneboard",\n      "args": [\n        "mcp"\n      ]\n    }\n  }\n}\n');
+    const store = JSON.stringify(path.join(s.cwd, '.laneboard'));
+    expect(snapshot(s)['p:.cursor/mcp.json']).toBe(`{"mcpServers":{"other":{"command":"x"},"laneboard":{"type":"stdio","command":"laneboard","args":["mcp","--dir",${store}]}}}\n`);
+    expect(snapshot(s)['p:.gemini/settings.json']).toBe(
+      `{\n  "theme": "dark",\n  "mcpServers": {\n    "laneboard": {\n      "command": "laneboard",\n      "args": [\n        "mcp",\n        "--dir",\n        ${store}\n      ]\n    }\n  }\n}\n`,
+    );
   });
 
   it.each([
@@ -539,5 +546,57 @@ describe('setup backups and exact edits', () => {
     fs.appendFileSync(path.join(s.cwd, 'CLAUDE.md'), '\n## Added later\n');
     await ok(s, ['setup', 'claude-code', '--remove']);
     expect(fs.readFileSync(path.join(s.cwd, 'CLAUDE.md'), 'utf8')).toBe('# P\n\nUse pnpm.\n\n## Added later\n');
+  });
+});
+
+describe("setup --remove never deletes what is not laneboard's", () => {
+  it('a directory the user had before setup stays after --remove, even when it is empty again', async () => {
+    const s = sandbox();
+    fs.mkdirSync(path.join(s.cwd, '.cursor'));
+    const store = path.join(s.cwd, '.laneboard');
+    plant(s, { 'p:.cursor/mcp.json': `{"mcpServers":{"laneboard":{"type":"stdio","command":"laneboard","args":["mcp","--dir",${JSON.stringify(store)}]}}}\n` });
+    await ok(s, ['setup', 'cursor']);
+    const removed = await ok(s, ['setup', 'cursor', '--remove']);
+    expect(removed.files.find((f) => f.path === '.cursor/mcp.json')?.result).toBe('deleted');
+    expect(fs.existsSync(path.join(s.cwd, '.cursor'))).toBe(true);
+    expect(fs.readdirSync(path.join(s.cwd, '.cursor'))).toEqual([]);
+  });
+
+  it('a directory setup created is marked; --remove deletes it only when nothing else is in it', async () => {
+    const s = sandbox();
+    await ok(s, ['setup', 'gemini']);
+    expect(fs.readdirSync(path.join(s.cwd, '.gemini')).sort()).toEqual(['.laneboard-created', 'settings.json']);
+    fs.mkdirSync(path.join(s.cwd, '.gemini', 'commands'));
+    await ok(s, ['setup', 'gemini', '--remove']);
+    expect(fs.readdirSync(path.join(s.cwd, '.gemini'))).toEqual(['commands']);
+  });
+
+  it('Codex: a foreign table written inside the laneboard block -> SETUP_CONFLICT on --remove and on setup, nothing written', async () => {
+    const s = sandbox();
+    await ok(s, ['setup', 'codex']);
+    const file = path.join(s.home, '.codex', 'config.toml');
+    const text = fs.readFileSync(file, 'utf8').replace('# laneboard:end', '[mcp_servers.mine]\ncommand = "mine"\n# laneboard:end');
+    fs.writeFileSync(file, text);
+    for (const argv of [['setup', 'codex', '--remove', '--json'], ['setup', 'codex', '--json']]) {
+      const before = snapshot(s);
+      const r = await s.run(argv);
+      expect(r.code, argv.join(' ')).toBe(6);
+      const err = JSON.parse(r.stdout).error;
+      expect(err.code).toBe('SETUP_CONFLICT');
+      expect(err.message).toBe("~/.codex/config.toml holds mcp_servers.mine (line 6), mcp_servers.mine.command (line 7) inside the laneboard block, which is not laneboard's; nothing was written");
+      expect(err.fix).toBe('move mcp_servers.mine (line 6), mcp_servers.mine.command (line 7) above the "# laneboard:start" line in ~/.codex/config.toml, then run setup again');
+      expect(snapshot(s)).toEqual(before);
+    }
+  });
+
+  it('Codex: our own table edited inside the block (other args, a sub-table) is still ours: --remove takes it out', async () => {
+    const s = sandbox();
+    plant(s, { 'h:.codex/config.toml': 'model = "o4"\n' });
+    await ok(s, ['setup', 'codex']);
+    const file = path.join(s.home, '.codex', 'config.toml');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('# laneboard:end', '[mcp_servers.laneboard.env]\nX = "1"\n# laneboard:end').replace('args = ["mcp"]', 'args = ["mcp", "--dir", "/x"]'));
+    const removed = await ok(s, ['setup', 'codex', '--remove']);
+    expect(removed.files[0]?.result).toBe('restored');
+    expect(fs.readFileSync(file, 'utf8')).toBe('model = "o4"\n');
   });
 });

@@ -4,6 +4,16 @@ import type { TextEdit } from '../files.ts';
 export const MCP_COMMAND = 'laneboard';
 export const MCP_ARGS = ['mcp'] as const;
 
+// MCP args pinned to the project's store, for harnesses whose MCP entry lives in a project file (cursor, gemini, opencode):
+// the server then never discovers a store from wherever the harness starts it.
+export function pinnedMcpArgs(storeDir: string): string[] {
+  return [...MCP_ARGS, '--dir', storeDir];
+}
+
+// Environment variables the global Codex entry forwards to the server (`env_vars`): a global file cannot name one project's store,
+// but a LANEBOARD_DIR exported for the session (as the AGENTS.md block says) then reaches the MCP server too.
+export const CODEX_ENV_VARS = ['LANEBOARD_DIR'] as const;
+
 // SessionStart hook command (Claude Code): prints the rules and the agent's tasks; a hint when the CLI is missing.
 export const PRIME_HOOK_COMMAND = "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'";
 

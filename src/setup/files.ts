@@ -123,6 +123,18 @@ export function planKeep(file: string, shown: string, scope: PlannedFile['scope'
   return { file, shown, scope, result: 'kept', before: readText(file) };
 }
 
+// Marker file setup writes into a directory it created for a harness file (.cursor/, .gemini/, .claude/, ~/.codex/).
+export const CREATED_DIR_MARKER = '.laneboard-created';
+const CREATED_DIR_TEXT = 'laneboard setup created this directory; laneboard setup <harness> --remove deletes it again when nothing else is in it.\n';
+
+// After our file was deleted: delete its directory only if setup created it (marker) and nothing else is in it; drop the marker either way.
+function dropCreatedDir(dir: string, roots: readonly string[]): void {
+  const marker = path.join(dir, CREATED_DIR_MARKER);
+  if (roots.includes(dir) || !fs.existsSync(marker)) return;
+  fs.unlinkSync(marker);
+  if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+}
+
 // Put a file back to `text` (null: it did not exist); `created` is the first directory this run made for it.
 function putBack(file: string, text: string | null, created?: string): void {
   if (readText(file) === text) return;
@@ -136,7 +148,7 @@ function putBack(file: string, text: string | null, created?: string): void {
 }
 
 // Write a plan: backups first (with the original's mode), then files; a deleted file also takes its now-empty directory
-// (not a root). When a write fails, everything this run changed is put back and one SETUP_WRITE_FAILED reports it.
+// when setup created it (marker), never a directory the user had, never a root. When a write fails, everything this run changed is put back and one SETUP_WRITE_FAILED reports it.
 export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]): void {
   // Undo steps, each with the file it puts back.
   const undo: Array<{ shown: string; run: () => void }> = [];
@@ -158,12 +170,14 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
       if (p.write === null) {
         undo.push({ shown: p.shown, run: () => putBack(p.file, p.before) });
         fs.unlinkSync(p.file);
-        const dir = path.dirname(p.file);
-        if (!roots.includes(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+        dropCreatedDir(path.dirname(p.file), roots);
         continue;
       }
-      const created = fs.mkdirSync(path.dirname(p.file), { recursive: true });
+      const dir = path.dirname(p.file);
+      const created = fs.mkdirSync(dir, { recursive: true });
       undo.push({ shown: p.shown, run: () => putBack(p.file, p.before, created) });
+      // Remember that this directory is ours, so --remove may delete it later (a directory the user had is never deleted).
+      if (created !== undefined && !roots.includes(dir)) fs.writeFileSync(path.join(dir, CREATED_DIR_MARKER), CREATED_DIR_TEXT);
       fs.writeFileSync(p.file, p.write);
       if (p.dropBackup) {
         const bak = backupOf(p.file);
