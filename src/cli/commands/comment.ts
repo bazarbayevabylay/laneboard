@@ -13,7 +13,9 @@ export const comment: CommandDef = {
   async run(c) {
     const file = str(c.values, 'file');
     const inline = c.positionals[1];
-    if ((file === undefined) === (inline === undefined)) throw new LaneboardError('USAGE', 'pass the comment text or --file, exactly one');
+    if ((file === undefined) === (inline === undefined)) {
+      throw new LaneboardError('USAGE', 'pass the comment text or --file, exactly one', { edit: file === undefined ? { args: ['<text>'] } : { drop: [{ name: 'file' }] } });
+    }
     const text = file !== undefined ? readTextFile(c.io, file, 'file') : (inline ?? '');
     const r = await commentTask(c.op(), { id: c.positionals[0] ?? '', text });
     return taskReply(c, r, 'commented');

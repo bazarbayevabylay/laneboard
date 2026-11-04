@@ -1,6 +1,6 @@
 // laneboard update
-import { LaneboardError, parseLinkArg, updateTask } from '../../core/index.ts';
-import { description, flag, int, list, str } from './args.ts';
+import { parseLinkArg, updateTask } from '../../core/index.ts';
+import { description, exclusive, flag, int, list, str } from './args.ts';
 import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
@@ -27,10 +27,10 @@ export const update: CommandDef = {
     ...FULL_OPTION,
   },
   args: { min: 1, max: 1 },
+  // Op parameters named in fixes (a label both added and removed drops its --remove-label).
+  flags: { add_labels: '--add-label', remove_labels: '--remove-label', add_links: '--add-link', remove_links: '--remove-link', unset_fields: '--unset-field', expected_rev: '--expected-rev' },
   async run(c) {
-    if (str(c.values, 'assignee') !== undefined && flag(c.values, 'unassign')) {
-      throw new LaneboardError('USAGE', '--assignee and --unassign cannot be combined');
-    }
+    exclusive(c.values, 'assignee', 'unassign');
     const r = await updateTask(c.op(), {
       id: c.positionals[0] ?? '',
       title: str(c.values, 'title'),

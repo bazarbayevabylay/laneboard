@@ -67,14 +67,16 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
   const actor = requireActor(ctx.actor);
   const p = parseInput(UpdateInput, input);
   if (!CHANGE_KEYS.some((k) => p[k] !== undefined)) {
-    throw new LaneboardError('USAGE', 'nothing to change: pass at least one of title, description, status, assignee, labels, links, fields');
+    throw new LaneboardError('USAGE', 'nothing to change: pass at least one of title, description, status, assignee, labels, links, fields', {
+      edit: { add: [{ name: 'status', value: '<status>' }] },
+    });
   }
   if (typeof p.assignee === 'string') checkActor(p.assignee, 'assignee');
   const addLabels = unique(p.add_labels ?? []);
   const removeLabels = unique(p.remove_labels ?? []);
   [...addLabels, ...removeLabels].forEach(checkLabel);
   const both = addLabels.find((l) => removeLabels.includes(l));
-  if (both) throw new LaneboardError('USAGE', `label "${both}" is both added and removed`);
+  if (both) throw new LaneboardError('USAGE', `label "${both}" is both added and removed`, { edit: { drop: [{ name: 'remove_labels', value: both }] } });
   const addLinks = unique(p.add_links ?? [], linkKey);
   const removeKeys = new Set((p.remove_links ?? []).map(linkKey));
   const warnings: string[] = [];
@@ -88,7 +90,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       checkFields(s.config, setFields);
       const unset = unique(p.unset_fields ?? []);
       const clash = unset.find((k) => Object.hasOwn(setFields, k));
-      if (clash) throw new LaneboardError('USAGE', `field "${clash}" is both set and unset`);
+      if (clash) throw new LaneboardError('USAGE', `field "${clash}" is both set and unset`, { edit: { drop: [{ name: 'unset_fields', value: clash }] } });
       const task = requireActiveTask(s, id);
       checkExpectedRev(task, false, p.expected_rev);
       checkTaskLinks(addLinks, [s.active, s.archive], s.config.prefix);

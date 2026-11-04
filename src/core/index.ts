@@ -1,6 +1,6 @@
 // Public API of laneboard core: the only module facades (CLI, MCP, board, import) import (C2).
 export { ERRORS, ERROR_CODES, LaneboardError, toErrorObject, toLaneboardError } from './errors.ts';
-export type { BadInput, ErrorCode, ErrorObject, ErrorSpec } from './errors.ts';
+export type { BadInput, ErrorCode, ErrorObject, ErrorSpec, FixEdit } from './errors.ts';
 export { ACTOR_RE, ACTOR_SOURCES, CONFIG_SCHEMA, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
 export type { ConfigT, FieldType, LinkKind, LinkT, Scope, TaskEventT, TaskT } from './schema.ts';
 export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MARKERS, resolveStore, samePath, separateProjectMarker, STORE_DIR_NAME } from './store.ts';

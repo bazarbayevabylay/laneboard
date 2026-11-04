@@ -1,5 +1,6 @@
 // Op: create a task (task_create).
 import { z } from 'zod';
+import { loadConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
 import type { TaskT } from '../schema.ts';
 import { shellQuote } from '../shell.ts';
@@ -40,9 +41,21 @@ export const CreateInput = z.strictObject({
 });
 export type CreateInputT = z.infer<typeof CreateInput>;
 
+// No status given: the status stays an explicit choice (ADR-0001 §0 "no magic defaults", §23); the fix names the first configured one.
+function statusRequired(storeDir: string): LaneboardError {
+  const statuses = loadConfig(storeDir).statuses;
+  const first = statuses[0] ?? '<status>';
+  return new LaneboardError('USAGE', 'status is required', {
+    allowed: [...statuses],
+    fix: `pass status ${first} (the first status: where new work starts), or another status from \`allowed\``,
+    edit: { add: [{ name: 'status', value: first }] },
+  });
+}
+
 // Create a task with the next id; the only event is `created`.
 export async function createTask(ctx: OpContext, input: CreateInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
+  if ((input as { status?: unknown }).status === undefined) throw statusRequired(ctx.store.dir);
   const p = parseInput(CreateInput, input);
   if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
   const labels = unique(p.labels ?? []);

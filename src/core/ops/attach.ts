@@ -126,8 +126,10 @@ function readSource(file: string, real: string, limit: number): Buffer {
 export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(AttachInput, input);
-  if ((p.path === undefined) === (p.remove === undefined)) throw new LaneboardError('USAGE', 'pass either path (to attach) or remove (to detach)');
-  if (p.remove !== undefined && p.name !== undefined) throw new LaneboardError('USAGE', 'name is only used when attaching');
+  if ((p.path === undefined) === (p.remove === undefined)) {
+    throw new LaneboardError('USAGE', 'pass either path (to attach) or remove (to detach)', { edit: p.path === undefined ? { args: ['<path>'] } : { drop: [{ name: 'remove' }] } });
+  }
+  if (p.remove !== undefined && p.name !== undefined) throw new LaneboardError('USAGE', 'name is only used when attaching', { edit: { drop: [{ name: 'name' }] } });
   const warnings: string[] = [];
   const opts = txOptions(ctx, warnings);
   const storeDir = ctx.store.dir;

@@ -5,11 +5,11 @@ exit 2
 
 --- stderr
 error USAGE: --confirm is required
-  fix: laneboard delete <id> --confirm <id> [--expected-rev N]
+  fix: laneboard delete LB-1 --as a --confirm <id>
 
 $ laneboard delete LB-1 --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"USAGE","message":"--confirm is required","fix":"laneboard delete <id> --confirm <id> [--expected-rev N]"}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"USAGE","message":"--confirm is required","fix":"laneboard delete LB-1 --as a --json --confirm <id>"}}
 --- stderr
 

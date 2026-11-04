@@ -74,11 +74,24 @@ export interface BadInput {
   format?: string;
 }
 
+// How a facade turns the caller's own command into the fix: what to add to it or drop from it (CLI; MCP keeps `fix`).
+export interface FixEdit {
+  // Options to add, by op parameter name (`status`, `updated_before`), each with a concrete value or a `<placeholder>`.
+  add?: Array<{ name: string; value: string }>;
+  // Positional arguments to add at the end, like `<id>`.
+  args?: string[];
+  // Options to drop, by op parameter name: every occurrence, or only the one with this value.
+  drop?: Array<{ name: string; value?: string }>;
+  // An environment assignment put before the command, like `HOME=<your home directory>`.
+  env?: string;
+}
+
 export interface ErrorExtra {
   fix?: string;
   allowed?: string[];
   details?: Record<string, unknown>;
   input?: BadInput;
+  edit?: FixEdit;
 }
 
 // Plain error object as it appears in JSON envelopes.
@@ -97,6 +110,7 @@ export class LaneboardError extends Error {
   readonly allowed?: string[];
   readonly details?: Record<string, unknown>;
   readonly input?: BadInput;
+  readonly edit?: FixEdit;
 
   // Build an error; fix defaults to the registry fix for the code.
   constructor(code: ErrorCode, message: string, extra: ErrorExtra = {}) {
@@ -107,6 +121,7 @@ export class LaneboardError extends Error {
     if (extra.allowed) this.allowed = extra.allowed;
     if (extra.details) this.details = extra.details;
     if (extra.input) this.input = extra.input;
+    if (extra.edit) this.edit = extra.edit;
   }
 }
 

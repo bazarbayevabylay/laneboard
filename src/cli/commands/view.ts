@@ -101,7 +101,7 @@ export const view: CommandDef = {
   readOnly: true,
   async run(c) {
     const watch = flag(c.values, 'watch');
-    if (watch && c.values.json === true) throw new LaneboardError('USAGE', '--watch redraws the board for people; it cannot be combined with --json');
+    if (watch && c.values.json === true) throw new LaneboardError('USAGE', '--watch redraws the board for people; it cannot be combined with --json', { edit: { drop: [{ name: 'watch' }] } });
     const input: ViewInputT = { assignee: str(c.values, 'assignee'), labels: many(c.values, 'label'), text: str(c.values, 'text') };
     const filters = [
       ...(input.assignee ? [`assignee=${input.assignee}`] : []),

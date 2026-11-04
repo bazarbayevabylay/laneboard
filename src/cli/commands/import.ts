@@ -18,7 +18,9 @@ function pairs(values: Values, option: string): Map<string, string> {
     const from = raw.slice(0, eq);
     const to = raw.slice(eq + 1);
     const before = out.get(from);
-    if (before !== undefined && before !== to) throw new LaneboardError('USAGE', `--${option} maps "${from}" twice (${before}, ${to}); pass it once`);
+    if (before !== undefined && before !== to) {
+      throw new LaneboardError('USAGE', `--${option} maps "${from}" twice (${before}, ${to}); pass it once`, { edit: { drop: [{ name: option, value: raw }] } });
+    }
     out.set(from, to);
   }
   return out;
@@ -53,10 +55,14 @@ export const importCommand: CommandDef = {
       throw new LaneboardError('INVALID_VALUE', `unknown import format "${format}"`, { allowed: [...IMPORT_FORMATS], input: { field: 'format', value: format }, fix: 'use a format from `allowed`' });
     }
     const statusKey = str(c.values, 'status-key');
-    if (statusKey === undefined) throw new LaneboardError('USAGE', '--status-key is required (the source key that holds the status)');
+    if (statusKey === undefined) {
+      throw new LaneboardError('USAGE', '--status-key is required (the source key that holds the status)', { edit: { add: [{ name: 'status-key', value: '<source key of the status>' }] } });
+    }
     if (format === 'markdown') {
       for (const option of ['description-key', 'history-key']) {
-        if (c.values[option] !== undefined) throw new LaneboardError('USAGE', `--${option} is only for json (markdown: the body is the description)`);
+        if (c.values[option] !== undefined) {
+          throw new LaneboardError('USAGE', `--${option} is only for json (markdown: the body is the description)`, { edit: { drop: [{ name: option }] } });
+        }
       }
     }
     const dryRun = flag(c.values, 'dry-run');

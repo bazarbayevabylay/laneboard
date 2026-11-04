@@ -13,7 +13,10 @@ export const boards: CommandDef = {
   args: { min: 0, max: 0 },
   async run(c) {
     const home = c.io.env.HOME;
-    if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so the board registry (~/.laneboard/boards.json) cannot be found', { fix: 'export HOME=<your home directory> and run laneboard boards again' });
+    if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so the board registry (~/.laneboard/boards.json) cannot be found', {
+        fix: 'export HOME=<your home directory> and run laneboard boards again',
+        edit: { env: 'HOME=<your home directory>' },
+      });
     const r = await listBoards(home);
     return { ...r, human: boardsText(r.data) };
   },

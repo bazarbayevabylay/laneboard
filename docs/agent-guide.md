@@ -172,7 +172,8 @@ With `--json` stdout holds exactly one JSON document, also on errors; stderr sta
 | Success | `{"ok": true, "store": "/abs/.laneboard", "prefix": "DEMO", "data": {...}, "warnings": []}` |
 | Error | `{"ok": false, "store": ..., "prefix": ..., "error": {"code", "message", "fix", "allowed"?, "details"?}}` |
 
-Every error has a `fix`: run it or adapt it. On `UNKNOWN_*` copy a value from `allowed`.
+Every error has a `fix`: one command, run it or adapt it (fill in `<placeholders>`). On `UNKNOWN_*` copy a value from `allowed`.
+`create` has no default status: without `--status` it fails with `USAGE`, and the fix is your command with the first configured status.
 
 ```sh
 laneboard update DEMO-2 --status doing --json  # exit 2

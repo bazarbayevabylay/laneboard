@@ -129,7 +129,10 @@ function planWarnings(plan: readonly PlannedFile[], users: ReadonlyMap<string, s
 export function runSetup(input: SetupInput): { data: SetupResult; warnings: string[]; registered: boolean } {
   const harness = findHarness(input.harness);
   const home = input.env.HOME;
-  if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so global harness files cannot be found', { fix: 'export HOME=<your home directory> and run setup again' });
+  if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so global harness files cannot be found', {
+    fix: 'export HOME=<your home directory> and run setup again',
+    edit: { env: 'HOME=<your home directory>' },
+  });
   const cwd = path.resolve(input.cwd);
   const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir) };
   const roots = [cwd, home];

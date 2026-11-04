@@ -1,5 +1,6 @@
 // Argv checks around node:util.parseArgs: `--` handling, text that starts with "-", repeated options, and fixes rebuilt from argv.
 import { LaneboardError, suggestClosest } from '../core/index.ts';
+import type { FixEdit } from '../core/index.ts';
 import type { OptionSpec } from './commands/types.ts';
 import { commandLine } from './format.ts';
 
@@ -19,11 +20,11 @@ interface SplitArgv {
 }
 
 // Spec of a known option token (`--name`, `--name=value` or a short `-x`), or undefined.
-function optionOf(token: string, options: OptionSpec): { inline: boolean; takesValue: boolean } | undefined {
+function optionOf(token: string, options: OptionSpec): { name: string; inline: boolean; takesValue: boolean } | undefined {
   const long = /^--([^=]+)(=.*)?$/s.exec(token);
   const name = long ? long[1] : Object.keys(options).find((o) => token.length === 2 && options[o]?.short === token[1]);
   if (name === undefined || !Object.hasOwn(options, name)) return undefined;
-  return { inline: long?.[2] !== undefined, takesValue: options[name]?.type === 'string' };
+  return { name, inline: long?.[2] !== undefined, takesValue: options[name]?.type === 'string' };
 }
 
 // Split argv after the command into options and positionals by the option spec (no validation).
@@ -84,6 +85,14 @@ export function parseError(err: unknown, command: string, args: readonly string[
     });
   }
   const flag = /^--[^ ]+/.exec(quoted)?.[0];
+  // `--json=1`: a flag that takes no value; the fix keeps the flag alone (once).
+  const glued = flag === undefined ? -1 : args.findIndex((t) => t.startsWith(`${flag}=`));
+  if (e.code === 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE' && flag !== undefined && glued >= 0 && message.includes('does not take an argument')) {
+    const out = [...args];
+    if (args.includes(flag)) out.splice(glued, 1);
+    else out[glued] = flag;
+    return new LaneboardError('USAGE', `${flag} takes no value`, { fix: commandLine([command, ...out]) });
+  }
   const at = flag === undefined ? -1 : args.findIndex((t, i) => t === flag && i < (args.includes('--') ? args.indexOf('--') : args.length));
   if (e.code === 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE' && flag !== undefined && at >= 0) {
     const next = args[at + 1];
@@ -97,6 +106,81 @@ export function parseError(err: unknown, command: string, args: readonly string[
     return new LaneboardError('USAGE', `the value of ${flag} starts with "-"; pass it as ${flag}=<value>`, { fix: commandLine([command, ...out]) });
   }
   return new LaneboardError('USAGE', message.split('\n')[0] ?? message);
+}
+
+// CLI option name of an op parameter: the command's own map (`confirm_id` -> `confirm`), else snake_case as kebab-case.
+function optionName(name: string, flags: Readonly<Record<string, string>> | undefined): string {
+  return (flags?.[name] ?? `--${name.replace(/_/g, '-')}`).replace(/^--/, '');
+}
+
+// Is this token a `<placeholder>` the user fills in (printed unquoted)?
+function isPlaceholder(token: string): boolean {
+  return /^<[^<>]+>$/.test(token) || /^--[^=]+=<[^<>]+>$/.test(token);
+}
+
+// The user's own command changed by a FixEdit: options dropped, options and arguments added; a runnable fix, or one with `<placeholders>`.
+export function editedCommand(argv: readonly string[], edit: FixEdit, options: OptionSpec, flags?: Readonly<Record<string, string>>): string {
+  const [command = '', ...args] = argv;
+  const drop = (edit.drop ?? []).map((d) => ({ option: optionName(d.name, flags), value: d.value }));
+  const end = args.indexOf('--');
+  const kept: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i] ?? '';
+    const spec = end >= 0 && i >= end ? undefined : optionOf(token, options);
+    if (!spec) {
+      kept.push(token);
+      continue;
+    }
+    const hasNext = spec.takesValue && !spec.inline && i + 1 < args.length;
+    const value = spec.inline ? token.slice(token.indexOf('=') + 1) : hasNext ? args[i + 1] : undefined;
+    if (drop.some((d) => d.option === spec.name && (d.value === undefined || d.value === value))) {
+      if (hasNext) i++;
+      continue;
+    }
+    kept.push(token);
+    if (hasNext) kept.push(args[++i] ?? '');
+  }
+  const extra = (edit.add ?? []).flatMap((a) => [`--${optionName(a.name, flags)}`, a.value]);
+  const at = kept.indexOf('--');
+  const withAdded = at < 0 ? [...kept, ...extra] : [...kept.slice(0, at), ...extra, ...kept.slice(at)];
+  const out = [command, ...withAdded, ...(edit.args ?? [])];
+  const line = commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !argv.includes(t) ? [i] : []))));
+  return edit.env === undefined ? line : `${edit.env} ${line}`;
+}
+
+// Positional names of a usage line, like `<id>`, `<text>` (`comment <id> (<text> | --file P|-)`); the first form only.
+function usageArgs(usage: string): string[] {
+  const first = usage.split('  |  ')[0] ?? usage;
+  return first
+    .split(' ')
+    .slice(1)
+    .map((t) => t.replace(/^\(/, '').replace(/\.\.\.$/, ''))
+    .filter((t) => /^<[^<>]+>$/.test(t));
+}
+
+interface PositionalToken {
+  kind: string;
+  index: number;
+}
+
+// A wrong number of arguments: the missing ones as placeholders at the end, or the extra words joined into the text (title, text) or dropped.
+export function argumentsFix(command: string, args: readonly string[], tokens: readonly PositionalToken[], usage: string, count: { min: number; max: number }): string {
+  const names = usageArgs(usage);
+  const at = tokens.filter((t) => t.kind === 'positional').map((t) => t.index);
+  if (at.length < count.min) {
+    const missing = names.slice(at.length, count.min);
+    const out = [command, ...args, ...missing];
+    return commandLine(out, new Set(missing.map((_, i) => args.length + 1 + i)));
+  }
+  // Extra words: an unquoted title or text (`create Fix login --status todo`) becomes one argument; anything else is dropped.
+  const extra = at.slice(count.max);
+  const joinsText = ['<title>', '<text>'].includes(names[count.max - 1] ?? '');
+  const out = [...args];
+  if (joinsText) {
+    const first = at[count.max - 1] ?? 0;
+    out[first] = [first, ...extra].map((i) => args[i]).join(' ');
+  }
+  return commandLine([command, ...out.filter((_, i) => !extra.includes(i))]);
 }
 
 interface OptionToken {

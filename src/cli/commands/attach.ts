@@ -14,7 +14,9 @@ export const attach: CommandDef = {
   async run(c) {
     const source = c.positionals[1];
     const remove = str(c.values, 'remove');
-    if ((source === undefined) === (remove === undefined)) throw new LaneboardError('USAGE', 'pass a file path, or --remove <name>, exactly one');
+    if ((source === undefined) === (remove === undefined)) {
+      throw new LaneboardError('USAGE', 'pass a file path, or --remove <name>, exactly one', { edit: source === undefined ? { args: ['<path>'] } : { drop: [{ name: 'remove' }] } });
+    }
     const r = await attachFile(c.op(), {
       id: c.positionals[0] ?? '',
       path: source === undefined ? undefined : path.resolve(c.io.cwd, source),

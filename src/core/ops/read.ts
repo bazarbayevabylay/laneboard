@@ -105,7 +105,7 @@ function taskMatches(task: TaskT, f: { status?: string[]; assignee?: string; una
 // List tasks with filters; the envelope always states scope, limit, offset and total.
 export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpResult<ListResult>> {
   const p = parseInput(ListInput, input);
-  if (p.assignee !== undefined && p.unassigned) throw new LaneboardError('USAGE', 'assignee and unassigned cannot be combined');
+  if (p.assignee !== undefined && p.unassigned) throw new LaneboardError('USAGE', 'assignee and unassigned cannot be combined', { edit: { drop: [{ name: 'unassigned' }] } });
   if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
   (p.labels ?? []).forEach(checkLabel);
   const scope = p.scope ?? 'active';

@@ -34,9 +34,9 @@ export function int(values: Values, name: string): number | undefined {
   return Number(raw);
 }
 
-// At most one of two options.
+// At most one of two options; the fix keeps the first one.
 export function exclusive(values: Values, a: string, b: string): void {
-  if (values[a] !== undefined && values[b] !== undefined) throw new LaneboardError('USAGE', `--${a} and --${b} cannot be combined`);
+  if (values[a] !== undefined && values[b] !== undefined) throw new LaneboardError('USAGE', `--${a} and --${b} cannot be combined`, { edit: { drop: [{ name: b }] } });
 }
 
 // Text from a file path or `-` (stdin).

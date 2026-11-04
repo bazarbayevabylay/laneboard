@@ -48,12 +48,20 @@ function cutoff(updatedBefore: string, now: Date): string {
 export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promise<OpResult<ArchiveResult>> {
   const p = parseInput(ArchiveInput, input);
   const bulk = p.status !== undefined || p.updated_before !== undefined;
-  if (p.ids && bulk) throw new LaneboardError('USAGE', 'pass task ids, or status with updated_before, not both');
-  if (!p.ids && !bulk) throw new LaneboardError('USAGE', 'pass task ids, or status with updated_before');
-  if (p.ids && p.dry_run) throw new LaneboardError('USAGE', 'dry_run is only for the bulk form (status + updated_before)');
-  if (p.expected_rev !== undefined && p.ids?.length !== 1) throw new LaneboardError('USAGE', 'expected_rev needs exactly one task id');
+  // Each usage error says how to rebuild the caller's command (`edit`): the ids form keeps the ids, the bulk form gets its missing half.
+  if (p.ids && bulk) {
+    throw new LaneboardError('USAGE', 'pass task ids, or status with updated_before, not both', {
+      edit: { drop: [{ name: 'status' }, { name: 'updated_before' }, { name: 'dry_run' }] },
+    });
+  }
+  if (!p.ids && !bulk) throw new LaneboardError('USAGE', 'pass task ids, or status with updated_before', { edit: { args: ['<id>'] } });
+  if (p.ids && p.dry_run) throw new LaneboardError('USAGE', 'dry_run is only for the bulk form (status + updated_before)', { edit: { drop: [{ name: 'dry_run' }] } });
+  if (p.expected_rev !== undefined && p.ids?.length !== 1) {
+    throw new LaneboardError('USAGE', 'expected_rev needs exactly one task id', { edit: { drop: [{ name: 'expected_rev' }] } });
+  }
   if (bulk && (p.status === undefined || p.updated_before === undefined)) {
-    throw new LaneboardError('USAGE', 'the bulk form needs both status and updated_before');
+    const missing = p.status === undefined ? { name: 'status', value: '<status>' } : { name: 'updated_before', value: '<days like 14d>' };
+    throw new LaneboardError('USAGE', 'the bulk form needs both status and updated_before', { edit: { add: [missing] } });
   }
   const warnings: string[] = [];
 

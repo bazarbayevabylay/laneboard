@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { StoreRef } from '../core/index.ts';
-import { jsonRequested, parseError, rejectRepeated } from './argv.ts';
+import { argumentsFix, editedCommand, jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
-import { cliFix, cliMessage, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
+import { cliFix, cliMessage, commandLine, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
 
 export type { CliIo } from './commands/types.ts';
 
@@ -71,13 +71,28 @@ function parseStrict(command: string, args: string[], options: OptionSpec) {
   }
 }
 
-// Rename op parameter names to CLI flags in "x is required" messages.
+// The value placeholder of an option in a usage line: `--confirm <id>` -> `<id>`; `--result T` -> `<result>`.
+function usagePlaceholder(usage: string, flagName: string): string {
+  const value = new RegExp(`${flagName} (\\S+)`).exec(usage)?.[1];
+  return value !== undefined && /^<[^<>]+>$/.test(value) ? value : `<${flagName.replace(/^--/, '')}>`;
+}
+
+// Rename op parameter names to CLI flags in "x is required" messages; the fix adds the option to the user's command.
 function flagMessage(err: LaneboardError, def: CommandDef | undefined): LaneboardError {
   const m = /^([a-z_]+) is required$/.exec(err.message);
   const name = m?.[1];
   if (err.code !== 'USAGE' || !name || !def) return err;
   const flagName = def.flags?.[name] ?? `--${name.replace(/_/g, '-')}`;
-  return new LaneboardError('USAGE', `${flagName} is required`, { fix: err.fix, ...(err.input ? { input: err.input } : {}) });
+  // An error with its own fix or input (init's description) keeps it; the bare registry fix becomes the user's command plus the option.
+  const generic = !err.input && err.fix === ERRORS.USAGE.fix;
+  const edit = err.edit ?? (generic ? { add: [{ name, value: usagePlaceholder(def.usage, flagName) }] } : undefined);
+  return new LaneboardError('USAGE', `${flagName} is required`, { fix: err.fix, ...(edit ? { edit } : {}), ...(err.allowed ? { allowed: err.allowed } : {}), ...(err.input ? { input: err.input } : {}) });
+}
+
+// The command a fix starts from when the command name is missing or not first: that name moved first, else `prime` (the agent's start).
+function commandFirst(argv: readonly string[]): string {
+  const at = argv.findIndex((t) => findCommand(t) !== undefined);
+  return commandLine(at < 0 ? ['prime', ...argv] : [argv[at] ?? '', ...argv.filter((_, i) => i !== at)]);
 }
 
 interface Printed {
@@ -99,6 +114,7 @@ export async function runCli(io: CliIo): Promise<number> {
     if (name === undefined || name.startsWith('-')) {
       throw new LaneboardError('USAGE', name === undefined ? 'missing command' : `the command comes first: laneboard <command> [options], got ${name}`, {
         allowed: COMMANDS.map((c) => c.name),
+        fix: commandFirst(argv),
       });
     }
     def = findCommand(name);
@@ -119,7 +135,9 @@ export async function runCli(io: CliIo): Promise<number> {
     out.json = values.json === true;
     if (values.help === true) return print(io, out, { help: commandHelp(command) }, [], commandHelp(command));
     if (positionals.length < command.args.min || positionals.length > command.args.max) {
-      throw new LaneboardError('USAGE', `wrong number of arguments for ${command.name} (got ${positionals.length}): laneboard ${command.usage}`);
+      throw new LaneboardError('USAGE', `wrong number of arguments for ${command.name} (got ${positionals.length}): laneboard ${command.usage}`, {
+        fix: argumentsFix(command.name, rest, parsed.tokens, command.usage, command.args),
+      });
     }
     const discovery = {
       dir: typeof values.dir === 'string' ? values.dir : undefined,
@@ -134,7 +152,7 @@ export async function runCli(io: CliIo): Promise<number> {
         fix: `drop --board: laneboard ${command.name} works on your own board (--dir / LANEBOARD_DIR; laneboard boards --json shows which one is yours)`,
       });
     }
-    if (board !== undefined && discovery.dir !== undefined) throw new LaneboardError('USAGE', '--board and --dir cannot be combined');
+    if (board !== undefined && discovery.dir !== undefined) throw new LaneboardError('USAGE', '--board and --dir cannot be combined', { edit: { drop: [{ name: 'dir' }] } });
     let store: StoreRef | undefined;
     const named = resolveActor(typeof values.as === 'string' ? values.as : undefined, io.env);
     const result = await command.run({
@@ -159,7 +177,8 @@ export async function runCli(io: CliIo): Promise<number> {
     return print(io, out, result.data, warnings, result.human);
   } catch (raw) {
     const err = cliMessage(flagMessage(toLaneboardError(raw), def));
-    const fix = cliFix(err, argv, def);
+    // A command rebuilt from the user's own argv when the error says how (edit); else the registry of fixes in format.ts.
+    const fix = err.edit && def ? editedCommand(argv, err.edit, { ...GLOBAL_OPTIONS, ...def.options }, def.flags) : cliFix(err, argv, def);
     if (out.json) io.stdout(errorEnvelope(out.store, out.store ? storePrefix(out.store) : null, err, fix));
     else io.stderr(errorText(err, fix));
     return ERRORS[err.code].exit;

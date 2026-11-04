@@ -120,7 +120,7 @@ describe('fixes name a concrete format, not --help (m3, m4)', () => {
     [['update', 'LB-1', '--assignee', 'bad name', '--as', 'a'], 'laneboard update LB-1 --assignee <name like dev-1> --as a --json'],
     [['events', '--since', 'yesterday'], 'laneboard events --since <YYYY-MM-DDTHH:MM:SS.sssZ> --json'],
     [['list', '--limit', 'ten'], 'laneboard list --limit <whole number> --json'],
-    [['comment', 'LB-1'], 'laneboard comment <id> (<text> | --file P|-) [--full]'],
+    [['comment', 'LB-1'], 'laneboard comment LB-1 --json <text>'],
   ])('%j', async (argv, fix) => {
     const { run } = await seeded();
     const err = await errorOf(run, argv);
