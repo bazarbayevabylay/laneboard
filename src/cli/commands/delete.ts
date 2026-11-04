@@ -6,7 +6,7 @@ import type { CommandDef } from './types.ts';
 export const remove: CommandDef = {
   name: 'delete',
   usage: 'delete <id> --confirm <id> [--expected-rev N]',
-  summary: 'Delete a task and its attachments for good (active or archive).',
+  summary: 'Delete a task (active or archive) and its attachments; the archive keeps its id, title and who deleted it.',
   options: { confirm: { type: 'string' }, 'expected-rev': { type: 'string' } },
   args: { min: 1, max: 1 },
   flags: { confirm_id: '--confirm' },

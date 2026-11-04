@@ -29,6 +29,8 @@ export { AttachInput, attachFile } from './ops/attach.ts';
 export type { AttachInputT } from './ops/attach.ts';
 export { ArchiveInput, DeleteInput, RestoreInput, archiveTasks, deleteTask, restoreTask } from './ops/archive.ts';
 export type { ArchiveInputT, ArchiveResult, DeleteInputT, RestoreInputT } from './ops/archive.ts';
+export { REDACTED, RedactInput, redactTask } from './ops/redact.ts';
+export type { RedactInputT, RedactResult } from './ops/redact.ts';
 export { ConfigureInput, DoctorInput, InitInput, configureStore, doctor, initStore, migrateStore } from './ops/admin.ts';
 export type { ConfigureInputT, ConfigureResult, DoctorCheck, DoctorInputT, DoctorResult, InitInputT, InitOptions, InitResult, MigrateResult } from './ops/admin.ts';
 export { ImportEvent, ImportInput, ImportTask, importTasks } from './ops/import.ts';

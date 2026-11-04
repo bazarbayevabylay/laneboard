@@ -20,6 +20,9 @@ export interface TransactOptions extends LockOptions {
   faults?: Faults;
   // Sink for warnings (checksum mismatch, repaired duplicates).
   warnings?: string[];
+  // Write every declared file, changed or not, and give each `.bak` the new content instead of the previous one (redact: the
+  // removed text must not stay behind in a backup).
+  freshBackups?: boolean;
 }
 
 // What a mutation callback sees: config, a fixed timestamp and the declared store files.
@@ -32,6 +35,9 @@ export interface State {
   assertLockHeld(): void;
   // Run after the files are written, still under the lock (e.g. remove an attachment file).
   onCommit(fn: () => void): void;
+  // Run when the transaction fails before any store file was replaced, still under the lock: undo a write of the callback's own
+  // (attach removes the file it stored, so a failed metadata write leaves no file behind).
+  onRollback(fn: () => void): void;
 }
 
 const STORE_FILE_MODE = 0o444;
@@ -57,6 +63,10 @@ export interface CommitOptions {
   faults?: Faults;
   // Rewrite these files even when unchanged (doctor accepting a hand edit).
   force?: ReadonlySet<FileKind>;
+  // Write each `.bak` from the new content, not from the previous file (redact).
+  freshBackups?: boolean;
+  // Filled with each file whose replace was attempted (it may be on disk even when the write then throws).
+  replacing?: FileKind[];
 }
 
 // Write every changed file; a file that gained tasks is written first, so a crash duplicates a task instead of losing it (W6).
@@ -71,10 +81,14 @@ export function commitFiles(storeDir: string, files: LoadedFile[], opts: CommitO
     file.data.rev += 1;
     file.data.updated_at = opts.now;
     file.data.content_sha256 = contentSha(file.data.tasks);
-    // Previous good version first, the same atomic way (W4).
-    writeFileAtomic(backupPath(storeDir, file.kind), file.raw, STORE_FILE_MODE);
-    writeFileAtomic(storeFilePath(storeDir, file.kind), serializeStoreFile(file.data), STORE_FILE_MODE, {
-      beforeRename: index === 0 ? () => maybeFault(opts.faults, 'after_tmp_write') : undefined,
+    const content = serializeStoreFile(file.data);
+    // Previous good version first, the same atomic way (W4); redact backs up the new content, so no copy of the old text remains.
+    writeFileAtomic(backupPath(storeDir, file.kind), opts.freshBackups ? content : file.raw, STORE_FILE_MODE);
+    writeFileAtomic(storeFilePath(storeDir, file.kind), content, STORE_FILE_MODE, {
+      beforeRename: () => {
+        if (index === 0) maybeFault(opts.faults, 'after_tmp_write');
+        opts.replacing?.push(file.kind);
+      },
     });
   });
   return changed.map((f) => f.kind);
@@ -92,7 +106,7 @@ function loadForWrite(storeDir: string, kinds: readonly FileKind[], warnings: st
 }
 
 // Expose only the declared files to the callback.
-function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: Array<() => void>, lock: HeldLock): State {
+function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: { commit: Array<() => void>; rollback: Array<() => void> }, lock: HeldLock): State {
   const pick = (kind: FileKind): StoreFileT => {
     const file = files.find((f) => f.kind === kind);
     if (!file) throw new Error(`transact: ${kind}.json was not declared in files`);
@@ -108,10 +122,24 @@ function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: Ar
       return pick('archive');
     },
     onCommit: (fn) => {
-      hooks.push(fn);
+      hooks.commit.push(fn);
+    },
+    onRollback: (fn) => {
+      hooks.rollback.push(fn);
     },
     assertLockHeld: () => lock.assertHeld(),
   };
+}
+
+// Run the rollback hooks newest first; one that fails does not stop the others or replace the error being reported.
+function runRollbacks(rollbacks: ReadonlyArray<() => void>): void {
+  for (const undo of [...rollbacks].reverse()) {
+    try {
+      undo();
+    } catch {
+      // The caller rethrows the original error; a file the undo could not remove is an orphan, which doctor lists and removes.
+    }
+  }
 }
 
 // The only mutation path for CLI, MCP, board and import: every call reads fresh files (W3).
@@ -135,10 +163,19 @@ export async function transact<T>(store: StoreRef, spec: { files: readonly FileK
       const repaired = dedupeFiles(active.data, archive.data);
       if (repaired.length) warnings.push(`repaired duplicate ids across active.json and archive.json: ${repaired.join(', ')}`);
     }
-    const hooks: Array<() => void> = [];
-    const result = fn(buildState(config, now, files, hooks, lock));
-    commitFiles(store.dir, files, { now, lock, faults: opts.faults });
-    for (const hook of hooks) hook();
+    const hooks = { commit: [] as Array<() => void>, rollback: [] as Array<() => void> };
+    const replacing: FileKind[] = [];
+    let result: T;
+    try {
+      result = fn(buildState(config, now, files, hooks, lock));
+      const force = opts.freshBackups ? new Set(spec.files) : undefined;
+      commitFiles(store.dir, files, { now, lock, faults: opts.faults, force, freshBackups: opts.freshBackups, replacing });
+    } catch (err) {
+      // Undo only while no store file can have been replaced: once a file may be replaced, its metadata needs the file.
+      if (replacing.length === 0) runRollbacks(hooks.rollback);
+      throw err;
+    }
+    for (const hook of hooks.commit) hook();
     return result;
   });
 }

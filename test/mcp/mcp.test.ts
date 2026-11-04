@@ -1,4 +1,4 @@
-// MCP over stdio with the real SDK client: exactly 12 tools (C3), instructions = agent rules, every tool called,
+// MCP over stdio with the real SDK client: exactly 11 tools (C3; delete and redact are CLI-only, S6e), instructions = agent rules, every tool called,
 // CLI/MCP parity on cloned stores (same data, same error objects), fresh reads per call (W3).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,7 +13,7 @@ import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
-const TOOL_NAMES = ['task_create', 'task_get', 'task_list', 'task_update', 'task_claim', 'task_comment', 'task_finish', 'task_attach', 'task_archive', 'task_restore', 'task_delete', 'task_events'];
+const TOOL_NAMES = ['task_create', 'task_get', 'task_list', 'task_update', 'task_claim', 'task_comment', 'task_finish', 'task_attach', 'task_archive', 'task_restore', 'task_events'];
 
 interface Mcp {
   client: Client;
@@ -100,7 +100,6 @@ const CASES: ParityCase[] = [
   { name: 'archive', cli: ['archive', 'LB-1', 'LB-2', '--as', 'a'], tool: 'task_archive', args: { ids: ['LB-1', 'LB-2'], actor: 'a' } },
   { name: 'archive bulk dry run', cli: ['archive', '--status', 'todo', '--updated-before', '1d', '--dry-run', '--as', 'a'], tool: 'task_archive', args: { status: 'todo', updated_before: '1d', dry_run: true, actor: 'a' } },
   { name: 'restore', cli: ['restore', 'LB-3', '--as', 'a'], tool: 'task_restore', args: { id: 'LB-3', actor: 'a' } },
-  { name: 'delete', cli: ['delete', 'LB-1', '--confirm', 'LB-1', '--as', 'a'], tool: 'task_delete', args: { id: 'LB-1', confirm_id: 'LB-1', actor: 'a' } },
   { name: 'events', cli: ['events', '--scope', 'all', '--limit', '3'], tool: 'task_events', args: { scope: 'all', limit: 3 } },
   { name: 'events of a task', cli: ['events', '--task', 'LB-2'], tool: 'task_events', args: { task: 'LB-2' } },
 
@@ -133,12 +132,14 @@ const CASES: ParityCase[] = [
 let base: (TestStore & { file: string }) | undefined;
 
 describe('MCP server over stdio (SDK client)', () => {
-  it('C3: every core op is a tool or CLI-only; exactly 12 tools', () => {
+  it('C3: every core op is a tool or CLI-only; exactly 11 tools (delete and redact are for people: CLI only)', () => {
     expect(Object.keys(TOOLS).sort()).toEqual(Object.keys(OPS).sort());
     expect(TOOL_LIST.map((t) => t.def.name)).toEqual(TOOL_NAMES);
+    expect(TOOLS.deleteTask).toBe('cli-only');
+    expect(TOOLS.redactTask).toBe('cli-only');
   });
 
-  it('lists exactly 12 tools with strict schemas; instructions are the agent rules (<= 4096 chars)', async () => {
+  it('lists exactly 11 tools with strict schemas; instructions are the agent rules (<= 4096 chars)', async () => {
     const s = await newStore();
     const mcp = await startMcp(s.root);
     try {
@@ -167,7 +168,7 @@ describe('MCP server over stdio (SDK client)', () => {
     try {
       const { tools } = await mcp.client.listTools();
       const params = (name: string): string[] => Object.keys(tools.find((t) => t.name === name)?.inputSchema.properties ?? {});
-      expect(tools).toHaveLength(12);
+      expect(tools).toHaveLength(11);
       expect(params('task_create')).toContain('parent');
       expect(params('task_list')).toContain('parent');
       expect(params('task_update')).toEqual(expect.arrayContaining(['parent', 'append_description']));
@@ -196,7 +197,7 @@ describe('MCP server over stdio (SDK client)', () => {
     const mcp = await startMcp(own.root, { HOME: home });
     try {
       const { tools } = await mcp.client.listTools();
-      expect(tools).toHaveLength(12);
+      expect(tools).toHaveLength(11);
       expect(Object.keys(tools.find((t) => t.name === 'task_list')?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['all_boards', 'open', 'parent']));
       const all = await mcp.call('task_list', { all_boards: true, open: true });
       expect(all.isError).toBe(false);
@@ -218,7 +219,7 @@ describe('MCP server over stdio (SDK client)', () => {
     }
   });
 
-  it('calls each of the 12 tools in one session; results carry the CLI data as structuredContent and text', async () => {
+  it('calls each of the 11 tools in one session; results carry the CLI data as structuredContent and text', async () => {
     base ??= await baseStore();
     const root = cloneRoot(base.root);
     const mcp = await startMcp(root);
@@ -249,8 +250,12 @@ describe('MCP server over stdio (SDK client)', () => {
       expect(await call('task_restore', { id: 'LB-4', actor: 'm', full: true })).toMatchObject({ archived: false });
       const events = await call('task_events', { task: 'LB-4', limit: 50 });
       expect((events.items as Array<{ type: string }>).map((e) => e.type)).toEqual(['restored', 'archived', 'detached', 'attached', 'status', 'commented', 'commented', 'status', 'assigned', 'created']);
-      expect(await call('task_delete', { id: 'LB-4', confirm_id: 'LB-4', actor: 'm' })).toEqual({ id: 'LB-4', deleted: true });
       expect([...called].sort()).toEqual([...TOOL_NAMES].sort());
+      // An agent cannot delete over MCP (S6e): the tool is unknown and the task stays.
+      const gone = await mcp.call('task_delete', { id: 'LB-4', confirm_id: 'LB-4', actor: 'm' });
+      expect(gone.isError).toBe(true);
+      expect(gone.structured).toMatchObject({ code: 'USAGE', message: 'unknown tool "task_delete"' });
+      expect(await ok('task_get', { id: 'LB-4' })).toMatchObject({ id: 'LB-4', archived: false });
 
       // A no-op update is not an error; its warning comes as a second text item.
       const same = await mcp.call('task_update', { id: 'LB-1', status: 'todo', actor: 'm' });

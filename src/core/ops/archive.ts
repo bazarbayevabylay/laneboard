@@ -1,8 +1,9 @@
-// Ops that move or remove tasks: archive, restore, delete (task_archive, task_restore, task_delete).
+// Ops that move or remove tasks: archive, restore (task_archive, task_restore), delete (CLI only: people delete, agents do not).
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import { removeDir } from '../fsio.ts';
-import type { StoreFileT, TaskT } from '../schema.ts';
+import type { ActorSource } from '../agent-name.ts';
+import type { StoreFileT, TaskEventT, TaskT } from '../schema.ts';
 import { readBoth, transact } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
 import {
@@ -147,6 +148,7 @@ export async function restoreTask(ctx: OpContext, input: RestoreInputT): Promise
       const found = locate(s, id);
       if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
       if (!found.archived) throw new LaneboardError('INVALID_VALUE', `task ${id} is not archived`, { input: { field: 'id', value: id }, fix: `nothing to do; to see it: laneboard get ${id}` });
+      refuseDeleted(found.task);
       const task = found.task;
       touch(task, s.now, actor);
       delete task.archived_at;
@@ -167,10 +169,61 @@ export const DeleteInput = z.strictObject({
 });
 export type DeleteInputT = z.infer<typeof DeleteInput>;
 
-// Hard delete from active or archive: the record, then its attachment directory; next_id is untouched (W9). Its children (in either
-// file) lose `parent` in the same write, each with an `updated {parent: [id, null]}` event, so a parent always names a task (ADR §25).
+// When and by whom a task was deleted: the mark of a tombstone (store@1 keeps unknown task keys, so 0.3.1 reads and keeps it).
+interface DeletedMark {
+  at: string;
+  by: string;
+}
+
+// The deleted mark of a task, or undefined for a task that was not deleted.
+function deletedMark(task: TaskT): DeletedMark | undefined {
+  const mark = (task as { deleted?: unknown }).deleted;
+  if (typeof mark !== 'object' || mark === null) return undefined;
+  const { at, by } = mark as { at?: unknown; by?: unknown };
+  return { at: typeof at === 'string' ? at : '?', by: typeof by === 'string' ? by : '?' };
+}
+
+// A deleted task cannot come back or be deleted again: what it held is gone, only its trace stays.
+function refuseDeleted(task: TaskT): void {
+  const mark = deletedMark(task);
+  if (!mark) return;
+  throw new LaneboardError('INVALID_VALUE', `${task.id} was deleted at ${mark.at} by ${mark.by}`, {
+    input: { field: 'id', value: task.id },
+    fix: `nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get ${task.id}`,
+  });
+}
+
+// The trace a delete leaves in archive.json (ADR §6, Q1): id, title, status, assignee and dates stay; description, labels, links, fields,
+// attachments and the history go (events_dropped counts them); one `archived {deleted: true}` event and `deleted {at, by}` say who and when.
+function tombstone(task: TaskT, at: string, actor: string, source: ActorSource): TaskT & { deleted: DeletedMark } {
+  const event: TaskEventT = { at, actor, actor_source: source, type: 'archived', data: { deleted: true } };
+  return {
+    id: task.id,
+    rev: task.rev + 1,
+    title: task.title,
+    description: '',
+    status: task.status,
+    assignee: task.assignee,
+    labels: [],
+    links: [],
+    fields: {},
+    attachments: [],
+    events: [event],
+    events_dropped: task.events_dropped + task.events.length,
+    created_at: task.created_at,
+    created_by: task.created_by,
+    updated_at: at,
+    updated_by: actor,
+    archived_at: at,
+    deleted: { at, by: actor },
+  };
+}
+
+// Delete from active or archive: the task is replaced by its tombstone in archive.json (one write of both files, archive.json first,
+// W6), then its attachment directory is removed; next_id is untouched (W9). Its children (in either file) lose `parent` in the same
+// write, each with an `updated {parent: [id, null]}` event, so a parent always names a live task (ADR §25).
 export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<OpResult<{ id: string; deleted: true }>> {
-  // A delete is a write and needs an actor, even though no event of the task survives it (its children get one).
+  // A delete is a write and needs an actor: the tombstone records who deleted the task.
   const actor = requireActor(ctx.actor);
   const p = parseInput(DeleteInput, input);
   const warnings: string[] = [];
@@ -187,8 +240,10 @@ export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<O
       }
       const found = locate(s, id);
       if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
+      refuseDeleted(found.task);
       checkExpectedRev(found.task, found.archived, p.expected_rev);
       found.file.tasks = found.file.tasks.filter((t) => t.id !== id);
+      s.archive.tasks.push(tombstone(found.task, s.now, actor, actorSourceOf(ctx)));
       for (const child of [...s.active.tasks, ...s.archive.tasks].filter((t) => t.parent === id)) {
         touch(child, s.now, actor);
         delete child.parent;

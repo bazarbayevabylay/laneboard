@@ -331,8 +331,11 @@ describe('archive, restore, delete', () => {
     expect(fs.existsSync(path.join(s.dir, 'attachments', 'LB-1'))).toBe(false);
     await archiveTasks(as(s), { ids: ['LB-2'] });
     await deleteTask(as(s), { id: 'LB-2', confirm_id: 'LB-2' });
-    expect((await listTasks(as(s), { scope: 'all' })).data.total).toBe(0);
-    await rejectsWith(deleteTask(as(s), { id: 'LB-2', confirm_id: 'LB-2' }), 'TASK_NOT_FOUND');
+    // Both leave a tombstone in the archive (S6e): no active task, two archived traces; a second delete is refused.
+    expect((await listTasks(as(s), { scope: 'active' })).data.total).toBe(0);
+    expect((await listTasks(as(s), { scope: 'archive' })).data.items.map((t) => t.id).sort()).toEqual(['LB-1', 'LB-2']);
+    await rejectsWith(deleteTask(as(s), { id: 'LB-2', confirm_id: 'LB-2' }), 'INVALID_VALUE');
+    await rejectsWith(deleteTask(as(s), { id: 'LB-9', confirm_id: 'LB-9' }), 'TASK_NOT_FOUND');
   });
 });
 

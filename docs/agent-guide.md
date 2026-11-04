@@ -139,7 +139,8 @@ Subtasks: `laneboard create "<title>" --status <status> --parent <ID> --json`, t
 another board is refused with a fix; link another board's task instead). `get` lists `children`, `list --parent <ID>` the direct ones,
 `update <ID> --no-parent` makes a top-level task. Deleting a parent removes `parent` from its children; closing or archiving a parent
 while children are open works, with a warning. Add to a description with `update <ID> --append-description "<text>"` (a blank line, then
-the text; no `--expected-rev`, nothing you read is overwritten); `--description` replaces the whole text.
+the text; no `--expected-rev`, nothing you read is overwritten); `--description` replaces the whole text, and its `updated` event keeps
+the old one as `previous` (up to 10 000 characters; longer: cut, with `previous_cut: true`).
 
 ```sh
 export LANEBOARD_AGENT=dev-1
@@ -210,9 +211,10 @@ else the default name of the session that started it. Every result has a second 
 |---|---|
 | `task_create`, `task_get`, `task_list`, `task_update` | `create`, `get`, `list`, `update` |
 | `task_claim`, `task_comment`, `task_finish`, `task_attach` | `claim`, `comment`, `finish`, `attach` |
-| `task_archive`, `task_restore`, `task_delete`, `task_events` | `archive`, `restore`, `delete`, `events` |
+| `task_archive`, `task_restore`, `task_events` | `archive`, `restore`, `events` |
 
-`init`, `config`, `setup`, `prime`, `view`, `boards`, `doctor`, `migrate` and `import` are CLI-only.
+`init`, `config`, `setup`, `prime`, `view`, `boards`, `doctor`, `migrate` and `import` are CLI-only; so are `delete` and `redact`,
+which are for people (2.6).
 
 ### 2.5 Your name
 
@@ -244,6 +246,29 @@ hook input), not to a fresh session. Compaction and `claude --resume <id>` keep 
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name
 (they expose no session id, and one shared name would merge parallel sessions again), so pass `--as` there.
+
+### 2.6 Delete and redact (people only)
+
+Agents do not delete or redact: there is no MCP tool for either, and an agent that thinks a task should go asks the owner.
+`laneboard delete <ID> --confirm <ID>` (an active or an archived task) removes its description, labels, links, fields, attachments and
+history; the archive keeps a trace: id, title, status, dates, one `archived` event with `deleted: true` and `deleted {at, by}`.
+`restore` and a second `delete` of it fail with `INVALID_VALUE` (`DEMO-1 was deleted at <time> by owner`); `next_id` never goes back.
+
+A secret pasted into a task (comment, description, an old description kept by `update --description`, title, link, field):
+`laneboard redact <ID> --text-file <file>` (`-` reads stdin; never on the command line, which the shell history keeps) replaces every
+exact occurrence in that task with `[redacted]`, adds an `updated {redacted: {count}}` event (who and when, not the text) and writes both
+store files and their `.bak` anew, so no backup keeps it. One trailing newline of the file is ignored; no occurrence: `INVALID_VALUE`, nothing written.
+Redact first, then delete: after a delete only the title is left to find. Not covered: attachment files (`attach <ID> --remove <name>`),
+other tasks, copies outside the store files (git history).
+
+```sh
+printf 'query string\n' > secret.txt
+laneboard redact DEMO-1 --text-file secret.txt --as owner --json
+laneboard redact DEMO-1 --text-file secret.txt --as owner --json  # exit 2
+laneboard delete DEMO-1 --confirm DEMO-1 --as owner --json
+laneboard restore DEMO-1 --as owner --json  # exit 2
+laneboard get DEMO-1 --json
+```
 
 ## 3. Configure
 

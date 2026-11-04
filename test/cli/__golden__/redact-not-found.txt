@@ -1,0 +1,15 @@
+# redact-not-found
+$ laneboard redact LB-1 --text-file - --as a
+exit 2
+--- stdout
+
+--- stderr
+error INVALID_VALUE: the text does not occur in LB-1 (title, description, links, fields, history); nothing was changed
+  fix: check the exact text (case, spaces; one trailing newline of the file is ignored) against laneboard get LB-1 --json
+
+$ laneboard redact LB-1 --text-file - --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"INVALID_VALUE","message":"the text does not occur in LB-1 (title, description, links, fields, history); nothing was changed","fix":"check the exact text (case, spaces; one trailing newline of the file is ignored) against laneboard get LB-1 --json"}}
+--- stderr
+
