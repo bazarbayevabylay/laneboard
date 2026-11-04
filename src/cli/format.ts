@@ -366,7 +366,11 @@ function sectionMin(items: readonly ListItem[], total: number, more: (n: number)
 // Rules, store, statuses (final one named), fields, the session-name line, then the agent's tasks or the ways to start one, the tasks of
 // its earlier sessions (resume), then the free tasks with the claim command; at most PRIME_MAX_CHARS characters (SQUEEZES says what
 // gives way). `storeDir`: the store was named by --dir, so the printed commands carry it; `now`: for the age of earlier-session tasks.
-export function primeText(d: PrimeData, storeDir?: string, now = new Date()): string {
+// The data is escaped (display.ts) before the layout, so the PRIME_MAX_CHARS budget counts the text as printed: `\u{202E}` is 8
+// characters where the raw RLO was 1 (review S6c MAJOR 2).
+export function primeText(raw: PrimeData, rawStoreDir?: string, now = new Date()): string {
+  const d = safeData(raw);
+  const storeDir = rawStoreDir === undefined ? undefined : safeText(rawStoreDir);
   if (d.store_problem !== null) return fit(`${d.rules}\n\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
   let text = '';
   for (const squeeze of SQUEEZES) {
@@ -546,7 +550,9 @@ function overviewBoardLines(b: OverviewBoard, sq: OverviewSqueeze, now: Date): s
 
 // The all-boards section of prime: every board's header and its tasks not in the final status, the urgent ones first, at most
 // `budget` characters (OVERVIEW_SQUEEZES says what gives way; the last step cuts the tail).
-export function overviewText(boards: readonly OverviewBoard[], now = new Date(), budget = OVERVIEW_MAX_CHARS): string {
+// The boards are escaped before the layout, so `budget` counts the text as printed (as in primeText).
+export function overviewText(rawBoards: readonly OverviewBoard[], now = new Date(), budget = OVERVIEW_MAX_CHARS): string {
+  const boards = safeData(rawBoards);
   let text = '';
   for (const sq of OVERVIEW_SQUEEZES) {
     text = ['Boards (not final; all: laneboard list --all-boards --open --json):', ...boards.flatMap((b) => overviewBoardLines(b, sq, now))].join('\n');

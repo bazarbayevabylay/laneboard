@@ -180,7 +180,7 @@ const CASES: Case[] = [
   { name: 'error-INTERNAL', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'INTERNAL', readOnlyStore: true },
   { name: 'error-USAGE', argv: ['update', 'LB-1', '--as', 'a'], error: 'USAGE', setup: seed },
   { name: 'error-USAGE-missing-flag', argv: ['delete', 'LB-1', '--as', 'a'], error: 'USAGE', setup: seed },
-  { name: 'error-USAGE-no-command', argv: ['--as', 'a'], error: 'USAGE', store: false },
+  { name: 'error-USAGE-option-first', argv: ['--as', 'a'], error: 'USAGE', store: false },
   { name: 'error-USAGE-unknown-command', argv: ['craete', 'x'], error: 'USAGE', store: false },
   { name: 'error-USAGE-repeated-option', argv: ['update', 'LB-1', '--status', 'done', '--status', 'todo', '--as', 'a'], error: 'USAGE', setup: seed },
   { name: 'error-USAGE-dash-value', argv: ['create', 't', '--status', 'todo', '--description', '- a\n- b', '--as', 'a'], error: 'USAGE' },

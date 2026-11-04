@@ -1,4 +1,4 @@
-# error-USAGE-no-command
+# error-USAGE-option-first
 $ laneboard --as a
 exit 2
 --- stdout

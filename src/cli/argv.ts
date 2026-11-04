@@ -11,8 +11,20 @@ export function commandLine(argv: readonly string[], placeholders: ReadonlySet<n
 
 // argv with extra option tokens inserted before `--` (after it they would be read as text).
 function withOptions(argv: readonly string[], extra: readonly string[]): string[] {
+  const at = optionsAt(argv);
+  return [...argv.slice(0, at), ...extra, ...argv.slice(at)];
+}
+
+// Where withOptions inserts its tokens: before `--`, else at the end.
+function optionsAt(argv: readonly string[]): number {
   const end = argv.indexOf('--');
-  return end < 0 ? [...argv, ...extra] : [...argv.slice(0, end), ...extra, ...argv.slice(end)];
+  return end < 0 ? argv.length : end;
+}
+
+// Positions in `out` of the placeholders the fix itself added (`tokens` placed from `start`): only those print unquoted. A token
+// from the user's argv is quoted even when it looks like `<...>`: extra words joined into a title (`<$(touch` `x)>`) must not run.
+function addedPlaceholders(tokens: readonly string[], start: number): number[] {
+  return tokens.flatMap((t, i) => (isPlaceholder(t) ? [start + i] : []));
 }
 
 // Is `--json` among the options (tokens after `--` are text, not options)?
@@ -152,8 +164,10 @@ export function editedCommand(argv: readonly string[], edit: FixEdit, options: O
     if (hasNext) kept.push(args[++i] ?? '');
   }
   const extra = (edit.add ?? []).flatMap((a) => [`--${optionName(a.name, flags)}`, a.value]);
-  const out = [command, ...withOptions(kept, extra), ...(edit.args ?? [])];
-  const line = commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !argv.includes(t) ? [i] : []))));
+  const added = edit.args ?? [];
+  const out = [command, ...withOptions(kept, extra), ...added];
+  const placeholders = [...addedPlaceholders(extra, 1 + optionsAt(kept)), ...addedPlaceholders(added, out.length - added.length)];
+  const line = commandLine(out, new Set(placeholders));
   return edit.env === undefined ? line : `${edit.env} ${line}`;
 }
 
@@ -187,8 +201,11 @@ export function argumentsFix(
   const at = tokens.filter((t) => t.kind === 'positional').map((t) => t.index);
   const added = required.filter((r) => !tokens.some((t) => t.kind === 'option' && t.name === r.name)).flatMap((r) => [`--${r.name}`, r.value]);
   let out: string[];
+  let placeholders: number[];
   if (at.length < count.min) {
-    out = [command, ...withOptions(args, added), ...names.slice(at.length, count.min)];
+    const missing = names.slice(at.length, count.min);
+    out = [command, ...withOptions(args, added), ...missing];
+    placeholders = [...addedPlaceholders(added, 1 + optionsAt(args)), ...addedPlaceholders(missing, out.length - missing.length)];
   } else {
     // Extra words: an unquoted title or text (`create Fix login --status todo`) becomes one argument; anything else is dropped.
     const extra = at.slice(count.max);
@@ -197,9 +214,11 @@ export function argumentsFix(
       const first = at[count.max - 1] ?? 0;
       joined[first] = [first, ...extra].map((i) => args[i]).join(' ');
     }
-    out = [command, ...withOptions(joined.filter((_, i) => !extra.includes(i)), added)];
+    const kept = joined.filter((_, i) => !extra.includes(i));
+    out = [command, ...withOptions(kept, added)];
+    placeholders = addedPlaceholders(added, 1 + optionsAt(kept));
   }
-  return commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !args.includes(t) ? [i] : []))));
+  return commandLine(out, new Set(placeholders));
 }
 
 interface OptionToken {
