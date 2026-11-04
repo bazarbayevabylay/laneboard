@@ -26,11 +26,13 @@ export interface OpContext {
   lockWaitMs?: number;
   // Write deadline after the lock acquire (tests only; default LOCK_MAX_HOLD_MS).
   lockMaxHoldMs?: number;
+  // Told once when the command has waited for the store lock a while (CLI human mode prints it on stderr).
+  onLockWait?: (message: string) => void;
 }
 
 // Options for transact taken from the op context; warnings go to `warnings`.
 export function txOptions(ctx: OpContext, warnings: string[]): TransactOptions {
-  return { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, lockMaxHoldMs: ctx.lockMaxHoldMs, warnings };
+  return { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, lockMaxHoldMs: ctx.lockMaxHoldMs, onLockWait: ctx.onLockWait, warnings };
 }
 
 // Op output: data for the envelope plus warnings; `reply`: facts of this write for the short write reply (claim --resume, finish).

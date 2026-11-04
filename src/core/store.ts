@@ -227,8 +227,24 @@ export interface LoadedFile {
   beforeIds: Set<string>;
 }
 
+export interface StoreReadOptions {
+  // Accept an id used twice in the file (doctor reads such a file to renumber the later copy).
+  allowDuplicateIds?: boolean;
+}
+
+// Ids that appear more than once in one task list, in order of first repeat.
+export function repeatedIds(tasks: readonly TaskT[]): string[] {
+  const seen = new Set<string>();
+  const repeated = new Set<string>();
+  for (const t of tasks) {
+    if (seen.has(t.id)) repeated.add(t.id);
+    seen.add(t.id);
+  }
+  return [...repeated];
+}
+
 // Validate parsed JSON as a store file of `kind`; throws STORE_INVALID or STORE_TOO_NEW.
-export function validateStoreJson(json: unknown, kind: FileKind, label: string): { data: StoreFileT; version: number } {
+export function validateStoreJson(json: unknown, kind: FileKind, label: string, opts: StoreReadOptions = {}): { data: StoreFileT; version: number } {
   const version = schemaVersion((json as { schema?: unknown } | null)?.schema);
   const parsed = StoreFile.safeParse(json);
   if (!parsed.success) {
@@ -241,11 +257,31 @@ export function validateStoreJson(json: unknown, kind: FileKind, label: string):
   const data = json as StoreFileT;
   if (data.kind !== kind) throw new LaneboardError('STORE_INVALID', `${label} kind is "${data.kind}", expected "${kind}"`);
   if (kind === 'active' && data.next_id === undefined) throw new LaneboardError('STORE_INVALID', `${label} next_id is missing`);
+  // Two tasks with one id (a git merge of the board, a hand edit): every command would reach only the first one.
+  const repeated = opts.allowDuplicateIds ? [] : repeatedIds(data.tasks);
+  if (repeated.length) {
+    throw new LaneboardError('STORE_INVALID', `duplicate id ${repeated.join(', ')} in ${label}: two tasks have the same id`, {
+      fix: 'laneboard doctor --fix (the copy created later gets a new id)',
+    });
+  }
   return { data, version };
 }
 
+// A line git writes into a file with a merge conflict.
+const CONFLICT_MARKER_RE = /^(<{7}|>{7})( |$)/m;
+
+// Not-JSON error for a store file: a merge conflict gets its own fix (the restore is the last resort, it drops the merge).
+function notJson(file: string, label: string, raw: string, err: Error): LaneboardError {
+  if (CONFLICT_MARKER_RE.test(raw)) {
+    return new LaneboardError('STORE_INVALID', `${label} has git merge conflict markers (<<<<<<< ... >>>>>>>): ${file}`, {
+      fix: `resolve the merge conflict in ${shellQuote(file)} (keep the tasks of both sides, then laneboard doctor --fix gives a repeated id a new one), or take one side: git checkout --ours ${shellQuote(file)}; last resort, the previous version: laneboard doctor --restore-backup`,
+    });
+  }
+  return new LaneboardError('STORE_INVALID', `${label} is not valid JSON: ${err.message}`);
+}
+
 // Read one store file fresh from disk; checksum mismatch (hand edit) becomes a warning.
-export function readStoreFile(storeDir: string, kind: FileKind, warnings: string[]): LoadedFile {
+export function readStoreFile(storeDir: string, kind: FileKind, warnings: string[], opts: StoreReadOptions = {}): LoadedFile {
   const file = storeFilePath(storeDir, kind);
   const label = `${kind}.json`;
   let raw: string;
@@ -257,11 +293,12 @@ export function readStoreFile(storeDir: string, kind: FileKind, warnings: string
   }
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    // An editor may save a byte order mark (Windows Notepad); JSON.parse refuses it, the content is fine.
+    json = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch (err) {
-    throw new LaneboardError('STORE_INVALID', `${label} is not valid JSON: ${(err as Error).message}`);
+    throw notJson(file, label, raw, err as Error);
   }
-  const { data, version } = validateStoreJson(json, kind, label);
+  const { data, version } = validateStoreJson(json, kind, label, opts);
   if (contentSha(data.tasks) !== data.content_sha256) {
     warnings.push(`${label} content_sha256 mismatch: the file was edited by hand; check it with laneboard doctor`);
   }

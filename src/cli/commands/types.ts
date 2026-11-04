@@ -49,6 +49,8 @@ export interface CommandOutput {
   silent?: boolean;
   // The human text already shows the parent-directory store warning (prime), so it is not repeated on stderr.
   storeWarningInText?: boolean;
+  // Exit code of a result that is not an error but must not read as success (doctor on an unhealthy store: 6); default 0.
+  exitCode?: number;
 }
 
 export interface CommandDef {

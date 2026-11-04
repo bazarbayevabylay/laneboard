@@ -3,18 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { buildConfig, configPath, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
-import { LaneboardError } from '../errors.ts';
+import { ERRORS, LaneboardError } from '../errors.ts';
 import { shellQuote } from '../shell.ts';
-import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
+import { ensureDir, listOrphanTmp, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { checkPrefixFree, prefixTaken, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
 import type { ConfigT, FileKind, TaskT } from '../schema.ts';
-import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, samePath, serializeStoreFile, STORE_DIR_NAME, storeFilePath, validateStoreJson } from '../store.ts';
-import type { HeldLock, LockOptions } from '../lock.ts';
+import { contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, samePath, serializeStoreFile, STORE_DIR_NAME, storeFilePath } from '../store.ts';
+import type { LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { parseInput, unique } from './common.ts';
+import { actorSourceOf, parseInput, unique } from './common.ts';
+import { attachmentContent, describeRepeats, copyAttachments, fieldCheck, orphanFiles, parentCheck, readFailure, recoverAfterRestore, removeMovedSources, renumberRepeats, restoreFromBackup, statusCheck } from './doctor-checks.ts';
+import type { AttachmentMoves, CheckResult } from './doctor-checks.ts';
 import type { OpContext, OpResult } from './common.ts';
 
 export const InitInput = z.strictObject({
@@ -363,151 +365,140 @@ export interface DoctorResult {
   checks: DoctorCheck[];
 }
 
-// Number of tasks in a store file's text, or "unreadable".
-function countTasks(raw: string | undefined): string {
-  if (raw === undefined) return 'missing';
-  try {
-    const json = JSON.parse(raw) as { tasks?: unknown };
-    return Array.isArray(json.tasks) ? `${json.tasks.length} tasks` : 'unreadable';
-  } catch {
-    // Not JSON at all.
-    return 'unreadable';
-  }
+// Fix part of a doctor line for a store file that does not load: its own fix when it has one (chmod, merge conflict), else the restore.
+function loadFailureHint(err: unknown, restoreAsked: boolean): string {
+  const own = err instanceof LaneboardError && err.fix !== ERRORS[err.code].fix ? err.fix : undefined;
+  if (own) return `; fix: ${own}`;
+  return restoreAsked ? '' : '; to roll back: laneboard doctor --restore-backup';
 }
 
-// Read a file's bytes, undefined when missing.
-function readBytes(file: string): Buffer | undefined {
-  try {
-    return fs.readFileSync(file);
-  } catch {
-    // Missing or unreadable: reported by the caller.
-    return undefined;
-  }
-}
-
-// Swap in `<kind>.json.bak` for an invalid file; the broken file is kept next to it.
-function restoreFromBackup(storeDir: string, kind: FileKind, now: string, lock: HeldLock): { ok: boolean; message: string } {
-  const current = readBytes(storeFilePath(storeDir, kind));
-  const backup = readBytes(backupPath(storeDir, kind));
-  const counts = `current: ${countTasks(current?.toString('utf8'))}; backup: ${countTasks(backup?.toString('utf8'))}`;
-  if (backup === undefined) return { ok: false, message: `invalid and no ${kind}.json.bak to restore (${counts})` };
-  try {
-    validateStoreJson(JSON.parse(backup.toString('utf8')), kind, `${kind}.json.bak`);
-  } catch (err) {
-    return { ok: false, message: `invalid, and ${kind}.json.bak is invalid too: ${(err as Error).message} (${counts})` };
-  }
-  lock.assertHeld();
-  let kept = '';
-  // Copy the broken file aside first, then replace it in one atomic step: lock-free readers never see it missing.
-  if (current !== undefined) {
-    const keptName = `${kind}.json.invalid-${now.replace(/[:.]/g, '-')}`;
-    writeFileAtomic(path.join(storeDir, keptName), current, 0o444);
-    kept = `; broken file kept as ${keptName}`;
-  }
-  writeFileAtomic(storeFilePath(storeDir, kind), backup, 0o444);
-  return { ok: true, message: `restored from ${kind}.json.bak (${counts})${kept}` };
-}
-
-// Check the store and optionally repair it: config, files, checksums, duplicates, next_id, tmp files, attachments.
+// Check the store and optionally repair it: config, files, checksums, duplicates, next_id, tmp files, attachments, task values.
+// --restore-backup swaps in the .bak of a damaged file (never of one it cannot read) and keeps what the other files still know.
 export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpResult<DoctorResult>> {
   const p = parseInput(DoctorInput, input);
   const fix = p.fix === true;
   const dir = ctx.store.dir;
   const checks: DoctorCheck[] = [];
-  const add = (name: string, ok: boolean, message: string, fixed = false): void => {
-    checks.push({ name, ok, fixed, message });
+  const warnings: string[] = [];
+  const add = (name: string, r: CheckResult): void => {
+    checks.push({ name, ok: r.ok, fixed: r.fixed === true, message: r.message });
   };
-  await withLock(ctx.store, ctx, (lock) => {
+  await withLock(ctx.store, { ...ctx, warnings }, (lock) => {
     const now = new Date().toISOString();
+    let config: ConfigT;
     try {
-      loadConfig(dir);
-      add('config', true, 'valid');
+      config = loadConfig(dir);
+      add('config', { ok: true, message: 'valid' });
     } catch (err) {
-      add('config', false, (err as Error).message);
+      add('config', { ok: false, message: (err as Error).message });
       return;
     }
     const files: LoadedFile[] = [];
     const force = new Set<FileKind>();
+    // Damaged files swapped for their .bak in this run, with the damaged text.
+    const broken = new Map<FileKind, string | undefined>();
     for (const kind of FILE_KINDS) {
       const shaWarnings: string[] = [];
       let file: LoadedFile | undefined;
       try {
-        file = readStoreFile(dir, kind, shaWarnings);
-        add(`${kind}.json`, true, `valid, ${file.data.tasks.length} tasks, rev ${file.data.rev}`);
+        file = readStoreFile(dir, kind, shaWarnings, { allowDuplicateIds: true });
+        add(`${kind}.json`, { ok: true, message: `valid, ${file.data.tasks.length} tasks, rev ${file.data.rev}` });
       } catch (err) {
+        const message = (err as Error).message;
+        // A file that is there but cannot be read (permissions, a symlink loop, a directory) may be intact and the newest version.
+        if (readFailure(storeFilePath(dir, kind)) !== undefined) {
+          const refused = p.restore_backup ? '; not restored: it may be the newest version, fix the read error first' : '';
+          add(`${kind}.json`, { ok: false, message: `${message}${loadFailureHint(err, true)}${refused}` });
+          continue;
+        }
         if (!p.restore_backup) {
-          add(`${kind}.json`, false, `${(err as Error).message}; to roll back: laneboard doctor --restore-backup`);
+          add(`${kind}.json`, { ok: false, message: `${message}${loadFailureHint(err, false)}` });
           continue;
         }
         const restored = restoreFromBackup(dir, kind, now, lock);
-        add(`${kind}.json`, false, restored.message, restored.ok);
-        if (!restored.ok) continue;
-        file = readStoreFile(dir, kind, shaWarnings);
+        add(`${kind}.json`, restored);
+        if (restored.fixed !== true) continue;
+        broken.set(kind, restored.broken);
+        file = readStoreFile(dir, kind, shaWarnings, { allowDuplicateIds: true });
       }
       files.push(file);
-      if (file.version > STORE_VERSION) add(`${kind}.json schema`, false, `${file.data.schema} is newer than ${STORE_SCHEMA}; upgrade laneboard`);
+      if (file.version > STORE_VERSION) add(`${kind}.json schema`, { ok: false, message: `${file.data.schema} is newer than ${STORE_SCHEMA}; upgrade laneboard` });
       if (contentSha(file.data.tasks) !== file.data.content_sha256) {
         if (fix) force.add(kind);
-        add(`${kind}.json checksum`, false, fix ? 'content_sha256 mismatch (hand edit): accepted and rewritten' : 'content_sha256 mismatch: the file was edited by hand; --fix accepts the edit', fix);
+        add(`${kind}.json checksum`, {
+          ok: false,
+          fixed: fix,
+          message: fix ? 'content_sha256 mismatch (hand edit): accepted and rewritten' : 'content_sha256 mismatch: the file was edited by hand; --fix accepts the edit',
+        });
       }
     }
     const active = files.find((f) => f.kind === 'active');
     const archive = files.find((f) => f.kind === 'archive');
     if (!active || !archive || files.some((f) => f.version > STORE_VERSION)) return;
+    const data = { active: active.data, archive: archive.data };
+
+    // A restore is written even without --fix: it returns what only a .bak holds and keeps next_id above every id used (A3).
+    if (broken.size) add('after restore', recoverAfterRestore(dir, data, broken));
 
     const archivedIds = new Set(archive.data.tasks.map((t) => t.id));
-    const duplicates = active.data.tasks.filter((t) => archivedIds.has(t.id)).map((t) => t.id);
+    const duplicates = unique(active.data.tasks.filter((t) => archivedIds.has(t.id)).map((t) => t.id));
     if (duplicates.length) {
       if (fix) dedupeFiles(active.data, archive.data);
-      add('duplicates', false, `ids in both files: ${duplicates.join(', ')}${fix ? ' (kept the copy with the higher rev)' : '; --fix keeps the copy with the higher rev'}`, fix);
-    } else add('duplicates', true, 'no id in both files');
+      add('duplicates', {
+        ok: false,
+        fixed: fix,
+        message: `ids in both files: ${duplicates.join(', ')}${fix ? ' (kept the copy with the higher rev)' : '; --fix keeps the copy with the higher rev'}`,
+      });
+    } else add('duplicates', { ok: true, message: 'no id in both files' });
 
     const max = maxIdNumber(active.data.tasks, archive.data.tasks);
     const nextId = active.data.next_id ?? 0;
     if (nextId <= max) {
       if (fix) active.data.next_id = max + 1;
-      add('next_id', false, `next_id ${nextId} is not above the highest id number ${max}${fix ? `; set to ${max + 1}` : '; --fix sets it above'}`, fix);
-    } else add('next_id', true, `next_id ${nextId} > highest id number ${max}`);
+      add('next_id', { ok: false, fixed: fix, message: `next_id ${nextId} is not above the highest id number ${max}${fix ? `; set to ${max + 1}` : '; --fix sets it above'}` });
+    } else add('next_id', { ok: true, message: `next_id ${nextId} > highest id number ${max}` });
 
-    // Every repair below deletes or rewrites files: only while the lock is surely still ours.
+    // Two tasks with one id in a file (a git merge of the board, a hand edit): commands reach only the first one (A8).
+    const moves: AttachmentMoves = { copies: [], removeAfter: new Set() };
+    const repeats = describeRepeats(data);
+    if (!repeats.length) add('duplicate ids', { ok: true, message: 'every id is used once in its file' });
+    else if (!fix) add('duplicate ids', { ok: false, message: `one id on two tasks: ${repeats.join('; ')}; --fix gives the copy created later a new id` });
+    else {
+      const renamed = renumberRepeats(dir, data, config, { now, actor: ctx.actor ?? 'doctor', source: actorSourceOf(ctx) }, moves);
+      add('duplicate ids', { ok: false, fixed: true, message: `gave the later copy a new id: ${renamed.join(', ')}; links and subtasks naming the old id keep the first copy` });
+    }
+
+    // Every repair below deletes, moves or rewrites files: only while the lock is surely still ours.
     if (fix) lock.assertHeld();
     const tmp = listOrphanTmp(dir);
     if (tmp.length) {
       if (fix) removeOrphanTmp(dir);
-      add('tmp files', false, `${tmp.length} orphan tmp file(s) from a crashed writer${fix ? ' removed' : '; --fix removes them'}`, fix);
-    } else add('tmp files', true, 'none');
+      add('tmp files', { ok: false, fixed: fix, message: `${tmp.length} orphan tmp file(s) from a crashed writer${fix ? ' removed' : '; --fix removes them'}` });
+    } else add('tmp files', { ok: true, message: 'none' });
 
-    const known = new Map<string, Set<string>>();
-    for (const t of [...active.data.tasks, ...archive.data.tasks]) known.set(t.id, new Set(t.attachments.map((a) => a.name)));
-    const orphans: string[] = [];
-    const root = path.join(dir, 'attachments');
-    for (const id of fs.existsSync(root) ? fs.readdirSync(root) : []) {
-      if (!fs.statSync(attachmentDir(dir, id)).isDirectory()) continue;
-      const names = known.get(id);
-      const entries = fs.readdirSync(attachmentDir(dir, id));
-      if (!names) {
-        orphans.push(`${id}/`);
-        if (fix) removeDir(attachmentDir(dir, id));
-        continue;
-      }
-      for (const entry of entries) {
-        if (names.has(entry)) continue;
-        orphans.push(`${id}/${entry}`);
-        if (fix) removeFile(path.join(attachmentDir(dir, id), entry));
-      }
-    }
-    if (orphans.length) add('attachment files', false, `files without metadata: ${orphans.join(', ')}${fix ? ' (removed)' : '; --fix removes them'}`, fix);
-    else add('attachment files', true, 'every file has metadata');
-
+    const tasks = [...active.data.tasks, ...archive.data.tasks];
+    add('attachment files', orphanFiles(dir, tasks, fix, now, moves.removeAfter));
     const missing: string[] = [];
-    for (const t of [...active.data.tasks, ...archive.data.tasks]) {
-      for (const a of t.attachments) if (!fs.existsSync(path.join(attachmentDir(dir, t.id), a.name))) missing.push(`${t.id}/${a.name}`);
+    for (const t of tasks) {
+      for (const a of t.attachments) {
+        const file = path.join(attachmentDir(dir, t.id), a.name);
+        if (!fs.existsSync(file) && !moves.copies.some((c) => c.to === file)) missing.push(`${t.id}/${a.name}`);
+      }
     }
-    if (missing.length) add('attachment metadata', false, `metadata without file: ${missing.join(', ')}; remove each with laneboard attach <id> --remove <name>`);
-    else add('attachment metadata', true, 'every attachment has its file');
+    if (missing.length) add('attachment metadata', { ok: false, message: `metadata without file: ${missing.join(', ')}; remove each with laneboard attach <id> --remove <name>` });
+    else add('attachment metadata', { ok: true, message: 'every attachment has its file' });
 
-    if (fix) commitFiles(dir, files, { now, lock, force });
+    // Report only (A10): what a person decides, not doctor.
+    add('attachment content', attachmentContent(dir, tasks));
+    add('statuses', statusCheck(config, active.data.tasks));
+    add('parents', parentCheck(active.data.tasks, archive.data.tasks));
+    add('fields', fieldCheck(config, tasks));
+
+    if (fix || broken.size) {
+      copyAttachments(dir, moves);
+      commitFiles(dir, files, { now, lock, force });
+      removeMovedSources(moves);
+    }
   });
-  return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings: [] };
+  return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings };
 }
-

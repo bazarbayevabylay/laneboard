@@ -108,3 +108,23 @@ export function removeFile(file: string): void {
 export function removeDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+// Move a file or folder to `target` (same filesystem), creating the target's folder; never replaces an existing target.
+export function moveEntry(source: string, target: string): void {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  if (fs.existsSync(target)) throw Object.assign(new Error(`${target} already exists`), { code: 'EEXIST' });
+  fs.renameSync(source, target);
+}
+
+// Remove an empty directory (a stale lock, a folder emptied by doctor); false when it is gone or not empty.
+export function removeEmptyDir(dir: string): boolean {
+  try {
+    fs.rmdirSync(dir);
+    return true;
+  } catch (err) {
+    // Someone removed it first, or it holds files: leave it.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST') return false;
+    throw err;
+  }
+}

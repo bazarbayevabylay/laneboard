@@ -164,7 +164,9 @@ export async function runCli(io: CliIo): Promise<number> {
         store ??= board !== undefined ? resolveBoard(io.env.HOME, board, io.cwd) : resolveStore(discovery);
         out.store = store.dir;
         out.ref = store;
-        return { store, ...named, cwd: io.cwd, home: io.env.HOME || undefined, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
+        // A person waiting for a busy lock hears why the command is slow; --json output stays one document.
+        const onLockWait = out.json ? undefined : (message: string) => io.stderr(`${safeText(message)}\n`);
+        return { store, ...named, cwd: io.cwd, home: io.env.HOME || undefined, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs, onLockWait };
       },
       setStore: (dir) => {
         out.store = dir;
@@ -174,7 +176,8 @@ export async function runCli(io: CliIo): Promise<number> {
     // A store found in a parent directory (or pinned for one) may be another project's: every result says so (prime prints it in its text).
     const parent = out.ref ? parentStoreWarning(out.ref, io.cwd, storePrefix(out.ref.dir), io.env.HOME || undefined) : undefined;
     const warnings = parent && (out.json || !result.storeWarningInText) ? [parent, ...result.warnings] : result.warnings;
-    return print(io, out, result.data, warnings, STYLED_COMMANDS.has(command.name) ? result.human : safeText(result.human));
+    const code = print(io, out, result.data, warnings, STYLED_COMMANDS.has(command.name) ? result.human : safeText(result.human));
+    return result.exitCode ?? code;
   } catch (raw) {
     const err = cliMessage(flagMessage(toLaneboardError(raw), def));
     // One command rebuilt from the user's own argv (argv.ts), else the core fix.

@@ -7,9 +7,14 @@ ok  active.json:          valid, 1 tasks, rev 1
 ok  archive.json:         valid, 0 tasks, rev 0
 ok  duplicates:           no id in both files
 ok  next_id:              next_id 2 > highest id number 1
+ok  duplicate ids:        every id is used once in its file
 ok  tmp files:            none
 ok  attachment files:     every file has metadata
 ok  attachment metadata:  every attachment has its file
+ok  attachment content:   every attachment matches its size and sha256
+ok  statuses:             every active task is in a status of config.statuses
+ok  parents:              every parent exists
+ok  fields:               every field is declared and of its type
 healthy
 --- stderr
 
@@ -17,6 +22,6 @@ healthy
 $ laneboard doctor --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"healthy":true,"checks":[{"name":"config","ok":true,"fixed":false,"message":"valid"},{"name":"active.json","ok":true,"fixed":false,"message":"valid, 1 tasks, rev 1"},{"name":"archive.json","ok":true,"fixed":false,"message":"valid, 0 tasks, rev 0"},{"name":"duplicates","ok":true,"fixed":false,"message":"no id in both files"},{"name":"next_id","ok":true,"fixed":false,"message":"next_id 2 > highest id number 1"},{"name":"tmp files","ok":true,"fixed":false,"message":"none"},{"name":"attachment files","ok":true,"fixed":false,"message":"every file has metadata"},{"name":"attachment metadata","ok":true,"fixed":false,"message":"every attachment has its file"}]},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"healthy":true,"checks":[{"name":"config","ok":true,"fixed":false,"message":"valid"},{"name":"active.json","ok":true,"fixed":false,"message":"valid, 1 tasks, rev 1"},{"name":"archive.json","ok":true,"fixed":false,"message":"valid, 0 tasks, rev 0"},{"name":"duplicates","ok":true,"fixed":false,"message":"no id in both files"},{"name":"next_id","ok":true,"fixed":false,"message":"next_id 2 > highest id number 1"},{"name":"duplicate ids","ok":true,"fixed":false,"message":"every id is used once in its file"},{"name":"tmp files","ok":true,"fixed":false,"message":"none"},{"name":"attachment files","ok":true,"fixed":false,"message":"every file has metadata"},{"name":"attachment metadata","ok":true,"fixed":false,"message":"every attachment has its file"},{"name":"attachment content","ok":true,"fixed":false,"message":"every attachment matches its size and sha256"},{"name":"statuses","ok":true,"fixed":false,"message":"every active task is in a status of config.statuses"},{"name":"parents","ok":true,"fixed":false,"message":"every parent exists"},{"name":"fields","ok":true,"fixed":false,"message":"every field is declared and of its type"}]},"warnings":[]}
 --- stderr
 
