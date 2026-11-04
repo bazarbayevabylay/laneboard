@@ -5,8 +5,9 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, IdInput, locate, normalizeId, notFound, parseInput, toTaskView, unique } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, IdInput, locate, normalizeId, notFound, parseInput, toTaskView, unique } from './common.ts';
 import type { FieldInfo, OpContext, OpResult, TaskView } from './common.ts';
+import { isEarlierSessionName } from '../agent-name.ts';
 import type { ActorSource } from '../agent-name.ts';
 
 export const GetInput = z.strictObject({
@@ -199,6 +200,8 @@ export async function listEvents(ctx: OpContext, input: EventsInputT): Promise<O
 export const SummaryInput = z.strictObject({
   // Whose active tasks to list; without it only the counts per status.
   assignee: z.string().optional(),
+  // The session default name base of `assignee` (agent-name.ts): list unfinished tasks of its other sessions too.
+  session_base: z.string().optional(),
 });
 export type SummaryInputT = z.infer<typeof SummaryInput>;
 
@@ -214,6 +217,8 @@ export interface SummaryResult {
   first_status: string;
   // The last configured status: work there is done.
   final_status: string;
+  // Configured statuses that are not final (free and resumable tasks are in one of them).
+  open_statuses: string[];
   // Declared fields with type, description and an example.
   fields: Record<string, FieldInfo>;
   assignee: string | null;
@@ -225,10 +230,15 @@ export interface SummaryResult {
   // at most SUMMARY_UNASSIGNED_MAX of them, `unassigned_total` counts all.
   unassigned: ListItem[];
   unassigned_total: number;
+  // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's), newest update
+  // first, at most SUMMARY_RESUMABLE_MAX; empty without `session_base`.
+  resumable: ListItem[];
 }
 
 // How many free tasks the summary lists (prime stays short; the rest: list --unassigned).
 export const SUMMARY_UNASSIGNED_MAX = 10;
+// How many tasks of earlier sessions the summary lists (newest first; older ones are rarely the work a session resumes).
+export const SUMMARY_RESUMABLE_MAX = 5;
 
 // Session summary for `prime`: counts per status and the active tasks of one assignee (active.json only, lock-free).
 export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise<OpResult<SummaryResult>> {
@@ -242,8 +252,15 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const finalStatus = config.statuses.at(-1) ?? '';
   const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
-  const free = tasks.filter(({ task }) => task.assignee === null && task.status !== finalStatus);
+  // Free and resumable work is in a configured status that is not final, so `list --unassigned --status <open>...` finds the same tasks.
+  const open = config.statuses.filter((st) => !finalStatuses(config.statuses).includes(st));
+  const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status));
   free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
+  const resumable =
+    p.assignee === undefined
+      ? []
+      : tasks.filter(({ task }) => task.assignee !== null && open.includes(task.status) && isEarlierSessionName(task.assignee, p.session_base, p.assignee ?? ''));
+  resumable.sort((a, b) => byUpdatedDesc(a.task, b.task));
   return {
     data: {
       prefix: config.prefix,
@@ -252,12 +269,14 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       statuses: [...counts].map(([status, count]) => ({ status, count })),
       first_status: config.statuses[0] ?? '',
       final_status: finalStatus,
+      open_statuses: open,
       fields: fieldInfo(config),
       assignee: p.assignee ?? null,
       assigned: assigned.map(({ task, archived }) => toListItem(task, archived)),
       in_progress: inProgress.length,
       unassigned: free.slice(0, SUMMARY_UNASSIGNED_MAX).map(({ task, archived }) => toListItem(task, archived)),
       unassigned_total: free.length,
+      resumable: resumable.slice(0, SUMMARY_RESUMABLE_MAX).map(({ task, archived }) => toListItem(task, archived)),
     },
     warnings,
   };

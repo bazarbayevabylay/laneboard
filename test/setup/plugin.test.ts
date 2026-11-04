@@ -36,6 +36,9 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     expect(rules).toContain('then pass `--dir <path>` on every command');
     expect(rules).not.toContain('export LANEBOARD_DIR');
     expect(rules).toContain('rev from your last read or write');
+    // S3: the rev is needed only on top of what was read; two agents fetched it with `get` before a status change.
+    expect(rules).toContain('`--expected-rev` is optional: only for edits on top of what you read');
+    expect(rules).toContain('Status, comment, claim, finish: without it, and no `get` for it.');
     expect(rules).toContain('`--description` replaces the whole text');
     expect(rules).toContain('`error.details.task`');
     expect(rules).toContain('the last one is final');
@@ -54,7 +57,8 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     const first = agentRules().split('\n')[1] ?? '';
     expect(first).toMatch(/^1\. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one/);
     expect(first).toContain('comment each meaningful step');
-    expect(first).toContain('set the final status and add a result comment');
+    // S3: closing is one command (result comment, commit link, final status), after the commit.
+    expect(first).toContain('when done: commit, then `laneboard finish <ID> --result "<result>" --json`');
     expect(first).toContain('No untracked work.');
     expect(agentRules()).toContain('Every reply names `store` and `prefix`');
   });

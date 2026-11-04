@@ -146,7 +146,7 @@ export async function runCli(io: CliIo): Promise<number> {
         store ??= board !== undefined ? resolveBoard(io.env.HOME, board, io.cwd) : resolveStore(discovery);
         out.store = store.dir;
         out.ref = store;
-        return { store, ...named, home: io.env.HOME || undefined, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
+        return { store, ...named, cwd: io.cwd, home: io.env.HOME || undefined, lockWaitMs: io.lockWaitMs, lockMaxHoldMs: io.lockMaxHoldMs };
       },
       setStore: (dir) => {
         out.store = dir;

@@ -22,14 +22,15 @@ describe('default agent name', () => {
     const env = { ...session(A), LANEBOARD_AGENT: 'dev-1' };
     expect(resolveActor('me', env)).toEqual({ actor: 'me', actorSource: 'explicit' });
     expect(resolveActor(undefined, env)).toEqual({ actor: 'dev-1', actorSource: 'explicit' });
-    expect(resolveActor('', session(A))).toEqual({ actor: 'claude-code@Test-Person:1a2b3c4d', actorSource: 'default' });
+    // S3: a default name with a session part also names its base (claim --resume).
+    expect(resolveActor('', session(A))).toEqual({ actor: 'claude-code@Test-Person:1a2b3c4d', actorSource: 'default', sessionBase: 'claude-code@Test-Person' });
     expect(resolveActor(undefined, {})).toEqual({});
   });
 
   it('a name equal to this session\'s default name (copied from prime into --as, or set as LANEBOARD_AGENT) is still "default" (live test S2c)', async () => {
     const own = 'claude-code@Test-Person:1a2b3c4d';
-    expect(resolveActor(own, session(A))).toEqual({ actor: own, actorSource: 'default' });
-    expect(resolveActor(undefined, { ...session(A), LANEBOARD_AGENT: own })).toEqual({ actor: own, actorSource: 'default' });
+    expect(resolveActor(own, session(A))).toEqual({ actor: own, actorSource: 'default', sessionBase: 'claude-code@Test-Person' });
+    expect(resolveActor(undefined, { ...session(A), LANEBOARD_AGENT: own })).toEqual({ actor: own, actorSource: 'default', sessionBase: 'claude-code@Test-Person' });
     // Another session's default name, or the base without the session part, is a name of its own.
     expect(resolveActor(own, session(B))).toEqual({ actor: own, actorSource: 'explicit' });
     expect(resolveActor('claude-code@Test-Person', session(A))).toEqual({ actor: 'claude-code@Test-Person', actorSource: 'explicit' });
@@ -100,7 +101,7 @@ describe('agents without a name', () => {
   it('prime names the default and prints the create command without --as (so the events stay "default")', async () => {
     const s = await newStore();
     const r = await cli(['prime'], { cwd: s.root, env: session(A) });
-    expect(r.stdout).toContain('Your name is the session default claude-code@Test-Person:1a2b3c4d');
+    expect(r.stdout).toContain('Your name: session default claude-code@Test-Person:1a2b3c4d (no --as needed)');
     expect(r.stdout).toContain('  laneboard create "<short title of your work>" --status todo --assignee claude-code@Test-Person:1a2b3c4d --json\n');
     const json = JSON.parse((await cli(['prime', '--json'], { cwd: s.root, env: session(A) })).stdout);
     expect(json.data).toMatchObject({ agent: 'claude-code@Test-Person:1a2b3c4d', agent_source: 'default' });

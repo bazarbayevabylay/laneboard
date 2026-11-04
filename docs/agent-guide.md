@@ -108,7 +108,8 @@ laneboard setup gemini --remove
 
 ### 2.1 The rules in short
 
-- Before your first file change: claim your task or create one. Comment each meaningful step. When done: set the final status and add a result comment.
+- Before your first file change: claim your task or create one. Comment each meaningful step. When done: commit, then `laneboard finish <ID> --result "<result>"`.
+- `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`). Status changes, comments, `claim` and `finish` need none, so no `get` for a rev.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
 - Always pass `--json`. Your name: `--as <name>` or `export LANEBOARD_AGENT=<name>` (MCP: `actor`); without them Claude Code sessions write under their default name (2.5).
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final), the declared fields, your tasks and the free
@@ -117,7 +118,10 @@ laneboard setup gemini --remove
 ### 2.2 A task from start to end
 
 Your name once for the session, then create, claim, work, finish, archive. Every write replies short: `id`, the new `rev`, `status`,
-`assignee` (after `attach` also the `attachment`). The whole task: `laneboard get <ID>`, or `--full` on the write (MCP: `full: true`).
+`assignee` (after `attach` also the `attachment`, after `finish` the `commit`). The whole task: `laneboard get <ID>`, or `--full` on the write (MCP: `full: true`).
+`finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
+outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
+who then becomes its assignee); a second `finish` of a finished task changes nothing and warns. `--status` picks a final status.
 
 ```sh
 export LANEBOARD_AGENT=dev-1
@@ -127,8 +131,8 @@ laneboard comment DEMO-1 "Cause: the redirect drops the query string" --json
 laneboard update DEMO-1 --add-link branch=fix/login-redirect --field priority=1 --expected-rev 3 --json
 echo "request log" > trace.txt
 laneboard attach DEMO-1 trace.txt --json
-laneboard update DEMO-1 --status done --expected-rev 5 --json
-laneboard comment DEMO-1 "Result: fixed, regression test added" --json
+laneboard finish DEMO-1 --result "Fixed, regression test added" --json
+laneboard finish DEMO-1 --result "Again" --json
 laneboard archive DEMO-1 --json
 ```
 
@@ -185,7 +189,7 @@ else the default name of the session that started it. Every result has a second 
 | Tool | CLI |
 |---|---|
 | `task_create`, `task_get`, `task_list`, `task_update` | `create`, `get`, `list`, `update` |
-| `task_claim`, `task_comment`, `task_attach` | `claim`, `comment`, `attach` |
+| `task_claim`, `task_comment`, `task_finish`, `task_attach` | `claim`, `comment`, `finish`, `attach` |
 | `task_archive`, `task_restore`, `task_delete`, `task_events` | `archive`, `restore`, `delete`, `events` |
 
 `init`, `config`, `setup`, `prime`, `view`, `boards`, `doctor`, `migrate` and `import` are CLI-only.
@@ -203,11 +207,20 @@ LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=aaaa1111 laneboar
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=aaaa1111 laneboard claim DEMO-3 --json
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=bbbb2222 laneboard claim DEMO-3 --json  # exit 4
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=bbbb2222 laneboard prime
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=cccc3333 laneboard claim DEMO-3 --resume --json
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=cccc3333 laneboard claim DEMO-2 --resume --json  # exit 4
 export LANEBOARD_AGENT=dev-1
 ```
 
+After `/clear` Claude Code gives the session a new id, so its default name changes and its task in progress looks like another session's.
+`prime` under the default name lists unfinished tasks of the same base with another session id ("Your earlier sessions", with the age
+of the last update), and `claim <ID> --resume` takes one over: an `assigned` event with `resumed: true` (`get` shows "resumed from <old name>"),
+`resumed_from` in the reply. Only default names of the same user and harness qualify; a task of an explicit name (`dev-1` above) stays
+`ALREADY_CLAIMED`. A parallel live session of the same user has the same base, so resume only a task you did yourself before `/clear`
+that matches the current request. Compaction and `claude --resume <id>` keep the id; the MCP server keeps the id it started with.
+
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
-So when `prime` lists tasks under the default name, it adds that a subagent or parallel worker passes its own `--as` (the tasks may be the parent session's). Codex, Cursor, Gemini CLI and OpenCode get no default name
+So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name
 (they expose no session id, and one shared name would merge parallel sessions again), so pass `--as` there.
 
 ## 3. Configure

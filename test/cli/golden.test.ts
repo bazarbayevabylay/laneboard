@@ -117,6 +117,8 @@ const CASES: Case[] = [
   { name: 'comment', argv: ['comment', 'LB-1', 'tests pass', '--as', 'a'], setup: seed },
   { name: 'comment-file', argv: ['comment', 'LB-1', '--file', '-', '--as', 'a'], setup: seed, stdin: 'long\nresult\n' },
   { name: 'comment-dash-text', argv: ['comment', 'LB-1', '--as', 'a', '--', '- item one'], setup: seed },
+  { name: 'finish', argv: ['finish', 'LB-1', '--result', 'Fixed the redirect, tests green', '--as', 'dev-1'], setup: async (e) => void (await seed(e), await e.run(['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'])) },
+  { name: 'finish-unchanged', argv: ['finish', 'LB-1', '--result', 'again', '--as', 'a'], setup: async (e) => void (await seed(e), await e.run(['finish', 'LB-1', '--result', 'first', '--as', 'a'])) },
   { name: 'update-dash-value', argv: ['update', 'LB-1', '--title=-x thing', '--description=- a', '--as', 'a'], setup: seed },
   { name: 'attach', argv: ['attach', 'LB-1', 'notes.txt', '--as', 'a'], setup: seedFile },
   { name: 'attach-remove', argv: ['attach', 'LB-1', '--remove', 'notes.txt', '--as', 'a'], setup: seedAttached },

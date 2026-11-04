@@ -9,6 +9,7 @@ import { create } from './create.ts';
 import { remove } from './delete.ts';
 import { doctor } from './doctor.ts';
 import { events } from './events.ts';
+import { finish } from './finish.ts';
 import { get } from './get.ts';
 import { importCommand } from './import.ts';
 import { init } from './init.ts';
@@ -22,7 +23,7 @@ import type { CommandDef } from './types.ts';
 import { update } from './update.ts';
 import { view } from './view.ts';
 
-export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim, comment, attach, archive, restore, remove, events, init, config, setup, importCommand, prime, view, boards, mcp, migrate, doctor];
+export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim, comment, finish, attach, archive, restore, remove, events, init, config, setup, importCommand, prime, view, boards, mcp, migrate, doctor];
 
 // Find a command by name.
 export function findCommand(name: string): CommandDef | undefined {

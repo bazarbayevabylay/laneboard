@@ -6,7 +6,7 @@ import { createTask } from './create.ts';
 import { importTasks } from './import.ts';
 import { getTask, listEvents, listTasks, taskSummary, viewBoard } from './read.ts';
 import { listBoards } from '../boards.ts';
-import { claimTask, commentTask, updateTask } from './update.ts';
+import { claimTask, commentTask, finishTask, updateTask } from './update.ts';
 
 export const OPS = {
   createTask,
@@ -15,6 +15,7 @@ export const OPS = {
   updateTask,
   claimTask,
   commentTask,
+  finishTask,
   attachFile,
   archiveTasks,
   restoreTask,

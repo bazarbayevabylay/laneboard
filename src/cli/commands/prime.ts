@@ -64,7 +64,8 @@ export const prime: CommandDef = {
   name: 'prime',
   usage: 'prime [--hook | --edit-hook]',
   summary:
-    'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the command to create one. ' +
+    'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the ways to start one: ' +
+      'claim a task from the request, resume your own task from before /clear (claim --resume), take a free task, create one. ' +
     '--hook: plain text for a SessionStart hook, never fails. --edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing.',
   options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' } },
   args: { min: 0, max: 0 },
@@ -88,7 +89,7 @@ export const prime: CommandDef = {
     let warnings: string[] = [];
     try {
       ctx = c.op();
-      const r = await taskSummary(ctx, { assignee: agent });
+      const r = await taskSummary(ctx, { assignee: agent, session_base: named.sessionBase });
       summary = r.data;
       warnings = r.warnings;
     } catch (raw) {
@@ -111,11 +112,14 @@ export const prime: CommandDef = {
       statuses: summary?.statuses ?? [],
       first_status: summary?.first_status ?? null,
       final_status: summary?.final_status ?? null,
+      open_statuses: summary?.open_statuses ?? [],
       fields: summary?.fields ?? {},
       tasks: summary?.assigned ?? [],
       in_progress: summary?.in_progress ?? 0,
       unassigned: summary?.unassigned ?? [],
       unassigned_total: summary?.unassigned_total ?? 0,
+      session_base: named.sessionBase ?? null,
+      resumable: summary?.resumable ?? [],
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).

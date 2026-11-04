@@ -1,4 +1,4 @@
-// MCP over stdio with the real SDK client: exactly 11 tools (C3), instructions = agent rules, every tool called,
+// MCP over stdio with the real SDK client: exactly 12 tools (C3), instructions = agent rules, every tool called,
 // CLI/MCP parity on cloned stores (same data, same error objects), fresh reads per call (W3).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,7 +13,7 @@ import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
-const TOOL_NAMES = ['task_create', 'task_get', 'task_list', 'task_update', 'task_claim', 'task_comment', 'task_attach', 'task_archive', 'task_restore', 'task_delete', 'task_events'];
+const TOOL_NAMES = ['task_create', 'task_get', 'task_list', 'task_update', 'task_claim', 'task_comment', 'task_finish', 'task_attach', 'task_archive', 'task_restore', 'task_delete', 'task_events'];
 
 interface Mcp {
   client: Client;
@@ -133,12 +133,12 @@ const CASES: ParityCase[] = [
 let base: (TestStore & { file: string }) | undefined;
 
 describe('MCP server over stdio (SDK client)', () => {
-  it('C3: every core op is a tool or CLI-only; exactly 11 tools', () => {
+  it('C3: every core op is a tool or CLI-only; exactly 12 tools', () => {
     expect(Object.keys(TOOLS).sort()).toEqual(Object.keys(OPS).sort());
     expect(TOOL_LIST.map((t) => t.def.name)).toEqual(TOOL_NAMES);
   });
 
-  it('lists exactly 11 tools with strict schemas; instructions are the agent rules (<= 4096 chars)', async () => {
+  it('lists exactly 12 tools with strict schemas; instructions are the agent rules (<= 4096 chars)', async () => {
     const s = await newStore();
     const mcp = await startMcp(s.root);
     try {
@@ -161,7 +161,7 @@ describe('MCP server over stdio (SDK client)', () => {
     }
   });
 
-  it('calls each of the 11 tools in one session; results carry the CLI data as structuredContent and text', async () => {
+  it('calls each of the 12 tools in one session; results carry the CLI data as structuredContent and text', async () => {
     base ??= await baseStore();
     const root = cloneRoot(base.root);
     const mcp = await startMcp(root);
@@ -183,13 +183,15 @@ describe('MCP server over stdio (SDK client)', () => {
       expect(await call('task_claim', { id: 'LB-4', actor: 'm' })).toMatchObject({ assignee: 'm', rev: 2 });
       expect(await call('task_update', { id: 'LB-4', status: 'in_progress', expected_rev: 2, actor: 'm' })).toMatchObject({ status: 'in_progress', rev: 3 });
       expect(await call('task_comment', { id: 'LB-4', text: '- item one', actor: 'm' })).toMatchObject({ rev: 4 });
+      // S3: the server folder is no git checkout, so no commit is linked.
+      expect(await call('task_finish', { id: 'LB-4', result: 'Done over MCP', actor: 'm' })).toEqual({ id: 'LB-4', rev: 5, status: 'done', assignee: 'm', commit: null });
       const attached = await call('task_attach', { id: 'LB-4', path: base.file, actor: 'm', full: true });
       expect(attached.attachments).toMatchObject([{ name: 'notes.txt', size: 11 }]);
       expect(await call('task_attach', { id: 'LB-4', remove: 'notes.txt', actor: 'm', full: true })).toMatchObject({ attachments: [] });
       expect(await call('task_archive', { ids: ['LB-4'], actor: 'm' })).toMatchObject({ archived: [{ id: 'LB-4' }], dry_run: false });
       expect(await call('task_restore', { id: 'LB-4', actor: 'm', full: true })).toMatchObject({ archived: false });
       const events = await call('task_events', { task: 'LB-4', limit: 50 });
-      expect((events.items as Array<{ type: string }>).map((e) => e.type)).toEqual(['restored', 'archived', 'detached', 'attached', 'commented', 'status', 'assigned', 'created']);
+      expect((events.items as Array<{ type: string }>).map((e) => e.type)).toEqual(['restored', 'archived', 'detached', 'attached', 'status', 'commented', 'commented', 'status', 'assigned', 'created']);
       expect(await call('task_delete', { id: 'LB-4', confirm_id: 'LB-4', actor: 'm' })).toEqual({ id: 'LB-4', deleted: true });
       expect([...called].sort()).toEqual([...TOOL_NAMES].sort());
 

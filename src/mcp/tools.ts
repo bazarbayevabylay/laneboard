@@ -9,6 +9,7 @@ import {
   DeleteInput,
   ERRORS,
   EventsInput,
+  FinishInput,
   GetInput,
   LaneboardError,
   ListInput,
@@ -87,14 +88,16 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   updateTask: {
     name: 'task_update',
-    description: 'Change a task (at least one change); status changes only here. assignee null unassigns. description replaces the whole text. Pass expected_rev from your last read or write (every write returns the new rev).',
+    description:
+      'Change a task (at least one change). assignee null unassigns. description replaces the whole text. expected_rev is optional: pass it (the rev of your last read or write) only for edits on top of what you read (description, fields); a status change needs none. Closing a task: task_finish.',
     params: taskWriteParams(UpdateInput.omit({ field_args: true })),
     write: true,
     taskReply: true,
   },
   claimTask: {
     name: 'task_claim',
-    description: 'Take a task: assignee := actor, optionally set status. Held by someone else: ALREADY_CLAIMED, do not take it over.',
+    description:
+      'Take a task: assignee := actor, optionally set status. Held by someone else: ALREADY_CLAIMED, do not take it over. resume: true takes over a task of another session of your session default name (your own work before /clear, listed by laneboard prime) - only one you did yourself that matches the current request.',
     params: taskWriteParams(ClaimInput),
     write: true,
     taskReply: true,
@@ -103,6 +106,14 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
     name: 'task_comment',
     description: 'Add a comment to a task (notes, results). A comment is a change: rev +1; task_get shows it as an event of type commented.',
     params: taskWriteParams(CommentInput),
+    write: true,
+    taskReply: true,
+  },
+  finishTask: {
+    name: 'task_finish',
+    description:
+      'Close a task in one call: the result comment, a link to the current git commit (HEAD of the server folder; no_commit: true for none), then the final status. Only the assignee, or anybody for an unassigned task. No expected_rev. Already final: unchanged, with a warning. Returns id, rev, status, assignee, commit.',
+    params: taskWriteParams(FinishInput),
     write: true,
     taskReply: true,
   },
@@ -223,11 +234,11 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd, home: env.env.HOME || undefined });
     // Same order as the CLI: the actor parameter, LANEBOARD_AGENT, then the session's default name (recorded as such on events).
     const named = entry.def.write ? resolveActor(who, env.env) : {};
-    const ctx: OpContext = { store, ...named, lockWaitMs: env.lockWaitMs };
+    const ctx: OpContext = { store, ...named, cwd: env.cwd, lockWaitMs: env.lockWaitMs };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     const result = await op(ctx, input);
     // Same short reply as the CLI unless the whole task is asked for (the attachment added rides along, as in the CLI).
-    const data = entry.def.taskReply && !wantFull ? { ...writeReply(result.data as unknown as TaskView, entry.op === 'attachFile' && input.remove === undefined) } : result.data;
+    const data = entry.def.taskReply && !wantFull ? { ...writeReply(result.data as unknown as TaskView, entry.op === 'attachFile' && input.remove === undefined, result.reply) } : result.data;
     // Same notice as the CLI: a store found in a parent directory may belong to another project.
     const prefix = storePrefix(store.dir);
     const parent = parentStoreWarning(store, env.cwd, prefix, env.env.HOME || undefined);

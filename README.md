@@ -77,11 +77,15 @@ laneboard setup codex
 laneboard create "Починить редирект после входа" --status todo --assignee dev-1 --as dev-1 --json
 laneboard claim WEB-1 --status in_progress --as dev-1 --json
 laneboard comment WEB-1 "Причина: редирект теряет query string" --as dev-1 --json
-laneboard update WEB-1 --status done --expected-rev 3 --as dev-1 --json
+laneboard finish WEB-1 --result "Исправлено, тест на редирект добавлен" --as dev-1 --json
 laneboard list --scope all --json
 ```
 
-Ответ записи короткий: `id`, новый `rev`, `status`, `assignee` (после `attach` ещё `attachment`); без `--json` — одна строка.
+`finish` закрывает задачу одной записью: комментарий-итог, ссылка на текущий коммит git (`commit=<HEAD>`, если папка в git-репозитории; `--no-commit` — без неё), затем финальный статус.
+Закрыть может исполнитель задачи или кто угодно, если исполнителя нет; повторный `finish` закрытой задачи ничего не меняет и предупреждает.
+`--expected-rev` не обязателен: он нужен только для правок поверх прочитанного (описание, поля); статус, комментарий, `claim` и `finish` — без него и без `get` ради rev.
+
+Ответ записи короткий: `id`, новый `rev`, `status`, `assignee` (после `attach` ещё `attachment`, после `finish` — `commit`); без `--json` — одна строка.
 Задача целиком — `laneboard get WEB-1` или `--full` у записи (в MCP — `full: true`).
 Человеку удобнее без `--json`: `laneboard list`, `laneboard get WEB-1`, `laneboard events`, а доску целиком показывает `laneboard view` (ниже).
 
@@ -94,12 +98,15 @@ laneboard list --scope all --json
 | Имя по умолчанию в Claude Code | `claude-code@<git user.name или пользователь ОС>:<8 символов id сессии>`; основу пишет `setup`, id сессии Claude Code даёт сам (`CLAUDE_CODE_SESSION_ID`) |
 | Две параллельные сессии без имён | получают разные имена, поэтому `claim` второй сессии даёт `ALREADY_CLAIMED` |
 | Откуда имя у записи | в каждом событии задачи поле `actor_source`: `explicit` или `default`; `get` помечает такое имя `(default name)` |
-| Сабагенты одной сессии | делят её имя по умолчанию, поэтому передают своё `--as`; `prime` под таким именем с задачами напоминает об этом, а свободные задачи (без исполнителя) показывает с командой `claim` |
+| Сабагенты одной сессии | делят её имя по умолчанию, поэтому передают своё `--as`; `prime` под таким именем всегда начинает с этого, а свободные задачи (без исполнителя) показывает с командой `claim` |
+| После `/clear` | у сессии новый id, значит и новое имя: своя задача в работе выглядит чужой. `prime` показывает незаконченные задачи с той же основой имени и другим id сессии («Your earlier sessions», с возрастом последнего обновления), `claim <ID> --resume` забирает такую; в событиях — `assigned` с `resumed: true`. Явные имена так не забираются. Сжатие контекста и `claude --resume <id>` id не меняют |
+| Две живые сессии одного пользователя | у них одна основа имени, поэтому `--resume` — только для своей задачи, которую сессия сама делала до `/clear` и которая совпадает с текущим запросом |
 | Codex, Cursor, Gemini, OpenCode | имени по умолчанию нет: id сессии они не дают, общее имя склеило бы параллельные сессии; нужно `--as` |
 
 ```sh
-LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "Без имени" --status todo --json
-laneboard prime
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "Без имени" --status todo --assignee claude-code@ann:a1b2c3d4 --json
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard prime
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard claim WEB-2 --resume --json
 ```
 
 ## Просмотр досок

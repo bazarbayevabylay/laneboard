@@ -15,6 +15,10 @@ export interface OpContext {
   actor?: string;
   // Where the actor's name came from (recorded on events); explicit when not given.
   actorSource?: ActorSource;
+  // The session default name without its session part (agent-name.ts); claim --resume takes tasks of this base's other sessions.
+  sessionBase?: string;
+  // The folder the command runs in; finish links the commit of its git checkout.
+  cwd?: string;
   // Home directory of the machine board registry (CLI: HOME); ops that register a board need it.
   home?: string;
   faults?: Faults;
@@ -28,10 +32,11 @@ export function txOptions(ctx: OpContext, warnings: string[]): TransactOptions {
   return { faults: ctx.faults, lockWaitMs: ctx.lockWaitMs, lockMaxHoldMs: ctx.lockMaxHoldMs, warnings };
 }
 
-// Op output: data for the envelope plus warnings.
+// Op output: data for the envelope plus warnings; `reply`: facts of this write for the short write reply (claim --resume, finish).
 export interface OpResult<T> {
   data: T;
   warnings: string[];
+  reply?: WriteFacts;
 }
 
 export const MAX_COMMENT_CHARS = 10000;
@@ -149,6 +154,12 @@ export function normalizeId(raw: string, prefix: string, field = 'id'): string {
     input: suggestion ? { field, value: raw, suggestion } : { field, value: raw },
     fix: suggestion ? `use ${suggestion}` : `use an exact id like ${prefix}-12 (see laneboard list)`,
   });
+}
+
+// Statuses that end the work: the last configured status (config has one final status).
+export function finalStatuses(statuses: readonly string[]): string[] {
+  const last = statuses.at(-1);
+  return last === undefined ? [] : [last];
 }
 
 // Status must be one of config.statuses.
@@ -442,7 +453,7 @@ export function toTaskView(task: TaskT, archived: boolean, eventsLimit?: number)
 
 // Short reply of a write that changed one task (CLI --json and MCP by default): what the next step needs, not the whole task
 // (`get` or --full / MCP `full` gives that). The newest attachment rides along after an attach (its name removes it again).
-export interface WriteReply {
+export interface WriteReply extends WriteFacts {
   id: string;
   rev: number;
   status: string;
@@ -450,11 +461,20 @@ export interface WriteReply {
   attachment?: { name: string; size: number; sha256: string };
 }
 
+// What a write did that the task alone does not show: the earlier session a claim --resume took the task from,
+// the commit finish linked (null: none, outside git or --no-commit).
+export interface WriteFacts {
+  resumed_from?: string;
+  commit?: string | null;
+}
+
 // Explicit mapping of a task view to the short write reply; `attached`: the write added an attachment (attach appends it last).
-export function writeReply(task: TaskView, attached = false): WriteReply {
+export function writeReply(task: TaskView, attached = false, facts: WriteFacts = {}): WriteReply {
   const reply: WriteReply = { id: task.id, rev: task.rev, status: task.status, assignee: task.assignee };
   const added = attached ? task.attachments.at(-1) : undefined;
   if (added) reply.attachment = { name: added.name, size: added.size, sha256: added.sha256 };
+  if (facts.resumed_from !== undefined) reply.resumed_from = facts.resumed_from;
+  if (facts.commit !== undefined) reply.commit = facts.commit;
   return reply;
 }
 

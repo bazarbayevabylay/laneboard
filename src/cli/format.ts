@@ -2,6 +2,7 @@
 import { ERRORS, fieldsLine, LaneboardError, shellQuote, toErrorObject } from '../core/index.ts';
 import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
+import { age } from './board-view.ts';
 import type { SetupResult } from '../setup/index.ts';
 
 export { shellQuote };
@@ -144,6 +145,8 @@ function cut(text: string): string {
 // Event data for people: a comment as its text, other events as short key=value pairs (an update as key=before→after).
 export function eventText(type: string, data: Record<string, unknown>): string {
   if (type === 'commented' && typeof data.text === 'string') return data.text;
+  // claim --resume: the task came from another session of the same default name base.
+  if (type === 'assigned' && data.resumed === true) return `resumed from ${eventValue(data.from)} to=${eventValue(data.to)}`;
   return Object.entries(data)
     .map(([key, value]) => {
       if (key === 'sha256' && typeof value === 'string') return `${key}=${value.slice(0, SHA_SHOWN)}…`;
@@ -237,6 +240,8 @@ export interface PrimeData {
   first_status: string | null;
   // The last configured status (work there is done); null without a store.
   final_status: string | null;
+  // Configured statuses that are not final (the free-task footer lists them); empty without a store.
+  open_statuses: string[];
   fields: Record<string, FieldInfo>;
   tasks: ListItem[];
   // The agent's tasks not in the final status (without a name: anybody's assigned ones, used by the edit hook).
@@ -244,11 +249,22 @@ export interface PrimeData {
   // Free work: active tasks without an assignee, not in the final status (at most 10, by priority), and how many there are.
   unassigned: ListItem[];
   unassigned_total: number;
+  // The session default name without its session part (null for other names); its other sessions' unfinished tasks are `resumable`.
+  session_base: string | null;
+  resumable: ListItem[];
 }
 
-// Under tasks of the session's default name: the parent session and its subagents share that name (LB-8).
-const SESSION_HINT =
-  'Subagent or parallel worker? Then the tasks above may be your parent session\'s (you share its default name): pass your own --as <name> on every command, prime too.';
+// Always under the session default name: the parent session, its subagents and parallel workers share it (LB-8, review S2g),
+// so it comes before every command prime prints.
+function sessionLine(agent: string): string {
+  return (
+    `Your name: session default ${agent} (no --as needed). Subagent or parallel worker? It is your parent's name: ` +
+    'run laneboard prime --as <your-own-name> and pass that --as on every command.'
+  );
+}
+
+// Characters the status and field lines keep before the board's description in the store line is cut (prime at its size limit).
+const MIN_STATUS_ROOM = 40;
 
 // `line` cut to `room` characters, marked with an ellipsis when cut.
 function fit(line: string, room: number): string {
@@ -261,76 +277,116 @@ function asOption(d: PrimeData): string {
   return d.agent_source === 'default' ? '' : ` --as ${shellQuote(d.agent)}`;
 }
 
+// A task line of prime: id, status, rev, title.
+function taskLine(t: ListItem): string {
+  return `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
+}
+
 // `text` plus one line per task while the whole stays under PRIME_MAX_CHARS with `reserve` characters left for what follows;
 // tasks that do not fit (or that `total` counts beyond `items`) end in the `more` footer.
-function withTasks(text: string, items: readonly ListItem[], total: number, more: (n: number) => string, reserve: number): string {
+function withTasks(text: string, items: readonly ListItem[], total: number, more: (n: number) => string, reserve: number, line = taskLine): string {
   let out = text;
   for (const [i, t] of items.entries()) {
-    const line = `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
+    const next = line(t);
     const left = total - i - 1;
-    if (out.length + line.length + (left ? more(left).length : 0) + reserve > PRIME_MAX_CHARS) return out + more(total - i);
-    out += line;
+    if (out.length + next.length + (left ? more(left).length : 0) + reserve > PRIME_MAX_CHARS) return out + more(total - i);
+    out += next;
   }
   return total > items.length ? out + more(total - items.length) : out;
 }
 
+// What else prime lists for an agent without a task in progress: tasks of its earlier sessions, free tasks.
+interface Choices {
+  resume: boolean;
+  free: boolean;
+}
+
 // What to do when the agent has no task in progress: the exact create command (and how to keep a name without one); `dir` is
-// passed on as --dir. Under a warning that the store looks like another project's, no command for that store (as the edit hook).
-function noTaskText(d: PrimeData, dir: string): string {
+// passed on as --dir. With earlier-session or free tasks listed, one numbered order of ways (an id from the request, resume, a free
+// task, create), so a weak model neither duplicates a free task nor takes work that is not its own. Under a warning that the store
+// looks like another project's, no command for that store (as the edit hook).
+function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
   if (d.store_warning !== null) {
     return "You have no task in progress. The store above looks like another project's: create your task on this folder's own board (see the warning).";
   }
   const name = d.agent === null ? '<your-name>' : shellQuote(d.agent);
-  const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name} --as ${name}${dir} --json`;
-  if (d.agent === null) {
-    return [
-      'You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:',
-      create,
-      'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).',
-    ].join('\n');
+  // The default name is used without --as, so commands copied from here stay "default" in the task events.
+  const as = d.agent_source === 'default' ? '' : ` --as ${name}`;
+  const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${as}${dir} --json`;
+  const claim = `laneboard claim <ID>${asOption(d)}${dir} --json`;
+  const keepName = 'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).';
+  if (!choices.resume && !choices.free) {
+    if (d.agent === null) return ['You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:', create, keepName].join('\n');
+    return ['You have no task in progress. Create one now:', create, `Given a task id instead: ${claim}`].join('\n');
   }
-  if (d.agent_source === 'default') {
-    // The default name is used without --as, so commands copied from here stay "default" in the task events.
-    const plain = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${dir} --json`;
-    return [
-      `You have no task in progress. Your name is the session default ${d.agent} (writes use it without --as; pick your own with --as <name> or LANEBOARD_AGENT). Create one now:`,
-      plain,
-      `Given a task id instead: laneboard claim <ID>${dir} --json`,
-    ].join('\n');
-  }
-  return ['You have no task in progress. Create one now:', create, `Given a task id instead: laneboard claim <ID> --as ${name}${dir} --json`].join('\n');
+  const ways = [`The request names a task id: ${claim}`];
+  if (choices.resume) ways.push(`Your own task from before /clear (below) fits the request: laneboard claim <ID> --resume${dir} --json`);
+  if (choices.free) ways.push(`A free task below fits the request: ${claim}`);
+  ways.push('Otherwise create one:');
+  const intro =
+    d.agent === null
+      ? 'You have no task in progress (your name is not set). Start one the first way that fits, with a name you keep for the whole session:'
+      : 'You have no task in progress. Start one the first way that fits:';
+  return [intro, ...ways.map((w, i) => `${i + 1}. ${w}`), create, ...(d.agent === null ? [keepName] : [])].join('\n');
 }
 
-// Rules, store, statuses (final one named), fields, then the agent's tasks or the command to create one, then the free tasks with the
-// claim command; at most PRIME_MAX_CHARS characters. `storeDir`: the store was named by --dir, so the printed commands carry it.
-export function primeText(d: PrimeData, storeDir?: string): string {
+// Rules, store, statuses (final one named), fields, the session-name line, then the agent's tasks or the ways to start one, the tasks of
+// its earlier sessions (resume), then the free tasks with the claim command; at most PRIME_MAX_CHARS characters.
+// `storeDir`: the store was named by --dir, so the printed commands carry it; `now`: for the age of earlier-session tasks.
+export function primeText(d: PrimeData, storeDir?: string, now = new Date()): string {
   const head = `${d.rules}\n`;
   if (d.store_problem !== null) return fit(`${head}\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
   const dir = storeDir === undefined ? '' : ` --dir ${shellQuote(storeDir)}`;
   const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'}${dir} --json`;
-  const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${dir} --json`;
+  // The same tasks as the free list: no assignee, a configured status that is not final.
+  const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${d.open_statuses.map((st) => ` --status ${shellQuote(st)}`).join('')}${dir} --json`;
+  const resumeMore = (n: number): string => `\n... ${n} more not shown`;
   const listed = d.agent !== null && d.tasks.length > 0;
-  // Without a name the agent's own tasks are unknown, so the create command is always shown.
-  const closing = [d.agent === null || d.in_progress === 0 ? noTaskText(d, dir) : '', listed ? `Your active tasks (${d.agent}), newest update first:` : ''].filter(Boolean).join('\n');
-  const hint = listed && d.agent_source === 'default' ? `\n${SESSION_HINT}` : '';
+  const noTask = d.agent === null || d.in_progress === 0;
   // Under a warning that the store looks like another project's, no claim command for it (as noTaskText).
+  const resume = noTask && d.store_warning === null && d.session_base !== null && d.resumable.length > 0;
   const free = d.store_warning === null && d.unassigned_total > 0;
-  const freeHead = free ? `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json` : '';
-  const board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
-  const store = [`Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})${board}`, ...(d.store_warning ? [`warning: ${d.store_warning}`] : [])].join('\n');
-  // Status and field lines share what is left after the rules, the store, the closing lines, the hint, the free header and the footers.
-  const tail = hint.length + freeHead.length + (free ? freeMore(d.unassigned_total).length : 0);
-  const room = PRIME_MAX_CHARS - head.length - store.length - closing.length - (listed ? more(d.tasks.length).length : 0) - tail - 4;
+  // Without a name the agent's own tasks are unknown, so the ways to start one are always shown.
+  const closing = [
+    d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent) : '',
+    noTask ? noTaskText(d, dir, { resume, free }) : '',
+    listed ? `Your active tasks (${d.agent}), newest update first:` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  // A parallel session of the same user has the same base: the header says so next to the list (the command is in the ways above).
+  const resumeHead = resume
+    ? '\nYour earlier sessions, unfinished (a parallel session of yours has the same name: resume only your own):'
+    : '';
+  // The holder differs only in its session part: `<base>:<session>`.
+  const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${t.title}`;
+  // Without a task in progress the numbered ways above carry the claim command, so the header gives no second order.
+  const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json`;
+  let board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
+  const storeHead = `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;
+  const warning = d.store_warning ? `\nwarning: ${d.store_warning}` : '';
+  // The status and field lines share what is left after the rules, the store, the closing lines, the section headers and the footers;
+  // only when fewer than MIN_STATUS_ROOM characters would be left for them is the board's name and description cut too.
+  const freeTail = freeHead.length + (free ? freeMore(d.unassigned_total).length : 0);
+  // The newest task of an earlier session is the one a session after /clear most likely resumes: its line is never left out.
+  const firstResume = resume && d.resumable[0] ? resumeLine(d.resumable[0]).length : 0;
+  const tail = resumeHead.length + firstResume + (resume ? resumeMore(d.resumable.length).length : 0) + freeTail;
+  const room = PRIME_MAX_CHARS - head.length - storeHead.length - warning.length - closing.length - (listed ? more(d.tasks.length).length : 0) - tail - 4;
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
-  if (status.length + 1 + fields.length > room) {
-    fields = fit(fields, Math.floor(room / 3));
-    status = fit(status, room - 1 - fields.length);
+  const lines = status.length + 1 + fields.length;
+  if (board.length + lines > room) {
+    if (room - board.length < Math.min(lines, MIN_STATUS_ROOM)) board = fit(board, Math.max(0, room - Math.min(lines, MIN_STATUS_ROOM)));
+    const left = room - board.length;
+    if (lines > left) {
+      fields = fit(fields, Math.floor(left / 3));
+      status = fit(status, left - 1 - fields.length);
+    }
   }
-  let text = [head, store, status, fields, closing].join('\n');
-  // The agent's own tasks first; the hint and the free header keep their room, so they are never cut.
+  let text = [head, `${storeHead}${board}${warning}`, status, fields, closing].join('\n');
+  // The agent's own tasks first; the section headers keep their room, so they are never cut.
   if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, tail);
-  text += hint;
+  if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeTail, resumeLine);
   if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0);
   return fit(text, PRIME_MAX_CHARS);
 }
