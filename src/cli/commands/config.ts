@@ -9,7 +9,7 @@ export const config: CommandDef = {
   summary:
     'Show the board name, description, prefix and statuses; --name / --description change them, --prefix only while the board has no task (ids keep their prefix). ' +
     '--statuses sets the whole status list in order, the last one final: add and reorder freely; a status that active tasks are in is removed only after they move. ' +
-    'Updates the machine registry.',
+    '--name, --description and --prefix update the machine registry.',
   options: { name: { type: 'string' }, description: { type: 'string' }, prefix: { type: 'string' }, statuses: { type: 'string' } },
   args: { min: 0, max: 0 },
   async run(c) {

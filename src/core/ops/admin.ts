@@ -307,9 +307,11 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
     return { data, warnings };
   }
   // Like init, the registry lock is held around the prefix check and the write, so two boards cannot take one prefix. An unchanged
-  // prefix is checked too: a copied project folder must not register a second board with the same ids (review S5c MINOR).
+  // prefix is checked too: a copied project folder must not register a second board with the same ids (review S5c MINOR); the board
+  // registered first under its path keeps working next to such a copy (checkPrefixFree, ADR §33).
   const data = await updateRegistry(ctx.home, ctx, async (entries) => {
-    if (prefix === undefined) checkPrefixFree(entries, ctx.store.dir, read().prefix);
+    const current = read().prefix;
+    if (prefix === undefined || prefix === current) warnings.push(...checkPrefixFree(entries, ctx.store.dir, current));
     else {
       const taken = takenPrefixes(entries, ctx.store.dir);
       const owner = taken.get(prefix);

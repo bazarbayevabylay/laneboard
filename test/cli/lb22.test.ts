@@ -4,10 +4,11 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/core/config.ts';
 import { acquireLock } from '../../src/core/lock.ts';
-import { cleanupTemp, cli, tempDir } from '../helpers.ts';
+import { contentSha } from '../../src/core/store.ts';
+import { cleanupTemp, cli, readStore, tempDir, writeRaw } from '../helpers.ts';
 import type { CliRun } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -164,6 +165,37 @@ describe('config --statuses', () => {
     }
     expect(fs.readFileSync(path.join(store, 'config.json'), 'utf8')).toBe(before);
   });
+
+  it('the in-use check reads the tasks under the store lock: a task that enters the dropped status while config waits for the lock blocks it (review LB-22 MAJOR 2)', async () => {
+    const { p, store } = await board();
+    const before = fs.readFileSync(path.join(store, 'config.json'), 'utf8');
+    const lockPath = path.join(store, 'lock');
+    const lock = await acquireLock(store);
+    // config's first attempt at the lock directory (busy: the test holds it) means everything it does before the lock is done.
+    let waiting!: () => void;
+    const attempted = new Promise<void>((resolve) => (waiting = resolve));
+    const mkdir = fs.mkdir;
+    const spy = vi.spyOn(fs, 'mkdir').mockImplementation(((dir: fs.PathLike, ...rest: unknown[]) => {
+      if (String(dir) === lockPath) waiting();
+      return (mkdir as (...a: unknown[]) => void)(dir, ...rest);
+    }) as typeof fs.mkdir);
+    let run: Promise<CliRun>;
+    try {
+      run = cli(['config', '--statuses', 'todo,review,done', '--json'], { cwd: p, env: {}, lockWaitMs: 20_000 });
+      await attempted;
+      // In that window a writer (here: the test, holding the lock like transact) moves WEB-1 into in_progress, the status config drops.
+      const active = readStore(store, 'active');
+      const tasks = active.tasks.map((t) => (t.id === 'WEB-1' ? { ...t, status: 'in_progress' } : t));
+      writeRaw(path.join(store, 'active.json'), `${JSON.stringify({ ...active, tasks, content_sha256: contentSha(tasks) }, null, 2)}\n`);
+    } finally {
+      spy.mockRestore();
+      await lock.release();
+    }
+    const r = await doc(run);
+    expect(r.code).toBe(2);
+    expect(r.error).toMatchObject({ code: 'INVALID_VALUE', details: { in_use: [{ status: 'in_progress', tasks: ['WEB-1'] }] } });
+    expect(fs.readFileSync(path.join(store, 'config.json'), 'utf8')).toBe(before);
+  });
 });
 
 describe('prefix checked at every registration (review S5c MINOR)', () => {
@@ -179,7 +211,7 @@ describe('prefix checked at every registration (review S5c MINOR)', () => {
     expect(r.code).toBe(2);
     expect(r.error).toMatchObject({
       code: 'INVALID_VALUE',
-      message: `prefix WEB of the board at ${store} is already used by the board at ${path.join(web, '.laneboard')}; two boards with one prefix have look-alike ids, so this board is not registered; give it a free prefix`,
+      message: `prefix WEB of the board at ${store} is already used by the board at ${path.join(web, '.laneboard')}, registered earlier; two boards with one prefix have look-alike ids, so this board is not registered; give it a free prefix`,
       fix: 'laneboard config --name web2 --json --prefix WEB2',
       details: { taken: ['WEB'], owner: path.join(web, '.laneboard') },
     });
@@ -190,7 +222,7 @@ describe('prefix checked at every registration (review S5c MINOR)', () => {
     expect(registered(m.home)).toEqual(['WEB', 'WEB2']);
   });
 
-  it('a copied project folder with tasks: setup writes its files but does not register it; the warning names the other board', async () => {
+  it('a copied project folder with tasks: setup writes its files but does not register it; the warning names the other board, its fix undoes the setup', async () => {
     const m = machine();
     const web = m.project('web');
     expect((await m.run(web, ['init', '--description', 'web shop'])).code).toBe(0);
@@ -200,17 +232,89 @@ describe('prefix checked at every registration (review S5c MINOR)', () => {
     const r = await doc(m.run(copy, ['setup', 'gemini', '--json']));
     expect(r.code).toBe(0);
     const owner = path.join(web, '.laneboard');
+    const store = path.join(copy, '.laneboard');
+    const fix = `laneboard setup gemini --remove --dir ${store}`;
     expect(r.warnings).toContain(
-      `the board was not added to the machine registry (laneboard boards): prefix WEB of the board at ${path.join(copy, '.laneboard')} is already used by the board at ${owner}; ` +
-        'two boards with one prefix have look-alike ids, so this board is not registered; it has 1 task(s) with ids like WEB-1, so its prefix cannot change; ' +
-        `fix: if this board is a copy of that one, use that board: laneboard prime --dir ${owner}; else move ${path.join(copy, '.laneboard')} aside and create this project's own board: ` +
-        `laneboard init --dir ${path.join(copy, '.laneboard')} --name <name> --description "<whose project, what work>"`,
+      `the board was not added to the machine registry (laneboard boards): prefix WEB of the board at ${store} is already used by the board at ${owner}, registered earlier; ` +
+        'two boards with one prefix have look-alike ids, so this board is not registered; it has 1 task(s) with ids like WEB-1, so its prefix cannot change. ' +
+        'If this folder is a copy of that project, a harness set up here writes to the copy: undo that setup in this folder (the fix), ' +
+        `and work on that board from its project (laneboard setup gemini in ${web}); else move ${store} aside and create this project's own board ` +
+        `(laneboard init --dir ${store} --name <name> --description "<whose project, what work>"); fix: ${fix}`,
     );
     expect(registered(m.home)).toEqual(['WEB']);
-    expect((await m.run(copy, ['prime', '--dir', owner])).code).toBe(0);
-    // The same through config: refused, the config of the copy is unchanged.
-    expect((await doc(m.run(copy, ['config', '--description', 'copy', '--json']))).error.code).toBe('INVALID_VALUE');
-    expect(loadConfig(path.join(copy, '.laneboard')).description).toBe('web shop');
+    expect(fs.existsSync(path.join(copy, 'GEMINI.md'))).toBe(true);
+    // The fix runs in the copy and takes its harness files away; setup in the original project pins the original board.
+    const undone = await doc(m.run(copy, shellArgv(fix).concat('--json')));
+    expect(undone).toMatchObject({ code: 0, data: { mode: 'remove' } });
+    expect(fs.existsSync(path.join(copy, 'GEMINI.md'))).toBe(false);
+    expect(fs.existsSync(path.join(copy, '.gemini', 'settings.json'))).toBe(false);
+    expect(await doc(m.run(web, ['setup', 'gemini', '--json']))).toMatchObject({ code: 0, warnings: [] });
+    // The same through config: refused, the config of the copy is unchanged; without a harness at hand the fix has a placeholder.
+    const c = await doc(m.run(copy, ['config', '--description', 'copy', '--json']));
+    expect(c.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard setup <harness> --remove --dir ${store}` });
+    expect(loadConfig(store).description).toBe('web shop');
+  });
+
+  it('a duplicate already in the registry (an older laneboard registered the copy) does not lock the original board; the copy stays refused (review LB-22 MAJOR 1)', async () => {
+    const m = machine();
+    const web = m.project('web');
+    expect((await m.run(web, ['init', '--description', 'web shop'])).code).toBe(0);
+    expect((await m.run(web, ['create', 'one', '--status', 'todo', '--as', 'dev'])).code).toBe(0);
+    const owner = path.join(web, '.laneboard');
+    const copyProject = path.join(m.projects, 'web2');
+    fs.cpSync(web, copyProject, { recursive: true });
+    const copy = path.join(copyProject, '.laneboard');
+    // What setup of 0.3.1 / a1f02eb wrote in the copy: a second WEB entry, registered after the original.
+    const file = path.join(m.home, '.laneboard', 'boards.json');
+    const reg = JSON.parse(fs.readFileSync(file, 'utf8')) as { boards: Array<{ registered_at: string }> };
+    const later = new Date(Date.parse(reg.boards[0]?.registered_at ?? '') + 60_000).toISOString();
+    reg.boards.push({ path: copy, prefix: 'WEB', name: 'web', description: 'web shop', registered_at: later } as never);
+    fs.writeFileSync(file, JSON.stringify(reg, null, 2));
+    expect(registered(m.home)).toEqual(['WEB', 'WEB']);
+    const warning =
+      `prefix WEB is also used by the board at ${copy}, registered later (a copied project folder?); its ids look like this board's and its changes are refused; ` +
+      `it has 1 task(s), so its prefix cannot change: move ${copy} aside, or undo the harness setup there (laneboard setup <harness> --remove in ${copyProject})`;
+    // The original (registered first under its path) changes its name and description; the warning names the copy.
+    const r = await doc(m.run(web, ['config', '--description', 'web shop v2', '--name', 'shop', '--json']));
+    expect(r).toMatchObject({ code: 0, data: { name: 'shop', description: 'web shop v2', changed: true }, warnings: [warning] });
+    const entries = (JSON.parse(fs.readFileSync(file, 'utf8')) as { boards: Array<{ path: string; name: string | null; description: string | null }> }).boards;
+    expect(entries.find((e) => e.path === owner)).toMatchObject({ name: 'shop', description: 'web shop v2' });
+    expect(entries.find((e) => e.path === copy)).toMatchObject({ name: 'web', description: 'web shop' });
+    // Its own prefix given again is not a prefix taken by another board either.
+    expect(await doc(m.run(web, ['config', '--prefix', 'WEB', '--json']))).toMatchObject({ code: 0, data: { prefix: 'WEB', changed: false }, warnings: [warning] });
+    // setup on the original: registered, the same warning, no "not added".
+    expect(await doc(m.run(web, ['setup', 'gemini', '--json']))).toMatchObject({ code: 0, warnings: [warning] });
+    // The copy, registered later, is still refused, and the message says it is in the registry.
+    const c = await doc(m.run(copyProject, ['config', '--description', 'copy', '--json']));
+    expect(c.code).toBe(2);
+    expect(c.error).toMatchObject({
+      code: 'INVALID_VALUE',
+      message: expect.stringContaining(
+        `prefix WEB of the board at ${copy} is already used by the board at ${owner}, registered earlier; two boards with one prefix have look-alike ids, this board is in the registry too (since ${later}, after that board), so its entry is not updated; it has 1 task(s)`,
+      ),
+      details: { owner },
+    });
+    expect(loadConfig(copy).description).toBe('web shop');
+  });
+
+  it('a duplicate without tasks registered later: the warning on the original gives it a free prefix, and that fix runs', async () => {
+    const m = machine();
+    const web = m.project('web');
+    expect((await m.run(web, ['init', '--description', 'web shop'])).code).toBe(0);
+    const copyProject = path.join(m.projects, 'web2');
+    fs.cpSync(web, copyProject, { recursive: true });
+    const copy = path.join(copyProject, '.laneboard');
+    const file = path.join(m.home, '.laneboard', 'boards.json');
+    const reg = JSON.parse(fs.readFileSync(file, 'utf8')) as { boards: Array<{ registered_at: string }> };
+    reg.boards.push({ path: copy, prefix: 'WEB', name: 'web', description: 'web shop', registered_at: new Date(Date.now() + 60_000).toISOString() } as never);
+    fs.writeFileSync(file, JSON.stringify(reg, null, 2));
+    const r = await doc(m.run(web, ['config', '--description', 'web shop v2', '--json']));
+    expect(r.code).toBe(0);
+    const fix = `laneboard config --prefix WEB2 --dir ${copy}`;
+    expect(r.warnings).toEqual([`prefix WEB is also used by the board at ${copy}, registered later (a copied project folder?); its ids look like this board's and its changes are refused until it gets a free prefix: ${fix}`]);
+    expect(await doc(cli(shellArgv(fix).concat('--json'), { cwd: tempDir(), env: { HOME: m.home } }))).toMatchObject({ code: 0, data: { prefix: 'WEB2' } });
+    expect(registered(m.home)).toEqual(['WEB', 'WEB2']);
+    expect((await doc(m.run(web, ['config', '--description', 'web shop v3', '--json']))).warnings).toEqual([]);
   });
 
   it('init does not take the prefix of a board whose folder it cannot read (EACCES is not missing)', async () => {

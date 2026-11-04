@@ -100,34 +100,25 @@ export function upsertEntry(entries: BoardEntry[], entry: BoardEntry): BoardEntr
   return entries.map((e) => (e.path === entry.path ? { ...e, ...entry, registered_at: old.registered_at } : e));
 }
 
-// Add or refresh the board at `dir` from its config (setup, config changes); a missing or broken store is not registered. A prefix
-// another live board uses is refused (prefixInUse), so a copied project folder cannot register a second board with the same ids.
-export async function registerStore(home: string, dir: string, opts: LockOptions = {}): Promise<boolean> {
-  if (!isLiveBoard(dir)) return false;
+// Add or refresh the board at `dir` from its config (setup, config changes); a missing or broken store is not registered (`registered`
+// false). A prefix another live board uses is refused (checkPrefixFree), so a copied project folder cannot register a second board
+// with the same ids; a board registered before that duplicate keeps working and gets a warning naming it. `harness`: the setup that
+// asked (its fix undoes that setup on a refused copy).
+export async function registerStore(home: string, dir: string, opts: LockOptions & { harness?: string } = {}): Promise<{ registered: boolean; warnings: string[] }> {
+  if (!isLiveBoard(dir)) return { registered: false, warnings: [] };
   const config = loadConfig(dir);
   const entry: BoardEntry = { path: dir, prefix: config.prefix, name: config.name ?? null, description: config.description ?? null, registered_at: new Date().toISOString() };
-  await updateRegistry(home, opts, (entries) => {
-    checkPrefixFree(entries, dir, config.prefix);
-    return { entries: upsertEntry(entries, entry), result: undefined };
+  const warnings = await updateRegistry(home, opts, (entries) => {
+    const found = checkPrefixFree(entries, dir, config.prefix, opts.harness);
+    return { entries: upsertEntry(entries, entry), result: found };
   });
-  return true;
+  return { registered: true, warnings };
 }
 
 // Prefixes of the boards other than the one at `exceptPath` (any spelling of that path) whose path still holds a store or cannot be
 // checked: a board without permission on its folder keeps its ids, so its prefix stays taken (storeState; review S5c MINOR).
 export function takenPrefixes(entries: readonly BoardEntry[], exceptPath: string): Map<string, string> {
-  const taken = new Map<string, string>();
-  for (const e of entries) {
-    if (samePath(e.path, exceptPath) || storeState(e.path) === 'missing') continue;
-    let prefix = e.prefix;
-    try {
-      prefix = loadConfig(e.path).prefix;
-    } catch {
-      // A broken or unreadable config still holds its board's ids: keep the registered prefix.
-    }
-    taken.set(prefix, e.path);
-  }
-  return taken;
+  return new Map(otherBoards(entries, exceptPath).map((b) => [b.prefix, b.path] as const));
 }
 
 // INVALID_VALUE for a prefix another live board uses, with a free one as the suggestion (init, config --prefix).
@@ -140,14 +131,44 @@ export function prefixTaken(prefix: string, owner: string, taken: ReadonlyMap<st
   });
 }
 
-// INVALID_VALUE for registering the board at `dir` (setup, config) whose prefix another live board already uses: a copied project
-// folder, or a board made while the other one could not be read. A board without tasks gets a free prefix (config --prefix; the CLI
-// adds it to the caller's own config command); a board with tasks keeps its prefix (ids carry it), so the fix names the other board.
-export function prefixInUse(dir: string, prefix: string, owner: string, taken: ReadonlyMap<string, string>): LaneboardError {
+// A live board of the registry other than the one at `dir`, with the prefix its config.json says (else the registered one).
+interface Holder {
+  path: string;
+  prefix: string;
+  registered_at: string;
+}
+
+// The live boards of `entries` other than the one at `exceptPath` (any spelling of that path), each with its prefix: a board whose
+// folder or config cannot be read keeps its registered prefix (storeState; review S5c MINOR).
+function otherBoards(entries: readonly BoardEntry[], exceptPath: string): Holder[] {
+  const out: Holder[] = [];
+  for (const e of entries) {
+    if (samePath(e.path, exceptPath) || storeState(e.path) === 'missing') continue;
+    let prefix = e.prefix;
+    try {
+      prefix = loadConfig(e.path).prefix;
+    } catch {
+      // A broken or unreadable config still holds its board's ids: keep the registered prefix.
+    }
+    out.push({ path: e.path, prefix, registered_at: e.registered_at });
+  }
+  return out;
+}
+
+// INVALID_VALUE for registering the board at `dir` (setup, config) whose prefix the board at `owner`, registered earlier, uses: a
+// copied project folder, or a board made while the other one could not be read. `registeredAt`: when this board itself was
+// registered, if it is (a copy an older laneboard registered; its entry stays as it is). A board without tasks gets a free prefix
+// (config --prefix; the CLI adds it to the caller's own config command); a board with tasks keeps its prefix (ids carry it): the fix
+// undoes the setup that pinned this folder to it (`harness`, else a placeholder), the message names the other ways out.
+export function prefixInUse(dir: string, prefix: string, owner: string, taken: ReadonlyMap<string, string>, registeredAt?: string, harness?: string): LaneboardError {
   const warnings: string[] = [];
   const count = readStoreFile(dir, 'active', warnings).data.tasks.length + readStoreFile(dir, 'archive', warnings).data.tasks.length;
   const details = { taken: [...taken.keys()].sort(), owner };
-  const head = `prefix ${prefix} of the board at ${dir} is already used by the board at ${owner}; two boards with one prefix have look-alike ids, so this board is not registered`;
+  const state =
+    registeredAt === undefined
+      ? 'so this board is not registered'
+      : `this board is in the registry too (since ${registeredAt}, after that board), so its entry is not updated`;
+  const head = `prefix ${prefix} of the board at ${dir} is already used by the board at ${owner}, registered earlier; two boards with one prefix have look-alike ids, ${state}`;
   if (count === 0) {
     const free = freePrefix(prefix, taken);
     return new LaneboardError('INVALID_VALUE', `${head}; give it a free prefix`, {
@@ -156,17 +177,49 @@ export function prefixInUse(dir: string, prefix: string, owner: string, taken: R
       edit: { add: [{ name: 'prefix', value: free }] },
     });
   }
-  return new LaneboardError('INVALID_VALUE', `${head}; it has ${count} task(s) with ids like ${prefix}-1, so its prefix cannot change`, {
-    details,
-    fix: `if this board is a copy of that one, use that board: laneboard prime --dir ${shellQuote(owner)}; else move ${shellQuote(dir)} aside and create this project's own board: laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>"`,
+  const h = harness ?? '<harness>';
+  const project = shellQuote(path.dirname(owner));
+  return new LaneboardError(
+    'INVALID_VALUE',
+    `${head}; it has ${count} task(s) with ids like ${prefix}-1, so its prefix cannot change. ` +
+      `If this folder is a copy of that project, a harness set up here writes to the copy: undo that setup in this folder (the fix), ` +
+      `and work on that board from its project (laneboard setup ${h} in ${project}); ` +
+      `else move ${shellQuote(dir)} aside and create this project's own board (laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>")`,
+    { details, fix: `laneboard setup ${h} --remove --dir ${shellQuote(dir)}` },
+  );
+}
+
+// The prefix check of every registration, not only init. Another live board with `prefix` that was registered earlier than the board
+// at `dir` (or `dir` is not registered yet) -> refused (prefixInUse). A board registered under this path before every other board with
+// its prefix keeps working: duplicates registered after it (older laneboard versions did not check) only make a warning (ADR §33).
+export function checkPrefixFree(entries: readonly BoardEntry[], dir: string, prefix: string, harness?: string): string[] {
+  const holders = otherBoards(entries, dir).filter((b) => b.prefix === prefix);
+  if (holders.length === 0) return [];
+  const own = entries
+    .filter((e) => samePath(e.path, dir))
+    .map((e) => e.registered_at)
+    .sort()[0];
+  const earlier = holders.filter((b) => own === undefined || b.registered_at < own).sort((a, b) => (a.registered_at < b.registered_at ? -1 : 1));
+  const owner = earlier[0];
+  if (owner !== undefined) throw prefixInUse(dir, prefix, owner.path, takenPrefixes(entries, dir), own, harness);
+  return holders.map((b) => {
+    const head = `prefix ${prefix} is also used by the board at ${b.path}, registered later (a copied project folder?); its ids look like this board's and its changes are refused`;
+    const n = taskCount(b.path);
+    if (n === 0) return `${head} until it gets a free prefix: laneboard config --prefix ${freePrefix(prefix, takenPrefixes(entries, b.path))} --dir ${shellQuote(b.path)}`;
+    const why = n === undefined ? 'its files cannot be read, so it may hold tasks' : `it has ${n} task(s), so its prefix cannot change`;
+    return `${head}; ${why}: move ${shellQuote(b.path)} aside, or undo the harness setup there (laneboard setup <harness> --remove in ${shellQuote(path.dirname(b.path))})`;
   });
 }
 
-// Refuse (prefixInUse) when another live board of `entries` uses `prefix`: every registration checks it, not only init.
-export function checkPrefixFree(entries: readonly BoardEntry[], dir: string, prefix: string): void {
-  const taken = takenPrefixes(entries, dir);
-  const owner = taken.get(prefix);
-  if (owner !== undefined) throw prefixInUse(dir, prefix, owner, taken);
+// Active and archived tasks of the store at `dir`; undefined when its files cannot be read (the warning then says less).
+function taskCount(dir: string): number | undefined {
+  const warnings: string[] = [];
+  try {
+    return readStoreFile(dir, 'active', warnings).data.tasks.length + readStoreFile(dir, 'archive', warnings).data.tasks.length;
+  } catch {
+    // An unreadable or broken copy: it may hold tasks, so it is not offered a prefix change.
+    return undefined;
+  }
 }
 
 // First free prefix: `prefix` itself, else the same with a number (CLAIMSPORT -> CLAIMSPOR2), at most 10 characters.
