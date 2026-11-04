@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, claimTask, createTask, shortRuleForms } from '../../src/core/index.ts';
-import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
+import { BOARD_DATA_NOTE, PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import { as, ceilingRules, cleanupTemp, cli, newStore, tempDir, writeRaw } from '../helpers.ts';
 
@@ -20,7 +20,7 @@ describe('prime', () => {
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
     expect(r.stdout).toBe(
-      `${agentRules()}\n\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1; done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
+      `${agentRules()}\n\n${BOARD_DATA_NOTE}\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1; done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
     );
     const json = JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(json).toMatchObject({ store: s.dir, prefix: 'LB', warnings: [] });

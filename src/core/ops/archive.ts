@@ -85,7 +85,7 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
   const warnings: string[] = [];
 
   if (p.dry_run) {
-    const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
+    const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, onLockWait: ctx.onLockWait, warnings });
     checkStatus(view.config, p.status ?? '');
     const before = cutoff(p.updated_before ?? '', new Date());
     const archived = view.active.tasks.filter((t) => t.status === p.status && t.updated_at < before).map((t) => ({ id: t.id, rev: t.rev }));

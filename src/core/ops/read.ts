@@ -1,10 +1,10 @@
 // Read ops: get one task, list tasks, list events (task_get, task_list, task_events).
 import { z } from 'zod';
 import { LaneboardError, toLaneboardError } from '../errors.ts';
-import { liveBoards } from '../boards.ts';
+import { liveBoards, readRegistry } from '../boards.ts';
 import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
-import { idNumber } from '../store.ts';
+import { canonicalPath, idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
 import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, parseInput, suggestClosest, toTaskView, unique } from './common.ts';
 import type { FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
@@ -48,7 +48,7 @@ function toTaskRef(task: TaskT, archived: boolean): TaskRef {
 export async function getTask(ctx: OpContext, input: GetInputT): Promise<OpResult<TaskDetail>> {
   const p = parseInput(GetInput, input);
   const warnings: string[] = [];
-  const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
+  const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, onLockWait: ctx.onLockWait, warnings });
   const id = normalizeId(p.id, view.config.prefix);
   const found = locate(view, id);
   if (!found) throw missingTask(ctx, id, view.config.prefix, 'read');
@@ -97,6 +97,14 @@ export interface ListItem {
   archived: boolean;
 }
 
+// A row of list (CLI list --json, MCP task_list): the list item plus the marks of a view card (ADR §28, workMarks), so an orchestrator
+// reads its queue (handed in, stale) from list and MCP, not only from the text of prime (review orchestrator F5). Archived: all false.
+export interface ListEntry extends ListItem {
+  handed_in: boolean;
+  in_work: boolean;
+  stale: boolean;
+}
+
 // A board an all-boards list read, or could not read (`problem`: why; its tasks are not in the list).
 export interface ListBoard {
   prefix: string;
@@ -106,13 +114,19 @@ export interface ListBoard {
 }
 
 export interface ListResult {
-  items: ListItem[];
+  items: ListEntry[];
   scope: Scope;
   limit: number;
   offset: number;
   total: number;
   // Only with all_boards: every board of the machine, the current one first.
   boards?: ListBoard[];
+}
+
+// The page size of list and events: the given limit, else DEFAULT_LIST_LIMIT lowered to the board's limits.list_limit_max (a board
+// whose maximum is under 20 still lists without --limit; review lifecycle F13).
+function pageLimit(config: ConfigT, given: number | undefined): number {
+  return given ?? Math.min(DEFAULT_LIST_LIMIT, config.limits.list_limit_max);
 }
 
 // limit must not exceed config.limits.list_limit_max.
@@ -133,7 +147,7 @@ async function scopedTasks(ctx: OpContext, scope: Scope, warnings: string[]): Pr
     const { config, active } = readActive(ctx.store, { warnings });
     return { config, tasks: tag(active, false) };
   }
-  const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
+  const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, onLockWait: ctx.onLockWait, warnings });
   const tasks = scope === 'archive' ? tag(view.archive, true) : [...tag(view.active, false), ...tag(view.archive, true)];
   return { config: view.config, tasks };
 }
@@ -183,14 +197,14 @@ export async function listTasks(ctx: ListContext, input: ListInputT): Promise<Op
   if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
   (p.labels ?? []).forEach(checkLabel);
   const scope = p.scope ?? 'active';
-  const limit = p.limit ?? DEFAULT_LIST_LIMIT;
   const offset = p.offset ?? 0;
-  if (p.all_boards) return listAllBoards(ctx, p, scope, limit, offset);
+  if (p.all_boards) return listAllBoards(ctx, p, scope, offset);
   if (ctx.store === undefined) throw new LaneboardError('STORE_NOT_FOUND', 'list reads one board, and none was given; only all_boards lists without one');
   const own: OpContext = { ...ctx, store: ctx.store };
   const warnings: string[] = [];
   const { config, tasks } = await scopedTasks(own, scope, warnings);
   (p.status ?? []).forEach((s) => checkStatus(config, s));
+  const limit = pageLimit(config, p.limit);
   checkLimit(config, limit);
   const parent = p.parent === undefined ? undefined : normalizeId(p.parent, config.prefix, 'parent');
   // A parent is on its children's board: an id of another board names it, with the same list there (ADR §30; review S5b NIT).
@@ -199,7 +213,8 @@ export async function listTasks(ctx: ListContext, input: ListInputT): Promise<Op
   const finals = finalStatuses(config.statuses);
   const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals }));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
-  const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListItem(task, archived));
+  const nowMs = Date.now();
+  const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListEntry(task, archived, config, nowMs));
   return { data: { items, scope, limit, offset, total: matches.length }, warnings };
 }
 
@@ -226,7 +241,7 @@ function checkStatusOfBoards(statuses: readonly string[], status: string): void 
 // list with all_boards (ADR §29): each live board read on its own, one after another (never two locks at once), filtered by the same
 // taskMatches, merged newest update first and paged over the merge. A board that cannot be read is skipped with a warning (reads fail
 // open); the first board read sets the limit check. Without a current store (no board where it runs) only the registry's boards are read.
-async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, limit: number, offset: number): Promise<OpResult<ListResult>> {
+async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, offset: number): Promise<OpResult<ListResult>> {
   if (ctx.store?.found === 'board') {
     throw new LaneboardError('USAGE', 'all_boards reads every board of this machine; --board opens one board: pass one of them', { edit: { drop: [{ name: 'board' }] } });
   }
@@ -250,12 +265,15 @@ async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, limi
   const known = unique(read.flatMap((r) => r.config.statuses));
   (p.status ?? []).forEach((s) => checkStatusOfBoards(known, s));
   const first = read[0];
+  const limit = first ? pageLimit(first.config, p.limit) : (p.limit ?? DEFAULT_LIST_LIMIT);
   if (first) checkLimit(first.config, limit);
   // A task's parent is on its own board, so the id alone picks the board.
   const parent = p.parent === undefined ? undefined : normalizeId(p.parent, first?.config.prefix ?? 'LB', 'parent');
-  const matches = read.flatMap((r) => r.tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals: finalStatuses(r.config.statuses) })));
+  // Each task keeps its board's config: the marks (workMarks) read its statuses.
+  const matches = read.flatMap((r) => r.tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals: finalStatuses(r.config.statuses) })).map((t) => ({ ...t, config: r.config })));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
-  const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListItem(task, archived));
+  const nowMs = Date.now();
+  const items = matches.slice(offset, offset + limit).map(({ task, archived, config }) => toListEntry(task, archived, config, nowMs));
   return { data: { items, scope, limit, offset, total: matches.length, boards: rows }, warnings };
 }
 
@@ -274,6 +292,12 @@ function toListItem(task: TaskT, archived: boolean): ListItem {
     rev: task.rev,
     archived,
   };
+}
+
+// Explicit mapping of a task to a list row: the list item, then its marks (an archived task is neither handed in nor in work).
+function toListEntry(task: TaskT, archived: boolean, config: ConfigT, nowMs: number): ListEntry {
+  const marks = archived ? { handed_in: false, in_work: false, stale: false } : workMarks(task, config, nowMs);
+  return { ...toListItem(task, archived), handed_in: marks.handed_in, in_work: marks.in_work, stale: marks.stale };
 }
 
 export const EventsInput = z.strictObject({
@@ -306,12 +330,11 @@ export interface EventsResult {
 export async function listEvents(ctx: OpContext, input: EventsInputT): Promise<OpResult<EventsResult>> {
   const p = parseInput(EventsInput, input);
   const scope = p.scope ?? 'active';
-  const limit = p.limit ?? DEFAULT_LIST_LIMIT;
   const warnings: string[] = [];
   let config: ConfigT;
   let tasks: TaskT[];
   if (p.task !== undefined) {
-    const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
+    const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, onLockWait: ctx.onLockWait, warnings });
     config = view.config;
     const id = normalizeId(p.task, config.prefix, 'task');
     const found = locate(view, id);
@@ -322,16 +345,20 @@ export async function listEvents(ctx: OpContext, input: EventsInputT): Promise<O
     config = scoped.config;
     tasks = scoped.tasks.map((t) => t.task);
   }
+  const limit = pageLimit(config, p.limit);
   checkLimit(config, limit);
-  const all: Array<EventItem & { seq: number }> = [];
+  // Times compare as instants, not as text: 18:52:52.215Z is after 18:52:52Z although '.' sorts before 'Z' (review failures F8).
+  const since = p.since === undefined ? undefined : Date.parse(p.since);
+  const all: Array<EventItem & { seq: number; ms: number }> = [];
   let seq = 0;
   for (const task of tasks) {
     for (const e of task.events) {
-      if (p.since !== undefined && !(e.at > p.since)) continue;
-      all.push({ task_id: task.id, at: e.at, actor: e.actor, actor_source: e.actor_source ?? null, type: e.type, data: e.data, seq: seq++ });
+      const ms = Date.parse(e.at);
+      if (since !== undefined && !(ms > since)) continue;
+      all.push({ task_id: task.id, at: e.at, actor: e.actor, actor_source: e.actor_source ?? null, type: e.type, data: e.data, seq: seq++, ms });
     }
   }
-  all.sort((a, b) => (a.at !== b.at ? (a.at < b.at ? 1 : -1) : b.seq - a.seq));
+  all.sort((a, b) => (a.ms !== b.ms ? b.ms - a.ms : b.seq - a.seq));
   const items = all.slice(0, limit).map((e) => ({ task_id: e.task_id, at: e.at, actor: e.actor, actor_source: e.actor_source, type: e.type, data: e.data }));
   return { data: { items, scope, limit, total: all.length }, warnings };
 }
@@ -373,6 +400,23 @@ export interface SummaryResult {
   // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's) that their holder
   // took under its session default name (heldByEarlierSession), newest update first, at most SUMMARY_RESUMABLE_MAX; empty without `session_base`.
   resumable: ListItem[];
+  // Is this store in the machine registry (<home>/.laneboard/boards.json, where init and setup add a board)? null without a home in the
+  // context (cannot tell). A cloned repository's committed .laneboard is not: the SessionStart hook shows none of its texts (review security F4).
+  registered: boolean | null;
+}
+
+// Is the store at `dir` in the machine registry under `home` (by canonicalPath, as liveBoards)? null without `home`. A registry that
+// cannot be read counts as "not registered" (the hook then shows no board texts) with a warning that names it: prime itself still runs.
+function inRegistry(home: string | undefined, dir: string, warnings: string[]): boolean | null {
+  if (home === undefined) return null;
+  try {
+    const own = canonicalPath(dir);
+    return readRegistry(home).some((e) => canonicalPath(e.path) === own);
+  } catch (raw) {
+    const err = toLaneboardError(raw);
+    warnings.push(`the board registry cannot be read, so this board counts as not registered: ${err.message}; fix: ${err.fix}`);
+    return false;
+  }
 }
 
 // How many free tasks the summary lists (prime stays short; the rest: list --unassigned).
@@ -418,6 +462,7 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       unassigned: free.slice(0, SUMMARY_UNASSIGNED_MAX).map(({ task, archived }) => toListItem(task, archived)),
       unassigned_total: free.length,
       resumable: resumable.slice(0, SUMMARY_RESUMABLE_MAX).map(({ task, archived }) => toListItem(task, archived)),
+      registered: inRegistry(ctx.home, ctx.store.dir, warnings),
     },
     warnings,
   };
@@ -477,11 +522,18 @@ export const VIEW_FINAL_MAX = 5;
 // A task in work with no change for this long is stale (owner's number, ADR §28): 4 hours.
 export const STALE_AFTER_MS = 4 * 60 * 60 * 1000;
 
-// Explicit mapping of a task to a card; `children`: counts per parent id in active.json, `nowMs`: the clock of this view.
-function toViewCard(task: TaskT, config: ConfigT, children: ReadonlyMap<string, { total: number; final: number }>, nowMs: number): ViewCard {
+// The attention marks of a task (ADR §28), one rule for view cards, the all-boards overview and list rows: handed in (handedIn); in work =
+// assigned, neither in the first configured status nor in the final one, not handed in; stale = in work and unchanged for STALE_AFTER_MS.
+function workMarks(task: TaskT, config: ConfigT, nowMs: number): { handed_in: boolean; in_work: boolean; stale: boolean } {
   const finals = finalStatuses(config.statuses);
   const handed = handedIn(task);
   const inWork = task.assignee !== null && task.status !== config.statuses[0] && !finals.includes(task.status) && !handed;
+  return { handed_in: handed, in_work: inWork, stale: inWork && nowMs - Date.parse(task.updated_at) > STALE_AFTER_MS };
+}
+
+// Explicit mapping of a task to a card; `children`: counts per parent id in active.json, `nowMs`: the clock of this view.
+function toViewCard(task: TaskT, config: ConfigT, children: ReadonlyMap<string, { total: number; final: number }>, nowMs: number): ViewCard {
+  const marks = workMarks(task, config, nowMs);
   return {
     id: task.id,
     title: task.title,
@@ -493,9 +545,9 @@ function toViewCard(task: TaskT, config: ConfigT, children: ReadonlyMap<string, 
     parent: task.parent ?? null,
     children: { ...(children.get(task.id) ?? { total: 0, final: 0 }) },
     updated_at: task.updated_at,
-    handed_in: handed,
-    in_work: inWork,
-    stale: inWork && nowMs - Date.parse(task.updated_at) > STALE_AFTER_MS,
+    handed_in: marks.handed_in,
+    in_work: marks.in_work,
+    stale: marks.stale,
   };
 }
 
