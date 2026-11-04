@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import { Link, Task } from '../schema.ts';
-import type { ConfigT, FileKind, TaskT } from '../schema.ts';
-import { backupPath } from '../store.ts';
+import type { ConfigT, FileKind, StoreFileT, TaskT } from '../schema.ts';
+import { backupPath, serializeStoreFile } from '../store.ts';
 import { transact } from '../transact.ts';
 import { actorSourceOf, addEvent, IdInput, locate, normalizeId, parseInput, requireActor, touch, txOptions } from './common.ts';
 import type { OpContext, OpResult } from './common.ts';
@@ -109,11 +109,12 @@ function refuseBoardWord(secret: string, id: string, config: ConfigT, task: Task
   };
   if ([...secret].length < REDACT_MIN_CHARS) refuse(`is shorter than ${REDACT_MIN_CHARS} characters`);
   if (REDACTED.includes(secret)) refuse(`is a part of ${REDACTED}`);
-  if (secret === id) refuse('is the task id');
-  if (secret === config.prefix) refuse('is the board prefix');
-  if (config.statuses.includes(secret)) refuse('is a status name');
+  // A part counts too: `doin` would rewrite every `doing` in the status history.
+  if (config.prefix.includes(secret)) refuse('is (part of) the board prefix');
+  if (id.includes(secret)) refuse('is (part of) the task id');
+  if (config.statuses.some((st) => st.includes(secret))) refuse('is (part of) a status name');
   const actors = [actor, task.assignee, task.created_by, task.updated_by, ...task.events.map((e) => e.actor), ...task.attachments.map((a) => a.added_by)];
-  if (actors.includes(secret)) refuse('is an actor name');
+  if (actors.some((a) => a?.includes(secret))) refuse('is (part of) an actor name');
 }
 
 // Refuse before any write when the secret is still in the task after the replace: in a label or an attachment name (their format has
@@ -136,9 +137,14 @@ function refuseRemaining(task: TaskT, secret: string, archived: boolean): void {
   });
 }
 
-// How often the secret occurs in the raw backup of each declared file, as stored (JSON-escaped).
-function backupOccurrences(storeDir: string, kinds: readonly FileKind[], secret: string): number {
-  const escaped = JSON.stringify(secret).slice(1, -1);
+// How often `secret` occurs in `text` as stored (JSON-escaped).
+function storedCount(text: string, secret: string): number {
+  return text.split(JSON.stringify(secret).slice(1, -1)).length - 1;
+}
+
+// How many occurrences the backup of each declared file holds in its copies of task `id` (an old version, the task before a delete).
+// Copies of other tasks do not count: they are theirs to redact, and the fresh backup keeps whatever they still hold.
+function backupOccurrences(storeDir: string, kinds: readonly FileKind[], id: string, secret: string, current: Record<FileKind, StoreFileT>): number {
   let n = 0;
   for (const kind of kinds) {
     let raw: string;
@@ -149,7 +155,18 @@ function backupOccurrences(storeDir: string, kinds: readonly FileKind[], secret:
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
       throw err;
     }
-    n += raw.split(escaped).length - 1;
+    let tasks: unknown;
+    try {
+      tasks = (JSON.parse(raw) as { tasks?: unknown }).tasks;
+    } catch {
+      // A damaged backup: count what it holds beyond the new content of that file (what the fresh backup drops).
+      n += Math.max(0, storedCount(raw, secret) - storedCount(serializeStoreFile(current[kind]), secret));
+      continue;
+    }
+    if (!Array.isArray(tasks)) continue;
+    for (const task of tasks) {
+      if ((task as { id?: unknown } | null)?.id === id) n += storedCount(JSON.stringify(task), secret);
+    }
   }
   return n;
 }
@@ -178,7 +195,7 @@ export async function redactTask(ctx: OpContext, input: RedactInputT): Promise<O
       const count = redactTaskTexts(found.task, p.text, cuts);
       refuseRemaining(found.task, p.text, found.archived);
       // Read under the lock, so no writer rotates a backup between this count and the write below.
-      const backups = backupOccurrences(ctx.store.dir, files, p.text);
+      const backups = backupOccurrences(ctx.store.dir, files, id, p.text, { active: s.active, archive: s.archive });
       if (count === 0 && backups === 0) {
         // Nothing is written: the store and its backups stay as they are.
         throw new LaneboardError('INVALID_VALUE', `the text does not occur in ${id} (title, description, links, fields, history) or in the store backups; nothing was changed`, {
@@ -187,7 +204,7 @@ export async function redactTask(ctx: OpContext, input: RedactInputT): Promise<O
         });
       }
       warnings.push(...cuts);
-      const others = [...s.active.tasks, ...s.archive.tasks].filter((t) => t.id !== id && JSON.stringify(t).includes(JSON.stringify(p.text).slice(1, -1)));
+      const others = [...s.active.tasks, ...s.archive.tasks].filter((t) => t.id !== id && storedCount(JSON.stringify(t), p.text) > 0);
       if (others.length > 0) warnings.push(`the text also occurs in ${others.map((t) => t.id).join(', ')}: redact each of them too`);
       touch(found.task, s.now, actor);
       addEvent(found.task, s.config, s.now, actor, 'updated', { redacted: { count, backups } }, actorSourceOf(ctx));

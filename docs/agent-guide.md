@@ -258,8 +258,8 @@ A secret pasted into a task (comment, description, an old description kept by `u
 `laneboard redact <ID> --text-file <file>` (`-` reads stdin; never on the command line, which the shell history keeps) replaces every
 exact occurrence in that task with `[redacted]`, adds an `updated {redacted: {count, backups}}` event (who and when, not the text) and writes both
 store files and their `.bak` anew, so no backup keeps it (also a task deleted before the redact: its copy in a `.bak` is found).
-One trailing newline of the file is ignored. `INVALID_VALUE`, nothing written: no occurrence; a text under 4 characters, a part of `[redacted]`,
-the task id, the prefix, a status or an actor name; the text also in a label or an attachment name (remove them first:
+One trailing newline of the file is ignored. `INVALID_VALUE`, nothing written: no occurrence; a text under 4 characters or a part of `[redacted]`,
+the task id, the prefix, a status or an actor name (or a part of one); the text also in a label or an attachment name (remove them first:
 `update <ID> --remove-label <label>`, `attach <ID> --remove <name>`, then redact again). Not covered: other tasks (a warning names them),
 copies outside the store files (git history).
 

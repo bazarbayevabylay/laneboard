@@ -339,12 +339,14 @@ describe('A12 redact', () => {
     expect(occurrences(s, secret)).toEqual(NONE);
     expect(fs.readdirSync(path.join(s.dir, 'attachments', 'LB-1'))).toEqual([]);
     expect(stored(s, 'LB-1').labels).toEqual(['ops']);
-    // A secret inside a word the board keeps (here an actor name) is refused with the generic fix.
+    // A text that is a key the board keeps (here a field name) is refused with the generic fix.
     const u = await newStore();
-    await createTask(as(u, 'bot-sk7secret9tok'), { title: 'x', status: 'todo' });
-    const actor = await rejectsWith(redactTask(as(u, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE');
-    expect(actor.message).toBe('the text also occurs where redact cannot replace it: events[0].actor, created_by, updated_by; nothing was changed');
-    expect(actor.fix).toContain('which redact never changes');
+    const config = path.join(u.dir, 'config.json');
+    writeRaw(config, JSON.stringify({ ...JSON.parse(fs.readFileSync(config, 'utf8')), fields: { ticket_ref: { type: 'string' } } }));
+    await createTask(as(u, 'a'), { title: 'x', status: 'todo', fields: { ticket_ref: 'v' } });
+    const key = await rejectsWith(redactTask(as(u, 'owner'), { id: 'LB-1', text: 'ticket_ref' }), 'INVALID_VALUE');
+    expect(key.message).toMatch(/^the text also occurs where redact cannot replace it: .*fields\.ticket_ref \(key\).*; nothing was changed$/);
+    expect(key.fix).toContain('which redact never changes');
   });
 
   it('a task deleted before the redact: the secret only in a backup is found and removed (review S6e MAJOR 3)', async () => {
@@ -369,29 +371,62 @@ describe('A12 redact', () => {
     expect((await redactTask(as(t, 'owner'), { id: 'LB-1', text: SECRET })).warnings).toEqual(['the text also occurs in LB-2: redact each of them too']);
   });
 
+  it('copies of other tasks in a backup are theirs: a text only there is not found; only the own old copy counts (review S6e r2 MAJOR)', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'a', status: 'todo' });
+    await createTask(as(s, 'a'), { title: `b ${SECRET}`, status: 'todo' });
+    await commentTask(as(s, 'a'), { id: 'LB-1', text: 'hi' });
+    // LB-2's title and the created event's copy of it, in active.json and in its backup.
+    expect(occurrences(s, SECRET)).toEqual({ ...NONE, 'active.json': 2, 'active.json.bak': 2 });
+    const shas = storeShas(s);
+    const missing = await rejectsWith(redactTask(as(s, 'owner'), { id: 'LB-1', text: SECRET }), 'INVALID_VALUE');
+    expect(missing.message).toBe('the text does not occur in LB-1 (title, description, links, fields, history) or in the store backups; nothing was changed');
+    expect(storeShas(s)).toEqual(shas);
+    // A task deleted before the redact: its own copy in the backup counts (1), LB-2's two do not and are named in a warning.
+    await createTask(as(s, 'a'), { title: 'c', status: 'todo', description: SECRET });
+    await deleteTask(as(s, 'owner'), { id: 'LB-3', confirm_id: 'LB-3' });
+    expect(occurrences(s, SECRET)['active.json.bak']).toBe(3);
+    const r = await redactTask(as(s, 'owner'), { id: 'LB-3', text: SECRET });
+    expect(r.data).toMatchObject({ redacted: 0, backups: 1 });
+    expect(r.warnings).toEqual(['the text also occurs in LB-2: redact each of them too']);
+    // What stays is LB-2's live text and its fresh backup; redacting LB-2 clears the rest.
+    expect(occurrences(s, SECRET)).toEqual({ ...NONE, 'active.json': 2, 'active.json.bak': 2 });
+    expect((await redactTask(as(s, 'owner'), { id: 'LB-2', text: SECRET })).data).toMatchObject({ redacted: 2, backups: 2 });
+    expect(occurrences(s, SECRET)).toEqual(NONE);
+    // A damaged backup cannot be split into tasks: what it holds beyond the new content of its file counts, and the write drops it.
+    writeRaw(path.join(s.dir, 'archive.json.bak'), `{ damaged ${SECRET}`);
+    expect((await redactTask(as(s, 'owner'), { id: 'LB-1', text: SECRET })).data).toMatchObject({ redacted: 0, backups: 1 });
+    expect(occurrences(s, SECRET)).toEqual(NONE);
+  });
+
   it('a text shorter than 4 characters, part of [redacted], the id, the prefix, a status or an actor is refused (no write)', async () => {
-    const s = await newStore({ prefix: 'PROJ' });
-    await createTask(as(s, 'alice'), { title: 'abc PROJ-1 PROJ todo alice dact', status: 'todo', assignee: 'carol' });
+    const s = await newStore({ prefix: 'PROJX' });
+    await createTask(as(s, 'alice'), { title: 'abc PROJX-1 PROJX todo alice dact in_prog', status: 'todo', assignee: 'carol' });
     const shas = storeShas(s);
     const cases: Array<[string, string]> = [
       ['abc', 'is shorter than 4 characters'],
       ['😀😀😀', 'is shorter than 4 characters'],
       ['dact', 'is a part of [redacted]'],
-      ['PROJ-1', 'is the task id'],
-      ['PROJ', 'is the board prefix'],
-      ['todo', 'is a status name'],
-      ['alice', 'is an actor name'],
-      ['carol', 'is an actor name'],
-      ['owner', 'is an actor name'],
+      ['PROJX-1', 'is (part of) the task id'],
+      ['ROJX-1', 'is (part of) the task id'],
+      ['PROJX', 'is (part of) the board prefix'],
+      ['ROJX', 'is (part of) the board prefix'],
+      ['todo', 'is (part of) a status name'],
+      // A part of a status (review S6e r2 MINOR): it would rewrite every in_progress in the history.
+      ['in_prog', 'is (part of) a status name'],
+      ['alice', 'is (part of) an actor name'],
+      ['lice', 'is (part of) an actor name'],
+      ['carol', 'is (part of) an actor name'],
+      ['owner', 'is (part of) an actor name'],
     ];
     for (const [text, why] of cases) {
-      const err = await rejectsWith(redactTask(as(s, 'owner'), { id: 'PROJ-1', text }), 'INVALID_VALUE');
+      const err = await rejectsWith(redactTask(as(s, 'owner'), { id: 'PROJX-1', text }), 'INVALID_VALUE');
       expect(err.message, text).toBe(`the text to redact ${why}; nothing was changed`);
-      expect(err.fix).toBe('pass the whole secret (at least 4 characters), exactly as it was pasted: laneboard redact PROJ-1 --text-file <path>');
+      expect(err.fix).toBe('pass the whole secret (at least 4 characters), exactly as it was pasted: laneboard redact PROJX-1 --text-file <path>');
     }
     expect(storeShas(s)).toEqual(shas);
     // Four characters are enough.
-    expect((await redactTask(as(s, 'owner'), { id: 'PROJ-1', text: 'abc ' })).data.redacted).toBe(2);
+    expect((await redactTask(as(s, 'owner'), { id: 'PROJX-1', text: 'abc ' })).data.redacted).toBe(2);
   });
 
   it('CLI: the text comes only from --text-file (path or -); without it USAGE; not an MCP tool', async () => {
