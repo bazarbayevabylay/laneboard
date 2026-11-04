@@ -6,6 +6,7 @@ import type { StoreRef } from '../core/index.ts';
 import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
+import { safeText } from './display.ts';
 import { cliMessage, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
 
 export type { CliIo } from './commands/types.ts';
@@ -17,6 +18,10 @@ const GLOBAL_OPTIONS: OptionSpec = {
   board: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 };
+
+// Commands whose human text carries its own terminal styles (view's colors): they make the data in it safe themselves (board-view.ts),
+// so the runner prints their text as it is; every other human text is made safe here (display.ts).
+const STYLED_COMMANDS = new Set(['view']);
 
 // Commands that may open another board with --board (they only read).
 const READ_COMMANDS = (): string[] => COMMANDS.filter((c) => c.readOnly).map((c) => c.name);
@@ -103,10 +108,11 @@ export async function runCli(io: CliIo): Promise<number> {
   let def: CommandDef | undefined;
   try {
     const [name, ...rest] = argv;
-    if (name === '--help' || name === '-h' || name === 'help') return print(io, out, { help: globalHelp() }, [], globalHelp());
-    if (name === '--version') return print(io, out, { version: version() }, [], version());
-    if (name === undefined || name.startsWith('-')) {
-      throw new LaneboardError('USAGE', name === undefined ? 'missing command' : `the command comes first: laneboard <command> [options], got ${name}`, {
+    // `laneboard` alone is a person looking around: the help, not an error.
+    if (name === undefined || name === '--help' || name === '-h' || name === 'help') return print(io, out, { help: globalHelp() }, [], globalHelp());
+    if (name === '--version' || name === '-v') return print(io, out, { version: version() }, [], version());
+    if (name.startsWith('-')) {
+      throw new LaneboardError('USAGE', `the command comes first: laneboard <command> [options], got ${name}`, {
         allowed: COMMANDS.map((c) => c.name),
         fix: commandFirst(argv, (t) => findCommand(t) !== undefined),
       });
@@ -168,7 +174,7 @@ export async function runCli(io: CliIo): Promise<number> {
     // A store found in a parent directory (or pinned for one) may be another project's: every result says so (prime prints it in its text).
     const parent = out.ref ? parentStoreWarning(out.ref, io.cwd, storePrefix(out.ref.dir), io.env.HOME || undefined) : undefined;
     const warnings = parent && (out.json || !result.storeWarningInText) ? [parent, ...result.warnings] : result.warnings;
-    return print(io, out, result.data, warnings, result.human);
+    return print(io, out, result.data, warnings, STYLED_COMMANDS.has(command.name) ? result.human : safeText(result.human));
   } catch (raw) {
     const err = cliMessage(flagMessage(toLaneboardError(raw), def));
     // One command rebuilt from the user's own argv (argv.ts), else the core fix.

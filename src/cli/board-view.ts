@@ -1,7 +1,9 @@
 // Human views of boards for people in a terminal: the kanban of `laneboard view` and the table of `laneboard boards`.
-// Plain text by default; ANSI styles only on a terminal without NO_COLOR (no-color.org).
+// Plain text by default; ANSI styles only on a terminal without NO_COLOR (no-color.org). The data is made safe for the terminal
+// (display.ts) before it is laid out and styled, so the only escape sequences in a view are its own styles.
 import { shellQuote, WAITING_OWNER_LABEL } from '../core/index.ts';
 import type { BoardInfo, BoardsResult, ViewCard, ViewResult } from '../core/index.ts';
+import { safeData, safeText } from './display.ts';
 
 // Narrowest column that still shows an id and a few words; below it the board becomes a list grouped by status.
 export const MIN_COLUMN = 18;
@@ -179,8 +181,11 @@ function footer(d: ViewResult, o: RenderOptions): string {
   return fit(o.watching ? `${count} · watching for changes, Ctrl+C to exit` : count, o.width);
 }
 
-// The kanban: one column per status side by side, or a list grouped by status when the terminal is too narrow.
-export function renderBoard(d: ViewResult, o: RenderOptions): string {
+// The kanban: one column per status side by side, or a list grouped by status when the terminal is too narrow; the board's data and
+// the options that echo argv (store, filters, the list command's options) are made safe first.
+export function renderBoard(data: ViewResult, options: RenderOptions): string {
+  const d = safeData(data);
+  const o: RenderOptions = { ...options, store: safeText(options.store), filters: options.filters.map(safeText), listOptions: options.listOptions === undefined ? undefined : safeText(options.listOptions) };
   const n = d.columns.length;
   const columnWidth = Math.floor((o.width - GAP.length * (n - 1)) / n);
   const lines = [...header(d, o), ''];
@@ -225,8 +230,10 @@ function counts(b: BoardInfo): string {
   return parts.length ? parts.join(', ') : 'no active tasks';
 }
 
-// `laneboard boards`: one row per board (prefix, name, tasks per status, last change, path) and its description under it.
-export function boardsText(r: BoardsResult): string {
+// `laneboard boards`: one row per board (prefix, name, tasks per status, last change, path) and its description under it (the
+// registry's data made safe for the terminal before the columns are aligned).
+export function boardsText(result: BoardsResult): string {
+  const r = safeData(result);
   if (!r.boards.length) return `no boards registered in ${r.registry} yet (laneboard init and laneboard setup add them)`;
   const rows = [['PREFIX', 'NAME', 'TASKS', 'UPDATED', 'PATH'], ...r.boards.map((b) => [b.prefix, b.name ?? '-', counts(b), b.updated_at ?? '-', b.path])];
   const widths = rows[0]?.map((_, i) => Math.max(...rows.map((row) => width(row[i] ?? '')))) ?? [];

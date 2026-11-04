@@ -11,8 +11,20 @@ export function commandLine(argv: readonly string[], placeholders: ReadonlySet<n
 
 // argv with extra option tokens inserted before `--` (after it they would be read as text).
 function withOptions(argv: readonly string[], extra: readonly string[]): string[] {
+  const at = optionsAt(argv);
+  return [...argv.slice(0, at), ...extra, ...argv.slice(at)];
+}
+
+// Where withOptions inserts its tokens: before `--`, else at the end.
+function optionsAt(argv: readonly string[]): number {
   const end = argv.indexOf('--');
-  return end < 0 ? [...argv, ...extra] : [...argv.slice(0, end), ...extra, ...argv.slice(end)];
+  return end < 0 ? argv.length : end;
+}
+
+// Positions in `out` of the placeholders the fix itself added (`tokens` placed from `start`): only those print unquoted. A token
+// from the user's argv is quoted even when it looks like `<...>`: extra words joined into a title (`<$(touch` `x)>`) must not run.
+function addedPlaceholders(tokens: readonly string[], start: number): number[] {
+  return tokens.flatMap((t, i) => (isPlaceholder(t) ? [start + i] : []));
 }
 
 // Is `--json` among the options (tokens after `--` are text, not options)?
@@ -152,8 +164,10 @@ export function editedCommand(argv: readonly string[], edit: FixEdit, options: O
     if (hasNext) kept.push(args[++i] ?? '');
   }
   const extra = (edit.add ?? []).flatMap((a) => [`--${optionName(a.name, flags)}`, a.value]);
-  const out = [command, ...withOptions(kept, extra), ...(edit.args ?? [])];
-  const line = commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !argv.includes(t) ? [i] : []))));
+  const added = edit.args ?? [];
+  const out = [command, ...withOptions(kept, extra), ...added];
+  const placeholders = [...addedPlaceholders(extra, 1 + optionsAt(kept)), ...addedPlaceholders(added, out.length - added.length)];
+  const line = commandLine(out, new Set(placeholders));
   return edit.env === undefined ? line : `${edit.env} ${line}`;
 }
 
@@ -187,8 +201,11 @@ export function argumentsFix(
   const at = tokens.filter((t) => t.kind === 'positional').map((t) => t.index);
   const added = required.filter((r) => !tokens.some((t) => t.kind === 'option' && t.name === r.name)).flatMap((r) => [`--${r.name}`, r.value]);
   let out: string[];
+  let placeholders: number[];
   if (at.length < count.min) {
-    out = [command, ...withOptions(args, added), ...names.slice(at.length, count.min)];
+    const missing = names.slice(at.length, count.min);
+    out = [command, ...withOptions(args, added), ...missing];
+    placeholders = [...addedPlaceholders(added, 1 + optionsAt(args)), ...addedPlaceholders(missing, out.length - missing.length)];
   } else {
     // Extra words: an unquoted title or text (`create Fix login --status todo`) becomes one argument; anything else is dropped.
     const extra = at.slice(count.max);
@@ -197,9 +214,11 @@ export function argumentsFix(
       const first = at[count.max - 1] ?? 0;
       joined[first] = [first, ...extra].map((i) => args[i]).join(' ');
     }
-    out = [command, ...withOptions(joined.filter((_, i) => !extra.includes(i)), added)];
+    const kept = joined.filter((_, i) => !extra.includes(i));
+    out = [command, ...withOptions(kept, added)];
+    placeholders = addedPlaceholders(added, 1 + optionsAt(kept));
   }
-  return commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !args.includes(t) ? [i] : []))));
+  return commandLine(out, new Set(placeholders));
 }
 
 interface OptionToken {
@@ -225,10 +244,11 @@ export function rejectRepeated(tokens: readonly OptionToken[], command: string, 
     const kept = args.filter((_, i) => !drop.has(i));
     const placeholders = new Set<number>();
     if (values.length > 1) {
-      // Different values: which one was meant is unknown, so the fix names them instead of guessing.
+      // Different values: which one was meant is unknown, so the fix names them instead of guessing. The placeholder is printed
+      // unquoted, so each value in it is shell-quoted: `--status 'a; touch x'` must not become a command in the fix.
       const at = first.inlineValue ? first.index : first.index + 1;
       const pos = at - [...drop].filter((i) => i < at).length;
-      const choice = `<one of: ${values.join(', ')}>`;
+      const choice = `<one of: ${values.map(shellQuote).join(', ')}>`;
       kept[pos] = first.inlineValue ? `--${name}=${choice}` : choice;
       placeholders.add(pos + 1);
     }
@@ -237,32 +257,46 @@ export function rejectRepeated(tokens: readonly OptionToken[], command: string, 
   }
 }
 
-// Replace the offending value in argv with the suggestion, else a format or `allowed` placeholder.
+// The user's text on one side of a placeholder that is printed unquoted, shell-quoted on its own (`=done; touch x` -> `='done; touch x'`):
+// the `=` that joins it to the placeholder stays outside the quotes, so `<field from allowed>=1` reads as before.
+function quoteBeside(text: string, side: 'before' | 'after'): string {
+  if (side === 'after' && text.startsWith('=')) return `=${text.length > 1 ? shellQuote(text.slice(1)) : ''}`;
+  if (side === 'before' && text.endsWith('=')) return `${text.length > 1 ? shellQuote(text.slice(0, -1)) : ''}=`;
+  return text === '' ? '' : shellQuote(text);
+}
+
+// Replace the offending value in argv with the suggestion, else a format or `allowed` placeholder. A suggestion makes a plain token
+// (quoted whole by commandLine); a placeholder stays unquoted for the user to fill in, and the user's text around it is quoted.
 function replaceValue(argv: readonly string[], err: LaneboardError): string | undefined {
   const input = err.input;
   if (!input) return undefined;
   const replacement = input.suggestion ?? input.format ?? (err.allowed?.length ? `<${input.field} from allowed>` : undefined);
   if (replacement === undefined) return undefined;
   const value = input.value;
-  // The value is a whole token, the tail of `--flag=value`, or the key of `key=value` (`--field priorty=1`).
-  const rewrite = (token: string): string | undefined => {
-    if (token === value) return replacement;
-    if (token.endsWith(`=${value}`)) return `${token.slice(0, token.length - value.length)}${replacement}`;
-    if (token.startsWith(`${value}=`)) return `${replacement}${token.slice(value.length)}`;
+  // The value is a whole token, the tail of `--flag=value`, or the key of `key=value` (`--field priorty=1`): the user's text
+  // before and after it.
+  const split = (token: string): { before: string; after: string } | undefined => {
+    if (token === value) return { before: '', after: '' };
+    if (token.endsWith(`=${value}`)) return { before: token.slice(0, token.length - value.length), after: '' };
+    if (token.startsWith(`${value}=`)) return { before: '', after: token.slice(value.length) };
     const inner = new RegExp(`^(--[^=]+=)${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(=.*)$`, 's').exec(token);
-    return inner ? `${inner[1] ?? ''}${replacement}${inner[2] ?? ''}` : undefined;
+    return inner ? { before: inner[1] ?? '', after: inner[2] ?? '' } : undefined;
   };
   const flag = `--${input.field.replace(/_/g, '-')}`;
   const hits: number[] = [];
   argv.forEach((token, i) => {
-    if (rewrite(token) !== undefined) hits.push(i);
+    if (split(token) !== undefined) hits.push(i);
   });
   const index = hits.length === 1 ? hits[0] : hits.find((i) => argv[i - 1] === flag || argv[i]?.startsWith(`${flag}=`));
-  if (index === undefined) return undefined;
+  const parts = index === undefined ? undefined : split(argv[index] ?? '');
+  if (index === undefined || parts === undefined) return undefined;
   const out = [...argv];
-  out[index] = rewrite(out[index] ?? '') ?? replacement;
-  const placeholders = input.suggestion === undefined ? new Set([index]) : new Set<number>();
-  return commandLine(out, placeholders);
+  if (input.suggestion !== undefined) {
+    out[index] = `${parts.before}${replacement}${parts.after}`;
+    return commandLine(out);
+  }
+  out[index] = `${quoteBeside(parts.before, 'before')}${replacement}${quoteBeside(parts.after, 'after')}`;
+  return commandLine(out, new Set([index]));
 }
 
 // Options that init derives or requires: when the value came from elsewhere (a derived prefix, a missing description), the fix adds the option.
