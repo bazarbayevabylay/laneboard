@@ -1,5 +1,6 @@
 // Read-only JSON API of the web board (ADR-0001 §31): every route calls a core read op on a read-only store reference,
 // answers with the CLI envelope {ok, store, prefix, data, warnings} and maps errors to their registry HTTP status.
+import path from 'node:path';
 import { DEFAULT_LIST_LIMIT, ERRORS, LaneboardError, getTask, listBoards, listTasks, loadConfig, samePath, storePrefix, toErrorObject, toLaneboardError, viewBoard } from '../../core/index.ts';
 import type { BoardInfo, ListItem, StoreRef, ViewResult } from '../../core/index.ts';
 
@@ -31,38 +32,43 @@ export interface ApiContext {
   current: StoreRef;
 }
 
-// Active (not final) tasks of a registry entry: its counts without the final (last configured) status.
-function activeCount(info: BoardInfo): number {
-  const final = info.counts.at(-1)?.count ?? 0;
-  return Math.max(0, info.total - final);
+// Active tasks of a readable board by the same rule as `laneboard view` (viewBoard's total: not in the final status).
+async function activeTasks(dir: string): Promise<number> {
+  return (await viewBoard({ store: { dir, found: 'board', readOnly: true } }, {})).data.total;
 }
 
-// A registry entry as a tab.
-function tabOf(info: BoardInfo, current: boolean): BoardTab {
+// A registry entry as a tab (its active count is filled in by boardTabs).
+function tabOf(info: BoardInfo): BoardTab {
   return {
     key: info.prefix,
     prefix: info.prefix,
     name: info.name,
     description: info.description,
     path: info.path,
-    current,
+    current: false,
     missing: info.missing || info.problem !== null,
     problem: info.problem,
-    active: activeCount(info),
+    active: 0,
   };
 }
 
-// The current board as a tab, from its own files (it may be missing from the registry, or there may be no HOME).
-async function currentTab(ref: StoreRef): Promise<BoardTab> {
-  const config = loadConfig(ref.dir);
-  const view = await viewBoard({ store: ref }, {});
-  return { key: config.prefix, prefix: config.prefix, name: config.name ?? null, description: config.description ?? null, path: ref.dir, current: true, missing: false, problem: null, active: view.data.total };
+// The current board as a tab, from its own config (it may be missing from the registry, or there may be no HOME);
+// a config that cannot be read makes it an unreadable tab instead of failing every request.
+function currentTab(ref: StoreRef): BoardTab {
+  try {
+    const config = loadConfig(ref.dir);
+    return { key: config.prefix, prefix: config.prefix, name: config.name ?? null, description: config.description ?? null, path: ref.dir, current: true, missing: false, problem: null, active: 0 };
+  } catch (err) {
+    // Broken config.json: the tab says why; the routes on this board answer with the core error.
+    const prefix = storePrefix(ref.dir) ?? path.basename(path.dirname(ref.dir));
+    return { key: prefix, prefix, name: null, description: null, path: ref.dir, current: true, missing: true, problem: toLaneboardError(err).message, active: 0 };
+  }
 }
 
-// Tabs: the current board first, then every other board of the registry once by prefix (a live board wins over a dead path).
-// A broken registry leaves the current board only, and says why (`problem`).
-export async function boardTabs(ctx: ApiContext): Promise<{ tabs: BoardTab[]; problem: string | null }> {
-  const tabs = [await currentTab(ctx.current)];
+// Tabs without counts: the current board first, then every other board of the registry once by prefix (a live board wins over a
+// dead path). A broken registry leaves the current board only, and says why (`problem`).
+async function tabList(ctx: ApiContext): Promise<{ tabs: BoardTab[]; problem: string | null }> {
+  const tabs = [currentTab(ctx.current)];
   if (!ctx.home) return { tabs, problem: null };
   let registry: BoardInfo[];
   try {
@@ -78,15 +84,32 @@ export async function boardTabs(ctx: ApiContext): Promise<{ tabs: BoardTab[]; pr
   for (const b of others) {
     if (tabs.some((t) => t.key === b.prefix)) continue;
     if (!isLive(b) && livePrefixes.has(b.prefix)) continue;
-    tabs.push(tabOf(b, false));
+    tabs.push(tabOf(b));
   }
   return { tabs, problem: null };
 }
 
-// The store a request names with ?board= (absent: the current board); always read-only.
+// Tabs with their active counts; a board whose store cannot be read (the started one too) becomes an unreadable tab with the reason.
+export async function boardTabs(ctx: ApiContext): Promise<{ tabs: BoardTab[]; problem: string | null }> {
+  const { tabs, problem } = await tabList(ctx);
+  for (const tab of tabs) {
+    if (tab.missing) continue;
+    try {
+      tab.active = await activeTasks(tab.path);
+    } catch (err) {
+      // A broken active.json of one board must not fail the tabs of the others.
+      tab.missing = true;
+      tab.problem = toLaneboardError(err).message;
+    }
+  }
+  return { tabs, problem };
+}
+
+// The store a request names with ?board= (absent: the current board); always read-only. Resolved from the tab list without
+// reading any board's tasks, so a broken board never blocks the others.
 async function storeFor(ctx: ApiContext, key: string | null): Promise<StoreRef> {
   if (key === null || key === '') return { ...ctx.current, readOnly: true };
-  const { tabs } = await boardTabs(ctx);
+  const { tabs } = await tabList(ctx);
   const tab = tabs.find((t) => t.key === key);
   if (!tab || tab.missing) {
     throw new LaneboardError('INVALID_VALUE', `board ${key} is not one of the readable boards of this machine`, {
@@ -141,6 +164,16 @@ async function filterChoices(store: StoreRef): Promise<{ assignees: string[]; la
   return { assignees: [...assignees].sort(), labels: [...labels].sort() };
 }
 
+// The task id of /api/tasks/:id; a malformed %-escape is bad input (400), not a server bug.
+function taskId(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    // URIError: the address itself is broken (a lone or truncated %), so no task can have this id.
+    throw new LaneboardError('INVALID_VALUE', `task id ${raw} in the address is not valid URL encoding`, { fix: 'use an exact id like LB-12 (see laneboard list)' });
+  }
+}
+
 export type BoardData = ViewResult & { assignees: string[]; labels: string[] };
 
 // Route one GET /api/... request (the token is already checked); null = no such route.
@@ -177,7 +210,7 @@ export async function apiRoute(ctx: ApiContext, url: URL): Promise<ApiReply | nu
     const one = /^\/api\/tasks\/([^/]+)$/.exec(url.pathname);
     if (one?.[1] !== undefined) {
       store = await storeFor(ctx, url.searchParams.get('board'));
-      const r = await getTask({ store }, { id: decodeURIComponent(one[1]) });
+      const r = await getTask({ store }, { id: taskId(one[1]) });
       return ok(store, r.data, r.warnings);
     }
     return null;

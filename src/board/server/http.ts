@@ -29,6 +29,10 @@ export interface BoardServer {
   port: number;
   // The run's token (tests send it; the page reads it from its meta tag).
   token: string;
+  // false = no built UI in uiDir: `/` answers 503 "not built", the API and the event stream still work.
+  uiBuilt: boolean;
+  // Folder the UI was looked up in.
+  uiDir: string;
   server: http.Server;
   close(): Promise<void>;
 }
@@ -47,18 +51,22 @@ const ASSET_TYPES: Readonly<Record<string, string>> = {
 };
 
 // The built UI: dist/board next to the compiled server (dist/board/server), or the repository's dist/board when run from src.
-function defaultUiDir(): string {
+export function defaultUiDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [path.resolve(here, '..'), path.resolve(here, '../../../dist/board')];
-  return candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html'))) ?? candidates[0] ?? here;
+  const fromSources = path.basename(path.resolve(here, '../..')) === 'src';
+  return fromSources ? path.resolve(here, '../../../dist/board') : path.resolve(here, '..');
 }
 
-// index.html with the run's token in a meta tag, and every asset file read once at start (only listed files are ever served).
-function loadUi(dir: string, token: string): { index: string; assets: Map<string, Asset> } {
+// Text of `/` when the UI is not built (a source checkout before `npm run build`): the API keeps working, tests need no build.
+export function notBuiltText(dir: string): string {
+  return `The web board is not built: no ${path.join(dir, 'index.html')}. Build it in the laneboard source folder: npm ci && npm run build`;
+}
+
+// index.html with the run's token in a meta tag, and every asset file read once at start (only listed files are ever served);
+// index null = not built.
+function loadUi(dir: string, token: string): { index: string | null; assets: Map<string, Asset> } {
   const indexFile = path.join(dir, 'index.html');
-  if (!fs.existsSync(indexFile)) {
-    throw new LaneboardError('INTERNAL', `the web board is not built: no ${indexFile}`, { fix: 'build it in the laneboard source folder: npm ci && npm run build' });
-  }
+  if (!fs.existsSync(indexFile)) return { index: null, assets: new Map() };
   const html = fs.readFileSync(indexFile, 'utf8');
   const index = html.replace('</head>', `<meta name="laneboard-token" content="${token}">\n</head>`);
   const assets = new Map<string, Asset>();
@@ -105,7 +113,8 @@ function listen(server: http.Server, port: number): Promise<number> {
 // Start the board server; resolves once it listens.
 export async function startBoardServer(opts: BoardServerOptions): Promise<BoardServer> {
   const token = newToken();
-  const ui = loadUi(opts.uiDir ?? defaultUiDir(), token);
+  const uiDir = opts.uiDir ?? defaultUiDir();
+  const ui = loadUi(uiDir, token);
   const ctx = { home: opts.home, current: { ...opts.current, readOnly: true } };
   // Aborted on close: ends every open event stream, so close() does not wait for browsers.
   const shutdown = new AbortController();
@@ -117,6 +126,7 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
     if (req.method !== 'GET') return sendText(res, 405, 'Method not allowed: the board is read-only', { Allow: 'GET' });
     const url = new URL(req.url ?? '/', `http://${LOOPBACK}:${port}`);
     if (url.pathname === '/') {
+      if (ui.index === null) return sendText(res, 503, notBuiltText(uiDir));
       res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(ui.index);
       return;
@@ -157,6 +167,8 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
     url: `http://${LOOPBACK}:${port}/`,
     port,
     token,
+    uiBuilt: ui.index !== null,
+    uiDir,
     server,
     close: () =>
       new Promise<void>((resolve) => {

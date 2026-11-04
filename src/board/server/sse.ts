@@ -34,7 +34,8 @@ export function streamChanges(req: http.IncomingMessage, res: http.ServerRespons
     res.end();
   };
   req.on('close', end);
-  stop.addEventListener('abort', end, { once: true });
+  // Unsubscribed when this stream ends (signal: done), so closed streams leave no listener on the server's shutdown signal.
+  stop.addEventListener('abort', end, { once: true, signal: done.signal });
   void watchStore(
     store.dir,
     ({ rev }) => {

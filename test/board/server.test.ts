@@ -2,6 +2,7 @@
 // read-only API on core ops, SSE after a write from another process, PORT_IN_USE with a runnable fix, `laneboard board` lifecycle.
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { getEventListeners } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -9,9 +10,10 @@ import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { archiveTasks, createTask, getTask, listTasks, viewBoard } from '../../src/core/index.ts';
 import { startBoardServer } from '../../src/board/server/http.ts';
+import { streamChanges } from '../../src/board/server/sse.ts';
 import type { BoardServer } from '../../src/board/server/http.ts';
 import { runCli } from '../../src/cli/run.ts';
-import { as, CLI_SOURCE, cleanupTemp, cli, newStore, spawnNode, tempDir } from '../helpers.ts';
+import { as, CLI_SOURCE, cleanupTemp, cli, newStore, spawnNode, tempDir, writeRaw } from '../helpers.ts';
 import type { CliRun, TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -157,6 +159,23 @@ describe('board server: protection (K8)', () => {
   });
 });
 
+describe('board server: no built UI (a source checkout before npm run build)', () => {
+  it('`/` is 503 "not built" with the security headers; the API and the event stream still work', async () => {
+    const s = await newStore();
+    const server = await startBoardServer({ port: 0, current: { dir: s.dir }, uiDir: tempDir() });
+    running.push(server);
+    expect(server.uiBuilt).toBe(false);
+    const page = await request(server, '/');
+    expect(page.status).toBe(503);
+    expect(page.body).toContain('The web board is not built');
+    expect(page.body).toContain('npm run build');
+    expect(page.headers['content-security-policy']).toContain("default-src 'self'");
+    expect((await request(server, '/assets/app-1.js')).status).toBe(404);
+    expect((await api(server, '/api/board')).status).toBe(200);
+    expect(await readEvents(server, (t) => t.includes(': connected'), 2000)).toContain(': connected');
+  });
+});
+
 describe('board server: read-only API on core ops', () => {
   it('/api/board equals viewBoard with the same filters (core filters, not UI code) plus the filter choices', async () => {
     const { s, server } = await served();
@@ -251,6 +270,74 @@ describe('board server: read-only API on core ops', () => {
     expect(doc.data.registry_problem).toContain('boards.json is not valid JSON');
     expect((await api(server, '/api/board')).status).toBe(200);
   });
+
+  // Two registered boards ALPH and BETA in a temp HOME; BETA holds review x1, todo x1, done x3.
+  async function twoBoards(): Promise<{ home: string; alph: string; beta: string }> {
+    const home = tempDir();
+    const projects = tempDir();
+    const mk = async (name: string): Promise<string> => {
+      const dir = path.join(projects, name);
+      fs.mkdirSync(dir);
+      expect((await cli(['init', '--name', name, '--description', name], { cwd: dir, env: { HOME: home } })).code).toBe(0);
+      return dir;
+    };
+    const alph = await mk('alpha');
+    const beta = await mk('beta');
+    for (const [title, status] of [['t1', 'review'], ['t2', 'todo'], ['t3', 'done'], ['t4', 'done'], ['t5', 'done']]) {
+      expect((await cli(['create', title, '--status', status, '--as', 'x'], { cwd: beta, env: { HOME: home } })).code).toBe(0);
+    }
+    return { home, alph: path.join(alph, '.laneboard'), beta: path.join(beta, '.laneboard') };
+  }
+
+  it('a tab counts active tasks by the `laneboard view` rule, also with a task in a status no longer in config', async () => {
+    const { home, alph, beta } = await twoBoards();
+    const configFile = path.join(beta, 'config.json');
+    const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    config.statuses = config.statuses.filter((st: string) => st !== 'review');
+    writeRaw(configFile, JSON.stringify(config, null, 2));
+    const view = await cli(['view', '--json'], { cwd: path.dirname(beta), env: { HOME: home } });
+    const cliTotal = JSON.parse(view.stdout).data.total;
+    expect(cliTotal).toBe(2);
+    const server = await startBoardServer({ port: 0, home, current: { dir: alph }, uiDir: fakeUi() });
+    running.push(server);
+    const tabs = (await api(server, '/api/boards')).doc.data.boards;
+    expect(tabs.find((t: { key: string }) => t.key === 'BETA').active).toBe(cliTotal);
+    expect((await api(server, '/api/board?board=BETA')).doc.data.total).toBe(cliTotal);
+    // The started board through --board counts the same way.
+    const fromBeta = await startBoardServer({ port: 0, home, current: { dir: beta }, uiDir: fakeUi() });
+    running.push(fromBeta);
+    expect((await api(fromBeta, '/api/boards')).doc.data.boards[0]).toMatchObject({ key: 'BETA', current: true, active: cliTotal });
+  });
+
+  it('a broken started board is an unreadable tab; the other boards still open', async () => {
+    const { home, alph } = await twoBoards();
+    writeRaw(path.join(alph, 'active.json'), '{ broken');
+    const server = await startBoardServer({ port: 0, home, current: { dir: alph }, uiDir: fakeUi() });
+    running.push(server);
+    const boards = await api(server, '/api/boards');
+    expect(boards.status).toBe(200);
+    expect(boards.doc.data.boards.map((t: { key: string; missing: boolean; active: number }) => [t.key, t.missing, t.active])).toEqual([
+      ['ALPH', true, 0],
+      ['BETA', false, 2],
+    ]);
+    expect(boards.doc.data.boards[0].problem).toContain('active.json');
+    const beta = await api(server, '/api/board?board=BETA');
+    expect(beta.status).toBe(200);
+    expect(beta.doc.prefix).toBe('BETA');
+    expect((await api(server, '/api/tasks/BETA-1?board=BETA')).status).toBe(200);
+    // The broken board itself answers with the core's error envelope (STORE_INVALID, its registry status).
+    const own = await api(server, '/api/board');
+    expect(own.doc).toMatchObject({ ok: false, error: { code: 'STORE_INVALID' } });
+  });
+
+  it('a malformed %-escape in a task id is 400 INVALID_VALUE, not a 500', async () => {
+    const { server } = await served();
+    for (const p of ['/api/tasks/%E0%A4%A', '/api/tasks/%', '/api/tasks/LB-%ZZ']) {
+      const r = await api(server, p);
+      expect(r.status, p).toBe(400);
+      expect(r.doc.error.code, p).toBe('INVALID_VALUE');
+    }
+  });
 });
 
 // Read SSE events from /api/events until `until` returns true or the time is up.
@@ -289,6 +376,50 @@ describe('board server: live updates (K8)', () => {
     expect(text).toMatch(/^: connected\n\n/);
     const rev = JSON.parse(/event: change\ndata: (.*)\n/.exec(text)?.[1] ?? 'null');
     expect(rev).toEqual({ rev: JSON.parse(fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8')).rev });
+  });
+
+  it('deleting an archived task (only archive.json changes) reaches the event stream within 2 s', async () => {
+    const { s, server } = await served();
+    const active = fs.statSync(path.join(s.dir, 'active.json'));
+    const events = readEvents(server, (t) => t.includes('event: change'), 5000);
+    await new Promise((r) => setTimeout(r, 150));
+    const started = Date.now();
+    const write = await spawnNode([CLI_SOURCE, 'delete', 'LB-3', '--confirm', 'LB-3', '--as', 'dev-1', '--dir', s.dir]);
+    expect(write.code, write.stderr).toBe(0);
+    const text = await events;
+    expect(text).toContain('event: change');
+    expect(Date.now() - started).toBeLessThan(2000);
+    // The case only archive.json covers: active.json is untouched.
+    const after = fs.statSync(path.join(s.dir, 'active.json'));
+    expect([after.ino, after.size, after.mtimeMs]).toEqual([active.ino, active.size, active.mtimeMs]);
+  });
+
+  it('a closed stream leaves no listener on the shutdown signal', async () => {
+    const s = await newStore();
+    const stop = new AbortController();
+    const host = http.createServer((req, res) => streamChanges(req, res, { dir: s.dir }, stop.signal, { pollMs: 200 }));
+    await new Promise<void>((resolve) => host.listen(0, '127.0.0.1', () => resolve()));
+    const port = (host.address() as net.AddressInfo).port;
+    try {
+      for (let i = 0; i < 10; i++) {
+        await new Promise<void>((resolve, reject) => {
+          const req = http.get({ host: '127.0.0.1', port, path: '/' }, (res) => {
+            res.once('data', () => {
+              req.destroy();
+              resolve();
+            });
+          });
+          req.on('error', reject);
+        });
+      }
+      const until = Date.now() + 2000;
+      while (getEventListeners(stop.signal, 'abort').length > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+      expect(getEventListeners(stop.signal, 'abort')).toHaveLength(0);
+    } finally {
+      stop.abort();
+      host.closeAllConnections();
+      await new Promise((r) => host.close(r));
+    }
   });
 
   it('the stream pings and ends when the server closes', async () => {

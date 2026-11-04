@@ -114,8 +114,12 @@ function openStream(): void {
   live.value = 'connecting';
   const es = new EventSource(`/api/events${eventsQuery(page.board, boardToken())}`);
   stream = es;
+  // The server watches from the moment the stream connects: a write between the first GET and that moment sends no `change`,
+  // so every (re)connect loads the board again.
   es.addEventListener('open', () => {
-    if (stream === es) live.value = 'live';
+    if (stream !== es) return;
+    live.value = 'live';
+    onStoreChange();
   });
   es.addEventListener('change', () => {
     if (stream === es) onStoreChange();

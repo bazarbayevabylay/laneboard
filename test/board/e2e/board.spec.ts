@@ -168,6 +168,22 @@ test('a write from the CLI shows up without a reload within 2 s', async ({ page 
   await expect(page.getByTestId('task-panel').locator('.hist .q').last()).toHaveText('second comment while the panel is open', { timeout: 2000 });
 });
 
+test('a write between the first GET and the stream start still shows up: the page loads again when the stream opens', async ({ page }) => {
+  const title = 'Written before the stream connected';
+  // The board's first answer, then the write, then the stream: the server starts watching after the write, so no `change` comes.
+  const firstBoard = page.waitForResponse((r) => r.url().includes('/api/board?board=API'));
+  await page.route('**/api/events*', async (route) => {
+    await firstBoard;
+    m.lb(m.api, ['create', title, '--status', 'todo', '--as', 'dev-9']);
+    await route.continue();
+  });
+  await page.goto(`${m.url}?board=API`);
+  await firstBoard;
+  // Well under the 60 s refresh: only the reload on `open` can bring it.
+  await expect(page.locator('section.lane[data-status="todo"] .card', { hasText: title })).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId('live')).toContainText('Live');
+});
+
 // Screenshot of the SHOP board with the final column open and SHOP-4 in the panel; copied to LB_SCREENSHOT_DIR when set.
 async function screenshot(page: Page, name: string, outputPath: string): Promise<void> {
   await openShop(page);
