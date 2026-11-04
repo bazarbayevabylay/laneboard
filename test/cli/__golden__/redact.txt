@@ -9,6 +9,6 @@ LB-1 redacted: 1 occurrence replaced with [redacted] (rev 3)
 $ laneboard redact LB-1 --text-file - --as a --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":3,"redacted":1},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":3,"redacted":1,"backups":0},"warnings":[]}
 --- stderr
 

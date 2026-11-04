@@ -17,6 +17,7 @@ export const redact: CommandDef = {
     const text = file === undefined ? undefined : readTextFile(c.io, file, 'text-file').replace(/\r?\n$/, '');
     const r = await redactTask(c.op(), { id: c.positionals[0] ?? '', text: text as string });
     const times = r.data.redacted === 1 ? '1 occurrence' : `${r.data.redacted} occurrences`;
-    return { ...r, human: `${r.data.id} redacted: ${times} replaced with ${REDACTED} (rev ${r.data.rev})` };
+    const backups = r.data.backups > 0 ? `, ${r.data.backups} removed from the store backups` : '';
+    return { ...r, human: `${r.data.id} redacted: ${times} replaced with ${REDACTED}${backups} (rev ${r.data.rev})` };
   },
 };

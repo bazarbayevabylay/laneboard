@@ -35,8 +35,9 @@ export interface State {
   assertLockHeld(): void;
   // Run after the files are written, still under the lock (e.g. remove an attachment file).
   onCommit(fn: () => void): void;
-  // Run when the transaction fails before any store file was replaced, still under the lock: undo a write of the callback's own
-  // (attach removes the file it stored, so a failed metadata write leaves no file behind).
+  // Run when the transaction fails before any store file was replaced and the lock is still ours: undo a write of the callback's own
+  // (attach removes the file it stored, so a failed metadata write leaves no file behind). After LOCK_LOST it does not run: another
+  // process may own the lock and have written the same path (its file stays; an orphan of ours is left to doctor).
   onRollback(fn: () => void): void;
 }
 
@@ -131,6 +132,17 @@ function buildState(config: ConfigT, now: string, files: LoadedFile[], hooks: { 
   };
 }
 
+// Whether the lock is still ours (within the write deadline, so no stale takeover can have happened, W2).
+function stillHeld(lock: HeldLock): boolean {
+  try {
+    lock.assertHeld();
+    return true;
+  } catch {
+    // LOCK_LOST: past the deadline another process may hold the lock now; the caller then leaves everything as it is.
+    return false;
+  }
+}
+
 // Run the rollback hooks newest first; one that fails does not stop the others or replace the error being reported.
 function runRollbacks(rollbacks: ReadonlyArray<() => void>): void {
   for (const undo of [...rollbacks].reverse()) {
@@ -171,8 +183,9 @@ export async function transact<T>(store: StoreRef, spec: { files: readonly FileK
       const force = opts.freshBackups ? new Set(spec.files) : undefined;
       commitFiles(store.dir, files, { now, lock, faults: opts.faults, force, freshBackups: opts.freshBackups, replacing });
     } catch (err) {
-      // Undo only while no store file can have been replaced: once a file may be replaced, its metadata needs the file.
-      if (replacing.length === 0) runRollbacks(hooks.rollback);
+      // Undo only while no store file can have been replaced (once one may be, its metadata needs the file) and only while the lock
+      // is ours: after a stale takeover the paths the hooks would remove may be the new owner's.
+      if (replacing.length === 0 && stillHeld(lock)) runRollbacks(hooks.rollback);
       throw err;
     }
     for (const hook of hooks.commit) hook();

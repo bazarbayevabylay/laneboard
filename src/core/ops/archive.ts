@@ -240,7 +240,8 @@ export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<O
       }
       const found = locate(s, id);
       if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
-      refuseDeleted(found.task);
+      // A tombstone is archived; an active task with the mark (restored by 0.3.1, which keeps unknown keys) is deleted as usual.
+      if (found.archived) refuseDeleted(found.task);
       checkExpectedRev(found.task, found.archived, p.expected_rev);
       found.file.tasks = found.file.tasks.filter((t) => t.id !== id);
       s.archive.tasks.push(tombstone(found.task, s.now, actor, actorSourceOf(ctx)));

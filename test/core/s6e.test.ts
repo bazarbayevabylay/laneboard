@@ -216,16 +216,17 @@ describe('A12 redact', () => {
     expect(occurrences(s, SECRET)['active.json']).toBe(2);
     expect(occurrences(s, SECRET)['active.json.bak']).toBeGreaterThan(0);
     const rev = stored(s, 'LB-1').rev;
+    const inBackups = occurrences(s, SECRET)['active.json.bak'] + occurrences(s, SECRET)['archive.json.bak'];
     const secretFile = sourceFile('secret.txt', `${SECRET}\n`);
     const run = await cli(['redact', 'LB-1', '--text-file', secretFile, '--as', 'owner', '--json'], { cwd: s.root });
     expect(run.code, run.stderr).toBe(0);
     const reply = JSON.parse(run.stdout);
-    expect(reply.data).toEqual({ id: 'LB-1', rev: rev + 1, redacted: 2 });
+    expect(reply.data).toEqual({ id: 'LB-1', rev: rev + 1, redacted: 2, backups: inBackups });
     expect(run.stdout).not.toContain(SECRET);
     expect(occurrences(s, SECRET)).toEqual(NONE);
     const task = (await getTask(as(s), { id: 'LB-1' })).data;
     expect(task.events.find((e) => e.type === 'commented')?.data.text).toBe('use [redacted] please');
-    expect(task.events.at(-1)).toMatchObject({ actor: 'owner', type: 'updated', data: { redacted: { count: 2 } } });
+    expect(task.events.at(-1)).toMatchObject({ actor: 'owner', type: 'updated', data: { redacted: { count: 2, backups: inBackups } } });
     // The other task is untouched and the store is healthy.
     expect(stored(s, 'LB-2').rev).toBe(1);
     expect((await doctor(as(s), {})).data.healthy).toBe(true);
@@ -273,7 +274,7 @@ describe('A12 redact', () => {
     await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
     const shas = storeShas(s);
     const missing = await rejectsWith(redactTask(as(s, 'owner'), { id: 'LB-1', text: SECRET }), 'INVALID_VALUE');
-    expect(missing.message).toBe('the text does not occur in LB-1 (title, description, links, fields, history); nothing was changed');
+    expect(missing.message).toBe('the text does not occur in LB-1 (title, description, links, fields, history) or in the store backups; nothing was changed');
     expect(JSON.stringify({ m: missing.message, f: missing.fix, i: missing.input })).not.toContain(SECRET);
     await rejectsWith(redactTask(as(s, 'owner'), { id: 'LB-1', text: ' \n ' }), 'INVALID_VALUE');
     await rejectsWith(redactTask(as(s, 'owner'), { id: 'LB-9', text: SECRET }), 'TASK_NOT_FOUND');
@@ -283,14 +284,114 @@ describe('A12 redact', () => {
 
   it('a replacement longer than a short secret never pushes the title past 200 characters', async () => {
     const s = await newStore();
-    await createTask(as(s, 'a'), { title: 'ab'.repeat(100), status: 'todo' });
-    // 100 in the title, 100 in the created event's copy of it.
-    expect((await redactTask(as(s, 'owner'), { id: 'LB-1', text: 'ab' })).data.redacted).toBe(200);
+    await createTask(as(s, 'a'), { title: 'zq9k'.repeat(50), status: 'todo' });
+    // 50 in the title, 50 in the created event's copy of it.
+    const r = await redactTask(as(s, 'owner'), { id: 'LB-1', text: 'zq9k' });
+    expect(r.data.redacted).toBe(100);
+    expect(r.warnings).toContain('title cut to 200 characters after redact (300 lost)');
     const title = stored(s, 'LB-1').title as string;
     expect(title.length).toBeLessThanOrEqual(200);
     expect(title.startsWith('[redacted][redacted]')).toBe(true);
     // The store still reads (a title over 200 would be STORE_INVALID).
     expect((await getTask(as(s), { id: 'LB-1' })).data.id).toBe('LB-1');
+  });
+
+  it('the description and a link ref stay within 100 000 and 2 000 characters (review S6e MAJOR 4)', async () => {
+    const s = await newStore();
+    const description = `${'x'.repeat(99996)}zq9k`;
+    const ref = `https://example.com/?k=${'y'.repeat(2000 - 23 - 4)}zq9k`;
+    expect([description.length, ref.length]).toEqual([100000, 2000]);
+    await createTask(as(s, 'a'), { title: 'long', status: 'todo', description, links: [{ kind: 'url', ref }] });
+    const r = await redactTask(as(s, 'owner'), { id: 'LB-1', text: 'zq9k' });
+    expect(r.warnings).toEqual(expect.arrayContaining(['description cut to 100000 characters after redact (6 lost)', 'links[0].ref cut to 2000 characters after redact (6 lost)']));
+    const task = (await getTask(as(s), { id: 'LB-1' })).data;
+    expect(task.description).toHaveLength(100000);
+    expect(task.description.endsWith('x[red')).toBe(true);
+    expect(task.links[0]?.ref).toHaveLength(2000);
+    expect(occurrences(s, 'zq9k')).toEqual(NONE);
+    expect((await doctor(as(s), {})).data.healthy).toBe(true);
+  });
+
+  it('a secret left in a label or an attachment name is refused before any write; the fix order then clears it (review S6e MAJOR 1)', async () => {
+    const s = await newStore();
+    const secret = 'sk7secret9tok';
+    await createTask(as(s, 'a'), { title: `t ${secret}`, status: 'todo', labels: [secret, 'ops'] });
+    await attachFile(as(s, 'a'), { id: 'LB-1', path: sourceFile('notes.txt', 'n'), name: `${secret}.txt` });
+    const shas = storeShas(s);
+    const refused = await rejectsWith(redactTask(as(s, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE');
+    expect(refused.message).toBe('the text also occurs where redact cannot replace it: labels[0], attachments[0].name; nothing was changed');
+    expect(refused.fix).toBe(
+      'remove the label: laneboard update LB-1 --remove-label <label>; remove the attachment (its file goes too): laneboard attach LB-1 --remove <name>; then run laneboard redact LB-1 again (it also clears the events of the removal) (laneboard get LB-1 shows them)',
+    );
+    expect(JSON.stringify({ m: refused.message, f: refused.fix, i: refused.input })).not.toContain(secret);
+    expect(storeShas(s)).toEqual(shas);
+    expect(fs.existsSync(path.join(s.dir, 'attachments', 'LB-1', `${secret}.txt`))).toBe(true);
+    // An archived task first goes back: the fix says so.
+    const t = await newStore();
+    await createTask(as(t, 'a'), { title: 'x', status: 'todo', labels: [secret] });
+    await archiveTasks(as(t, 'a'), { ids: ['LB-1'] });
+    expect((await rejectsWith(redactTask(as(t, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE')).fix).toMatch(/^restore it first: laneboard restore LB-1; remove the label/);
+    // Following the fix: remove both, redact again; nothing of the secret stays in the store files, backups or attachments.
+    await updateTask(as(s, 'a'), { id: 'LB-1', remove_labels: [secret] });
+    await attachFile(as(s, 'a'), { id: 'LB-1', remove: `${secret}.txt` });
+    const r = await redactTask(as(s, 'owner'), { id: 'LB-1', text: secret });
+    expect(r.data.redacted).toBeGreaterThan(0);
+    expect(occurrences(s, secret)).toEqual(NONE);
+    expect(fs.readdirSync(path.join(s.dir, 'attachments', 'LB-1'))).toEqual([]);
+    expect(stored(s, 'LB-1').labels).toEqual(['ops']);
+    // A secret inside a word the board keeps (here an actor name) is refused with the generic fix.
+    const u = await newStore();
+    await createTask(as(u, 'bot-sk7secret9tok'), { title: 'x', status: 'todo' });
+    const actor = await rejectsWith(redactTask(as(u, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE');
+    expect(actor.message).toBe('the text also occurs where redact cannot replace it: events[0].actor, created_by, updated_by; nothing was changed');
+    expect(actor.fix).toContain('which redact never changes');
+  });
+
+  it('a task deleted before the redact: the secret only in a backup is found and removed (review S6e MAJOR 3)', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'a', status: 'todo', description: `desc ${SECRET}` });
+    await createTask(as(s, 'a'), { title: 'b', status: 'todo' });
+    await deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' });
+    const before = occurrences(s, SECRET);
+    expect(before).toEqual({ ...NONE, 'active.json.bak': 1 });
+    const run = await cli(['redact', 'LB-1', '--text-file', '-', '--as', 'owner'], { cwd: s.root, stdin: `${SECRET}\n` });
+    expect(run.code, run.stderr).toBe(0);
+    expect(run.stdout).toBe('LB-1 redacted: 0 occurrences replaced with [redacted], 1 removed from the store backups (rev 3)\n');
+    expect(occurrences(s, SECRET)).toEqual(NONE);
+    expect(stored(s, 'LB-1').events).toEqual([
+      expect.objectContaining({ type: 'archived', data: { deleted: true } }),
+      expect.objectContaining({ actor: 'owner', type: 'updated', data: { redacted: { count: 0, backups: 1 } } }),
+    ]);
+    // A secret also in another task: that one is named in a warning (redact rewrites one task).
+    const t = await newStore();
+    await createTask(as(t, 'a'), { title: `one ${SECRET}`, status: 'todo' });
+    await createTask(as(t, 'a'), { title: `two ${SECRET}`, status: 'todo' });
+    expect((await redactTask(as(t, 'owner'), { id: 'LB-1', text: SECRET })).warnings).toEqual(['the text also occurs in LB-2: redact each of them too']);
+  });
+
+  it('a text shorter than 4 characters, part of [redacted], the id, the prefix, a status or an actor is refused (no write)', async () => {
+    const s = await newStore({ prefix: 'PROJ' });
+    await createTask(as(s, 'alice'), { title: 'abc PROJ-1 PROJ todo alice dact', status: 'todo', assignee: 'carol' });
+    const shas = storeShas(s);
+    const cases: Array<[string, string]> = [
+      ['abc', 'is shorter than 4 characters'],
+      ['😀😀😀', 'is shorter than 4 characters'],
+      ['dact', 'is a part of [redacted]'],
+      ['PROJ-1', 'is the task id'],
+      ['PROJ', 'is the board prefix'],
+      ['todo', 'is a status name'],
+      ['alice', 'is an actor name'],
+      ['carol', 'is an actor name'],
+      ['owner', 'is an actor name'],
+    ];
+    for (const [text, why] of cases) {
+      const err = await rejectsWith(redactTask(as(s, 'owner'), { id: 'PROJ-1', text }), 'INVALID_VALUE');
+      expect(err.message, text).toBe(`the text to redact ${why}; nothing was changed`);
+      expect(err.fix).toBe('pass the whole secret (at least 4 characters), exactly as it was pasted: laneboard redact PROJ-1 --text-file <path>');
+    }
+    expect(storeShas(s)).toEqual(shas);
+    // Four characters are enough.
+    expect((await redactTask(as(s, 'owner'), { id: 'PROJ-1', text: 'abc ' })).data.redacted).toBe(2);
   });
 
   it('CLI: the text comes only from --text-file (path or -); without it USAGE; not an MCP tool', async () => {
@@ -382,5 +483,45 @@ describe('attach rollback (review S6a MINOR 1): a failed metadata write removes 
       }),
     ).rejects.toThrow('callback failed');
     expect(undone).toBe(true);
+  });
+
+  it('after LOCK_LOST no rollback hook runs: another process may own the lock and the path now (review S6e MAJOR 2)', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
+    let undone = false;
+    const write = transact(
+      s.store,
+      { files: ['active'] },
+      (st) => {
+        st.onRollback(() => {
+          undone = true;
+        });
+        const task = st.active.tasks[0];
+        if (!task) throw new Error('no task');
+        task.title = 'changed';
+        // Held past the write deadline (a paused process): the commit refuses with LOCK_LOST before replacing any file.
+        const until = Date.now() + 20;
+        while (Date.now() < until) {
+          // busy wait
+        }
+      },
+      { lockMaxHoldMs: 5 },
+    );
+    await rejectsWith(write, 'LOCK_LOST');
+    expect(undone).toBe(false);
+    expect(stored(s, 'LB-1').title).toBe('x');
+  });
+});
+
+describe('delete of an active task that carries a deleted mark (review S6e MINOR: a tombstone restored by 0.3.1)', () => {
+  it('is deleted as usual; the archived tombstone itself stays refused', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'x', status: 'todo' });
+    const active = readStore(s.dir, 'active');
+    const marked = { ...active.tasks[0], deleted: { at: '2026-11-04T19:05:54.686Z', by: 'owner' } };
+    writeRaw(path.join(s.dir, 'active.json'), `${JSON.stringify({ ...active, tasks: [marked], content_sha256: contentSha([marked]) }, null, 2)}\n`);
+    expect((await deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' })).data).toEqual({ id: 'LB-1', deleted: true });
+    expect(stored(s, 'LB-1')).toMatchObject({ archived_at: expect.stringMatching(ISO), deleted: { by: 'owner' } });
+    await rejectsWith(deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' }), 'INVALID_VALUE');
   });
 });
