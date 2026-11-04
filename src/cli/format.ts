@@ -1,14 +1,11 @@
 // Output for the CLI: JSON envelopes, human text, and error fixes rebuilt from argv.
-import { ERRORS, fieldsLine, LaneboardError, toErrorObject } from '../core/index.ts';
+import { ERRORS, fieldsLine, LaneboardError, shellQuote, toErrorObject } from '../core/index.ts';
 import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import type { SetupResult } from '../setup/index.ts';
 
-// Quote one argv token for a copy-pasteable shell command.
-export function shellQuote(token: string): string {
-  if (/^[A-Za-z0-9_\-.,:/=@+%]+$/.test(token)) return token;
-  return `'${token.replace(/'/g, `'\\''`)}'`;
-}
+export { shellQuote };
+
 
 // `laneboard <argv...>` with each token quoted, except placeholder tokens like `<name>`.
 export function commandLine(argv: readonly string[], placeholders: ReadonlySet<number> = new Set()): string {
@@ -123,6 +120,41 @@ function inline(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// Longest value an event line shows (titles, refs); a sha256 shows its first 12 characters.
+const EVENT_VALUE_MAX = 60;
+const SHA_SHOWN = 12;
+
+// One event value for people: text as it is (quoted when it has spaces), null as -, a link as kind=ref, a list in [ ].
+function eventValue(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'string') return /^[^\s"]+$/.test(value) ? cut(value) : JSON.stringify(cut(value));
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return `[${value.map(eventValue).join(', ')}]`;
+  const link = value as { kind?: unknown; ref?: unknown };
+  if (typeof link.kind === 'string' && typeof link.ref === 'string' && Object.keys(value).length === 2) return `${link.kind}=${cut(link.ref)}`;
+  return cut(JSON.stringify(value));
+}
+
+// Text cut to EVENT_VALUE_MAX code points, with an ellipsis when cut.
+function cut(text: string): string {
+  const chars = [...text];
+  return chars.length <= EVENT_VALUE_MAX ? text : `${chars.slice(0, EVENT_VALUE_MAX - 1).join('')}…`;
+}
+
+// Event data for people: a comment as its text, other events as short key=value pairs (an update as key=before→after).
+export function eventText(type: string, data: Record<string, unknown>): string {
+  if (type === 'commented' && typeof data.text === 'string') return data.text;
+  return Object.entries(data)
+    .map(([key, value]) => {
+      if (key === 'sha256' && typeof value === 'string') return `${key}=${value.slice(0, SHA_SHOWN)}…`;
+      const chars = (value as { chars?: unknown } | null)?.chars;
+      if (type === 'updated' && key === 'description' && Array.isArray(chars)) return `description=${eventValue(chars[0])}→${eventValue(chars[1])} chars`;
+      if (type === 'updated' && Array.isArray(value) && value.length === 2) return `${key}=${eventValue(value[0])}→${eventValue(value[1])}`;
+      return `${key}=${eventValue(value)}`;
+    })
+    .join(' ');
+}
+
 // An event's actor for people: a default name is marked, so it is not mistaken for a name somebody chose.
 function actorText(e: { actor: string; actor_source: 'explicit' | 'default' | null }): string {
   return e.actor_source === 'default' ? `${e.actor} (default name)` : e.actor;
@@ -144,7 +176,8 @@ export function taskText(t: TaskView): string {
   }
   const dropped = t.events_dropped ? `, ${t.events_dropped} older dropped` : '';
   lines.push(`  events (${t.events.length} shown${dropped}):`);
-  for (const e of t.events) lines.push(`    ${e.at}  ${actorText(e)}  ${e.type}  ${inline(e.data)}`);
+  // A comment of several lines continues under its first line.
+  for (const e of t.events) lines.push(`    ${e.at}  ${actorText(e)}  ${e.type}  ${eventText(e.type, e.data).split('\n').join('\n      ')}`);
   return lines.join('\n');
 }
 

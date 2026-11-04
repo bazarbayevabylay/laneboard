@@ -1,7 +1,7 @@
 // Apply or roll back laneboard's part of harness files: idempotent, `.laneboard.bak` of the original, exact restore on --remove.
 import fs from 'node:fs';
 import path from 'node:path';
-import { LaneboardError } from '../core/index.ts';
+import { LaneboardError, shellQuote } from '../core/index.ts';
 
 // How laneboard edits one file's text; null = the file does not exist.
 export interface TextEdit {
@@ -88,7 +88,7 @@ function checkWritable(p: PlannedFile): PlannedFile {
       const code = (err as NodeJS.ErrnoException).code ?? 'EACCES';
       throw new LaneboardError('SETUP_WRITE_FAILED', `cannot write ${target === p.file ? p.shown : `the directory of ${p.shown}`} (${code}); nothing was written`, {
         details: { file: p.shown },
-        fix: `make ${target} writable (chmod u+w ${target}) and run setup again`,
+        fix: `make ${target} writable (chmod u+w ${shellQuote(target)}) and run setup again`,
       });
     }
   }

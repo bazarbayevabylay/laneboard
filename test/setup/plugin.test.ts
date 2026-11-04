@@ -42,7 +42,9 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     expect(rules).toContain('type `commented`');
     // Unsure which board: the registry first, then a board of its own with a name and description (owner's rule, S2c).
     expect(rules).toContain('`laneboard boards --json`, pick yours by `description` and `path`');
-    expect(rules).toContain('`laneboard init --name <name> --description "<whose project, what work>"`');
+    // A board of its own by --dir: a bare init would take LANEBOARD_DIR, which may name another project's board (S2f).
+    expect(rules).toContain('`laneboard init --dir .laneboard --name <name> --description "<whose project, what work>"`');
+    expect(rules).not.toContain('`laneboard init --name');
     expect(rules).not.toContain('unless the user asks');
     // An agent without a name is told that its writes use the session's default name.
     expect(rules).toContain("without `--as` and LANEBOARD_AGENT writes use the session's default name");

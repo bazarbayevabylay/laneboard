@@ -4,6 +4,7 @@ exit 0
 --- stdout
 initialized <ROOT>/.laneboard (web-app, prefix WEB; statuses: todo, doing, done)
   test board
+ids: WEB-1, WEB-2, ...; another prefix while the board has no task: laneboard config --prefix <PREFIX>
 next: laneboard prime (agent rules, this board and the command that creates your task)
 --- stderr
 warning: HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards

@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import type { TaskT } from '../schema.ts';
+import { shellQuote } from '../shell.ts';
 import { maxIdNumber } from '../store.ts';
 import { transact } from '../transact.ts';
 import {
@@ -89,5 +90,17 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
     },
     txOptions(ctx, warnings),
   );
+  if (data.assignee !== null && data.assignee !== actor) warnings.push(otherAssignee(data, actor));
   return { data, warnings };
+}
+
+// Warning for a task created for an assignee other than the writer: right for an orchestrator handing work out, but an agent
+// that made up a name for itself (--assignee backend-developer without --as) would not find the task as its own in prime.
+function otherAssignee(task: TaskView, actor: string): string {
+  const assignee = task.assignee ?? '';
+  return (
+    `${task.id} is assigned to ${assignee}, not to you (${actor}): fine when you create it for someone else, but prime will not list it as yours. ` +
+    `If it is your task: laneboard update ${task.id} --assignee ${shellQuote(actor)} --expected-rev ${task.rev} --as ${shellQuote(actor)} --json; ` +
+    `if ${assignee} is your name: pass --as ${shellQuote(assignee)} on every command`
+  );
 }

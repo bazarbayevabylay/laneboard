@@ -3,22 +3,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { z } from 'zod';
 import { LaneboardError } from './errors.ts';
+import { shellQuote } from './shell.ts';
 import { CONFIG_SCHEMA, CONFIG_VERSION, Config } from './schema.ts';
 import type { ConfigT } from './schema.ts';
 
 export const DEFAULT_PREFIX = 'LB';
 export const DEFAULT_STATUSES = ['todo', 'in_progress', 'review', 'done'];
 
-// Prefix that init derives from the board name (by default the project folder's name) (`my-web-app` -> MYWEBAPP, `agent-2` -> AGENT2), or undefined when none fits.
-// Uppercase letters and digits only, starting with a letter, at most 10 characters; a trailing number is kept when the name is cut.
-export function derivePrefix(folder: string): string | undefined {
+// Longest prefix init derives: short ids (LANE-12) are easier to type and read than the whole name (LANEBOARD-12).
+export const DERIVED_PREFIX_MAX = 4;
+
+// Prefix that init derives from the board name (by default the project folder's name), or undefined when none fits.
+// Rule: a name of several words gives their initials (`my-web-app` -> MWA), one word its first letters (`laneboard` -> LANE);
+// at most 4 characters, a trailing number is kept (`agent-2` -> AGE2), uppercase letters and digits, starting with a letter.
+export function derivePrefix(name: string): string | undefined {
   // Accented letters keep their base letter (café -> CAFE) instead of being dropped.
-  const letters = folder.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[0-9]+/, '');
-  if (letters === '') return undefined;
-  if (letters.length <= 10) return letters;
-  const number = /[0-9]+$/.exec(letters)?.[0] ?? '';
-  if (number.length >= 5) return letters.slice(0, 10);
-  return letters.slice(0, 10 - number.length) + number;
+  const plain = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  const words = plain.split(/[^A-Z0-9]+/).filter((w) => w !== '');
+  const last = words.pop() ?? '';
+  const number = /[0-9]+$/.exec(last)?.[0] ?? '';
+  // Words without leading digits (`2024_report` -> REPORT); a word of digits only is dropped (its number is kept above when last).
+  const letters = [...words, last.slice(0, last.length - number.length)].map((w) => w.replace(/^[0-9]+/, '')).filter((w) => w !== '');
+  if (letters.length === 0) return undefined;
+  const base = letters.length === 1 ? (letters[0] ?? '') : letters.map((w) => w[0]).join('');
+  const kept = number.length < DERIVED_PREFIX_MAX ? number : '';
+  return base.slice(0, DERIVED_PREFIX_MAX - kept.length) + kept;
 }
 
 // Prefix of the store at `storeDir`, or null when its config cannot be read (only shown to the reader, never trusted for writes).
@@ -103,7 +112,9 @@ export function loadConfig(storeDir: string): ConfigT {
     raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new LaneboardError('STORE_INVALID', `config.json is missing in ${storeDir}`, { fix: `restore ${file} or re-create the store with laneboard init` });
+      throw new LaneboardError('STORE_INVALID', `config.json is missing in ${storeDir}`, {
+        fix: `restore ${file} (from git or a copy); or move ${shellQuote(storeDir)} aside and create a new board: laneboard init --dir ${shellQuote(storeDir)} --name <name> --description "<whose project, what work>"`,
+      });
     }
     throw err;
   }

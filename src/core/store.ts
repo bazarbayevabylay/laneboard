@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describeIssue, schemaVersion } from './config.ts';
 import { LaneboardError } from './errors.ts';
+import { shellQuote } from './shell.ts';
 import { STORE_SCHEMA, STORE_VERSION, StoreFile } from './schema.ts';
 import type { FileKind, StoreFileT, TaskT } from './schema.ts';
 
@@ -60,7 +61,7 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
     const dir = path.resolve(input.cwd, explicit);
     if (!isDir(dir)) {
       throw new LaneboardError('STORE_NOT_FOUND', `${source} points to ${dir}, which is not a directory`, {
-        fix: `fix ${source} (laneboard boards --json lists this machine's boards with their paths); if this project has no board yet: laneboard init --dir ${dir} --name <name> --description "<whose project, what work>", then laneboard prime`,
+        fix: `fix ${source} (laneboard boards --json lists this machine's boards with their paths); if this project has no board yet: laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>", then laneboard prime`,
       });
     }
     return { dir, found: input.dir !== undefined ? 'dir' : 'env' };
@@ -175,8 +176,8 @@ export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | 
   // A new board goes to the folder of the marker, and by --dir: a bare init would take LANEBOARD_DIR, the store in use.
   const created = path.join(path.dirname(path.resolve(cwd, foreign.marker)), STORE_DIR_NAME);
   const fix = own
-    ? `pass --dir ${own} on every command`
-    : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${created} --name <name> --description "<whose project, what work>", then pass --dir ${created} on every command, starting with laneboard prime`;
+    ? `pass --dir ${shellQuote(own)} on every command`
+    : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${shellQuote(created)} --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(created)} on every command, starting with laneboard prime`;
   return `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} ${how}, but ${path.resolve(cwd)} looks like a separate project (${it}); unless this folder is part of that project, ${fix}`;
 }
 

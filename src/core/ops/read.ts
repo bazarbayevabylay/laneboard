@@ -289,7 +289,17 @@ function statusSince(task: TaskT): string {
   return task.created_at;
 }
 
-// Kanban view of the active tasks (CLI `laneboard view`, for people): columns by configured status, lock-free (active.json only).
+// Order by the `priority` field (0 = highest; a task without it after those with one) when config declares it as a number, else 0.
+function byPriority(config: ConfigT, a: TaskT, b: TaskT): number {
+  if (config.fields.priority?.type !== 'number') return 0;
+  const rank = (t: TaskT): number => (typeof t.fields.priority === 'number' ? t.fields.priority : Number.POSITIVE_INFINITY);
+  const ra = rank(a);
+  const rb = rank(b);
+  return ra === rb ? 0 : ra < rb ? -1 : 1;
+}
+
+// Kanban view of the active tasks (CLI `laneboard view`, for people): columns by configured status, lock-free (active.json only);
+// in a column by priority (when config declares it), then the latest update first.
 export async function viewBoard(ctx: OpContext, input: ViewInputT): Promise<OpResult<ViewResult>> {
   const p = parseInput(ViewInput, input);
   if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
@@ -297,7 +307,7 @@ export async function viewBoard(ctx: OpContext, input: ViewInputT): Promise<OpRe
   const warnings: string[] = [];
   const { config, tasks } = await scopedTasks(ctx, 'active', warnings);
   const shown = tasks.filter(({ task }) => taskMatches(task, p)).map(({ task }) => task);
-  shown.sort(byUpdatedDesc);
+  shown.sort((a, b) => byPriority(config, a, b) || byUpdatedDesc(a, b));
   const unknown = unique(shown.map((t) => t.status).filter((st) => !config.statuses.includes(st)));
   const columns = [...config.statuses.map((status) => ({ status, known: true })), ...unknown.map((status) => ({ status, known: false }))].map((c) => ({
     ...c,

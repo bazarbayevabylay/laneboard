@@ -7,16 +7,16 @@ import { cleanupTemp, CLI_SOURCE, spawnNode, tempDir } from '../helpers.ts';
 afterAll(cleanupTemp);
 
 describe('laneboard process', () => {
-  it('spec smoke: init (prefix from the folder name), create -> WEBAPP-1, update with an unknown status -> exit 2 listing allowed', async () => {
+  it('spec smoke: init (prefix from the folder name), create -> WA-1, update with an unknown status -> exit 2 listing allowed', async () => {
     const cwd = path.join(tempDir(), 'web-app');
     fs.mkdirSync(cwd);
     expect((await spawnNode([CLI_SOURCE, 'init', '--description', 'test board'], { cwd })).code).toBe(0);
     const created = await spawnNode([CLI_SOURCE, 'create', 'x', '--status', 'todo', '--as', 'a', '--json'], { cwd });
     expect(created.code).toBe(0);
-    expect(created.stdout).toContain('"id":"WEBAPP-1"');
-    expect(created.stdout).toContain('"prefix":"WEBAPP"');
+    expect(created.stdout).toContain('"id":"WA-1"');
+    expect(created.stdout).toContain('"prefix":"WA"');
     expect(created.stderr).toBe('');
-    const bad = await spawnNode([CLI_SOURCE, 'update', 'WEBAPP-1', '--status', 'doing', '--as', 'a'], { cwd });
+    const bad = await spawnNode([CLI_SOURCE, 'update', 'WA-1', '--status', 'doing', '--as', 'a'], { cwd });
     expect(bad.code).toBe(2);
     expect(bad.stdout).toBe('');
     expect(bad.stderr).toContain('allowed: todo, in_progress, review, done');

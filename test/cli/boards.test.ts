@@ -74,28 +74,28 @@ describe('board registry', () => {
     await data(m.run(agentB, ['init', '--name', 'agent-b', '--description', 'Agent B: writes the billing docs', '--json']));
     boards = (await data(m.run(orch, ['boards', '--json']))).boards;
     const mine = (desc: string, cwd: string) => boards.find((b) => b.description.includes(desc) && b.path === path.join(cwd, '.laneboard'));
-    expect(mine('Orchestrator', orch)).toMatchObject({ prefix: 'ORCHESTRAT' });
-    expect(mine('Agent B', agentB)).toMatchObject({ prefix: 'AGENTB' });
+    expect(mine('Orchestrator', orch)).toMatchObject({ prefix: 'ORCH' });
+    expect(mine('Agent B', agentB)).toMatchObject({ prefix: 'AB' });
     const r = JSON.parse((await m.run(agentB, ['create', 'Billing docs', '--status', 'todo', '--as', 'b', '--json'])).stdout);
-    expect(r).toMatchObject({ ok: true, prefix: 'AGENTB', warnings: [] });
+    expect(r).toMatchObject({ ok: true, prefix: 'AB', warnings: [] });
   });
 
   it('a prefix another live board uses is refused with a free one in the fix; a missing board frees its prefix', async () => {
     const m = machine();
-    const first = m.project(path.join('a', 'claims-portal-north'));
-    const second = m.project(path.join('b', 'claims-portal-south'));
+    const first = m.project(path.join('a', 'claims-portal'));
+    const second = m.project(path.join('b', 'claims-portal'));
     await data(m.run(first, ['init', '--description', 'first portal', '--json']));
     const taken = await m.run(second, ['init', '--description', 'second portal', '--json']);
     expect(taken.code).toBe(2);
     const err = JSON.parse(taken.stdout).error;
-    expect(err).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard init --description 'second portal' --json --prefix CLAIMSPOR2", details: { taken: ['CLAIMSPORT'] } });
+    expect(err).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard init --description 'second portal' --json --prefix CP2", details: { taken: ['CP'] } });
     expect(fs.existsSync(path.join(second, '.laneboard'))).toBe(false);
     // The fix runs as printed (minus --json) and the explicit prefix that is taken is refused the same way.
-    expect((await m.run(second, ['init', '--description', 'second portal', '--prefix', 'CLAIMSPORT'])).stderr).toContain('fix: laneboard init --description \'second portal\' --prefix CLAIMSPOR2');
-    await data(m.run(second, ['init', '--description', 'second portal', '--prefix', 'CLAIMSPOR2', '--json']));
+    expect((await m.run(second, ['init', '--description', 'second portal', '--prefix', 'CP'])).stderr).toContain('fix: laneboard init --description \'second portal\' --prefix CP2');
+    await data(m.run(second, ['init', '--description', 'second portal', '--prefix', 'CP2', '--json']));
     fs.rmSync(path.join(first, '.laneboard'), { recursive: true, force: true });
-    const third = m.project('claims-portal-x');
-    expect(JSON.parse((await m.run(third, ['init', '--description', 'third', '--json'])).stdout).prefix).toBe('CLAIMSPORT');
+    const third = m.project(path.join('c', 'claims-portal'));
+    expect(JSON.parse((await m.run(third, ['init', '--description', 'third', '--json'])).stdout).prefix).toBe('CP');
   });
 
   it('init needs a description and refuses a folder inside an existing store', async () => {
@@ -190,7 +190,7 @@ describe('board registry', () => {
 });
 
 describe('--board opens another board read-only', () => {
-  // Two boards: mine (MINE) and theirs (THEIRS) with one task.
+  // Two boards: mine (MINE) and theirs (THEI) with one task.
   async function two(): Promise<{ m: ReturnType<typeof machine>; mine: string; theirs: string }> {
     const m = machine();
     const mine = m.project('mine');
@@ -203,15 +203,15 @@ describe('--board opens another board read-only', () => {
 
   it('view, list, get and events read it by prefix, name or path', async () => {
     const { m, mine, theirs } = await two();
-    for (const board of ['THEIRS', 'theirs', 'Theirs', path.join(theirs, '.laneboard'), '../theirs']) {
+    for (const board of ['THEI', 'theirs', 'Theirs', path.join(theirs, '.laneboard'), '../theirs']) {
       const r = JSON.parse((await m.run(mine, ['list', '--board', board, '--json'])).stdout);
-      expect(r, board).toMatchObject({ ok: true, store: path.join(theirs, '.laneboard'), prefix: 'THEIRS', data: { total: 1 } });
+      expect(r, board).toMatchObject({ ok: true, store: path.join(theirs, '.laneboard'), prefix: 'THEI', data: { total: 1 } });
     }
-    expect((await m.run(mine, ['view', '--board', 'THEIRS'], { COLUMNS: '90' })).stdout).toContain('THEIRS-1 Their task');
-    expect((await data(m.run(mine, ['get', 'THEIRS-1', '--board', 'THEIRS', '--json']))).title).toBe('Their task');
-    expect((await data(m.run(mine, ['events', '--board', 'THEIRS', '--json']))).total).toBe(1);
+    expect((await m.run(mine, ['view', '--board', 'THEI'], { COLUMNS: '90' })).stdout).toContain('THEI-1 Their task');
+    expect((await data(m.run(mine, ['get', 'THEI-1', '--board', 'THEI', '--json']))).title).toBe('Their task');
+    expect((await data(m.run(mine, ['events', '--board', 'THEI', '--json']))).total).toBe(1);
     const unknown = JSON.parse((await m.run(mine, ['view', '--board', 'NOPE', '--json'])).stdout);
-    expect(unknown.error).toMatchObject({ code: 'STORE_NOT_FOUND', allowed: ['MINE', 'THEIRS'] });
+    expect(unknown.error).toMatchObject({ code: 'STORE_NOT_FOUND', allowed: ['MINE', 'THEI'] });
   });
 
   it('every write through --board is refused (STORE_READ_ONLY) and their store stays byte for byte the same', async () => {
@@ -220,15 +220,15 @@ describe('--board opens another board read-only', () => {
     const before = fs.readFileSync(file, 'utf8');
     for (const argv of [
       ['create', 'x', '--status', 'todo', '--as', 'me'],
-      ['update', 'THEIRS-1', '--title', 'mine now', '--as', 'me'],
-      ['claim', 'THEIRS-1', '--as', 'me'],
-      ['comment', 'THEIRS-1', 'hi', '--as', 'me'],
-      ['archive', 'THEIRS-1', '--as', 'me'],
-      ['delete', 'THEIRS-1', '--confirm', 'THEIRS-1', '--as', 'me'],
+      ['update', 'THEI-1', '--title', 'mine now', '--as', 'me'],
+      ['claim', 'THEI-1', '--as', 'me'],
+      ['comment', 'THEI-1', 'hi', '--as', 'me'],
+      ['archive', 'THEI-1', '--as', 'me'],
+      ['delete', 'THEI-1', '--confirm', 'THEI-1', '--as', 'me'],
       ['config', '--name', 'hijacked'],
       ['doctor', '--fix'],
     ]) {
-      const r = await m.run(mine, [...argv, '--board', 'THEIRS', '--json']);
+      const r = await m.run(mine, [...argv, '--board', 'THEI', '--json']);
       expect(r.code, argv.join(' ')).toBe(6);
       expect(JSON.parse(r.stdout).error.code, argv.join(' ')).toBe('STORE_READ_ONLY');
     }
@@ -238,7 +238,7 @@ describe('--board opens another board read-only', () => {
 
   it('core refuses a write to a read-only store too (a facade that forgets the check still cannot write)', async () => {
     const { m, theirs } = await two();
-    const ref = resolveBoard(m.home, 'THEIRS', m.projects);
+    const ref = resolveBoard(m.home, 'THEI', m.projects);
     expect(ref).toEqual({ dir: path.join(theirs, '.laneboard'), found: 'board', readOnly: true });
     await rejectsWith(createTask({ store: ref, actor: 'me' }, { title: 'x', status: 'todo' }), 'STORE_READ_ONLY');
     await rejectsWith(transact(ref, { files: ['active'] }, () => undefined), 'STORE_READ_ONLY');

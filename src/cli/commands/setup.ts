@@ -1,6 +1,6 @@
 // laneboard setup
 import path from 'node:path';
-import { initTarget, LaneboardError, registerStore, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
+import { initTarget, LaneboardError, registerStore, samePath, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
 import { HARNESS_NAMES, runSetup } from '../../setup/index.ts';
 import { setupText } from '../format.ts';
 import { flag } from './args.ts';
@@ -50,7 +50,7 @@ export const setup: CommandDef = {
     if (failed !== undefined) r.warnings.push(failed);
     const fromEnv = c.discovery.dir === undefined && c.discovery.envDir ? c.discovery.envDir : undefined;
     // LANEBOARD_DIR may be left over from another project's session: say where the pin came from.
-    if (fromEnv !== undefined && !remove && storeDir !== path.join(path.resolve(c.io.cwd), STORE_DIR_NAME)) {
+    if (fromEnv !== undefined && !remove && !samePath(storeDir, path.join(path.resolve(c.io.cwd), STORE_DIR_NAME))) {
       r.warnings.push(`the store pin comes from LANEBOARD_DIR=${fromEnv} in your environment, not ./.laneboard; to pin another store run setup again with --dir <path>`);
     }
     return { data: r.data, warnings: r.warnings, human: setupText(r.data) };

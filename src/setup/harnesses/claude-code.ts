@@ -137,7 +137,7 @@ function checkPin(file: string, text: string | null, c: HarnessContext): void {
   if (dir === undefined || samePath(path.resolve(c.cwd, dir), c.storeDir)) return;
   throw new LaneboardError('SETUP_CONFLICT', `${file} sets env.LANEBOARD_DIR to ${dir}, not to ${c.storeDir}; setup does not overwrite your value`, {
     details: { file, value: dir },
-    fix: `laneboard setup claude-code --dir ${dir}`,
+    fix: `laneboard setup claude-code --dir ${shellWord(dir)}`,
   });
 }
 

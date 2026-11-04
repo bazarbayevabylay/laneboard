@@ -93,14 +93,27 @@ function titleLines(card: ViewCard, room: number): Piece[][] {
   return lines;
 }
 
-// Who has the card and for how long it has been in this status; the time comes first, so a long name cut short keeps it.
-function holder(card: ViewCard, now: Date): string {
-  return `${age(card.status_since, now)} · ${card.assignee ?? 'unassigned'}`;
+// A session's default name, `<harness>@<user>:<8 characters of the session id>` (core/agent-name.ts).
+const DEFAULT_NAME = /^[A-Za-z0-9._-]+@(.+):([A-Za-z0-9]{8})$/;
+
+// A name as a card shows it in `room` columns: a default name without its harness and with its user cut first, so the session
+// part that tells parallel sessions apart stays visible (`abylay…:f92f65da`); any other name whole, cut from the end.
+export function shortName(name: string, room: number): string {
+  const m = DEFAULT_NAME.exec(name);
+  if (!m) return fit(name, room);
+  const session = `:${m[2] ?? ''}`;
+  return `${fit(m[1] ?? '', Math.max(1, room - width(session)))}${session}`;
+}
+
+// Who has the card and for how long it has been in this status, in `room` columns; the time comes first, so it is never cut.
+function holder(card: ViewCard, now: Date, room: number): string {
+  const time = `${age(card.status_since, now)} · `;
+  return `${time}${card.assignee === null ? 'unassigned' : shortName(card.assignee, room - width(time))}`;
 }
 
 // Lines of one card: id and title, then the time in status and who has it.
 function cardLines(card: ViewCard, room: number, now: Date): Piece[][] {
-  return [...titleLines(card, room), [{ text: fit(`  ${holder(card, now)}`, room), style: 'dim' }]];
+  return [...titleLines(card, room), [{ text: fit(`  ${holder(card, now, room - 2)}`, room), style: 'dim' }]];
 }
 
 // Column title: status (count); a status no longer in config is marked with "?".
@@ -132,7 +145,7 @@ export function renderBoard(d: ViewResult, o: RenderOptions): string {
       lines.push(paint([{ text: fit(columnTitle(c), o.width), style: 'bold' }], o.color));
       for (const card of c.cards) {
         // Time and holder come before the title, so cutting a long title keeps them.
-        lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
+        lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now, o.width)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
       }
     }
   } else {

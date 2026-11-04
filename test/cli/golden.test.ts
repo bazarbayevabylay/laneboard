@@ -62,7 +62,7 @@ const seedBoard = async (e: Env): Promise<void> => {
   await tick();
   await e.run(['create', 'Ship v1', '--status', 'done', '--assignee', 'dev-1', '--label', 'ui', '--as', 'a']);
 };
-// Another folder named `other` already has a registered board (prefix OTHER), so `init --dir other/.laneboard` derives a taken prefix.
+// Another folder named `other` already has a registered board (prefix OTHE), so `init --dir other/.laneboard` derives a taken prefix.
 const seedOtherBoard = async (e: Env): Promise<void> => {
   const elsewhere = path.join(e.root, 'elsewhere', 'other');
   fs.mkdirSync(elsewhere, { recursive: true });
@@ -259,7 +259,7 @@ function normalize(text: string, root: string): string {
 
 // Run one case in a fresh directory, in human or JSON mode.
 async function runCase(c: Case, json: boolean): Promise<{ argv: string[]; result: CliRun; root: string }> {
-  // A fixed folder name, so `init` without --prefix derives the same prefix (WEBAPP) on every machine.
+  // A fixed folder name, so `init` without --prefix derives the same prefix (WA) on every machine.
   const root = path.join(tempDir(), 'web-app');
   fs.mkdirSync(root);
   const dir = path.join(root, '.laneboard');

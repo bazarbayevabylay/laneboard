@@ -2,8 +2,9 @@
 $ laneboard init --description 'Web shop of ACME: checkout and cart work'
 exit 0
 --- stdout
-initialized <ROOT>/.laneboard (web-app, prefix WEBAPP; statuses: todo, in_progress, review, done)
+initialized <ROOT>/.laneboard (web-app, prefix WA; statuses: todo, in_progress, review, done)
   Web shop of ACME: checkout and cart work
+ids: WA-1, WA-2, ...; another prefix while the board has no task: laneboard config --prefix <PREFIX>
 next: laneboard prime (agent rules, this board and the command that creates your task)
 --- stderr
 warning: HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards
@@ -11,6 +12,6 @@ warning: HOME is not set, so this board is not in the machine registry (laneboar
 $ laneboard init --description 'Web shop of ACME: checkout and cart work' --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WEBAPP","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WEBAPP","name":"web-app","description":"Web shop of ACME: checkout and cart work","statuses":["todo","in_progress","review","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_ed25519*"]},"board":{"port":7420}},"registered":false,"next":"laneboard prime"},"warnings":["HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards"]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WA","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WA","name":"web-app","description":"Web shop of ACME: checkout and cart work","statuses":["todo","in_progress","review","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_ed25519*"]},"board":{"port":7420}},"registered":false,"next":"laneboard prime"},"warnings":["HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards"]}
 --- stderr
 

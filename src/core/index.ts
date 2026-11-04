@@ -10,6 +10,7 @@ export { actorPart, agentUser, defaultAgentBase, defaultAgentName, resolveActor 
 export type { ActorSource, ResolvedActor } from './agent-name.ts';
 export type { DiscoveryInput, ForeignStore, StoreRef, StoreSource } from './store.ts';
 export { derivePrefix, storePrefix } from './config.ts';
+export { shellQuote } from './shell.ts';
 export { LOCK_STALE_MS, LOCK_WAIT_MS } from './lock.ts';
 export { transact } from './transact.ts';
 export type { FaultPoint, Faults, State, TransactOptions } from './transact.ts';

@@ -1,4 +1,5 @@
 // What every harness recipe shares: the MCP launch command, the instruction block, the file plan shape.
+import { shellQuote } from '../../core/index.ts';
 import type { TextEdit } from '../files.ts';
 
 export const MCP_COMMAND = 'laneboard';
@@ -25,7 +26,7 @@ export const EDIT_HOOK_MATCHER = 'Edit|Write';
 
 // A path as one shell word (single-quoted when it holds anything but safe characters).
 export function shellWord(value: string): string {
-  return /^[A-Za-z0-9_\-.,:/=@+%]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+  return shellQuote(value);
 }
 
 // The task rule every instruction block carries: weak models skip optional-sounding advice, so it says MANDATORY and when it applies.

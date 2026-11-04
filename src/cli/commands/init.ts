@@ -10,12 +10,18 @@ function nextStep(target: string, byDir: boolean): string {
   return byDir ? `laneboard prime --dir ${shellQuote(target)}` : 'laneboard prime';
 }
 
+// The command that changes the prefix of the new (still empty) board, with --dir when the board was made by --dir.
+function prefixCommand(target: string, byDir: boolean): string {
+  return `laneboard config --prefix <PREFIX>${byDir ? ` --dir ${shellQuote(target)}` : ''}`;
+}
+
 export const init: CommandDef = {
   name: 'init',
   usage: 'init --description "<whose project, what work>" [--name N] [--prefix P] [--statuses a,b,c] [--no-gitignore]',
   summary:
     'Create the board .laneboard/ here (or at --dir / LANEBOARD_DIR) with an explicit config and add it to the machine registry (laneboard boards). ' +
-    'The name defaults to the folder name; the id prefix is derived from the name and must be free on this machine.',
+    'The name defaults to the folder name; the id prefix (at most 4 characters: initials of the name\'s words, or the first letters of one word) is derived ' +
+    'from the name unless --prefix gives it, and must be free on this machine. laneboard config --prefix changes it while the board has no task.',
   options: {
     name: { type: 'string' },
     description: { type: 'string' },
@@ -47,7 +53,10 @@ export const init: CommandDef = {
     return {
       data: { ...r.data, next },
       warnings: r.warnings,
-      human: `initialized ${r.data.store} (${cfg.name ?? '-'}, prefix ${cfg.prefix}; statuses: ${cfg.statuses.join(', ')})\n  ${cfg.description ?? ''}\nnext: ${next} (agent rules, this board and the command that creates your task)`,
+      human:
+        `initialized ${r.data.store} (${cfg.name ?? '-'}, prefix ${cfg.prefix}; statuses: ${cfg.statuses.join(', ')})\n  ${cfg.description ?? ''}\n` +
+        `ids: ${cfg.prefix}-1, ${cfg.prefix}-2, ...; another prefix while the board has no task: ${prefixCommand(target, c.discovery.dir !== undefined)}\n` +
+        `next: ${next} (agent rules, this board and the command that creates your task)`,
     };
   },
 };

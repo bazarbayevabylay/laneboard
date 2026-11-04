@@ -18,13 +18,16 @@ function folder(name: string, parent = tempDir()): string {
 
 describe('prefix from the folder name', () => {
   it.each([
-    ['laneboard', 'LANEBOARD'],
-    ['my-web-app', 'MYWEBAPP'],
-    ['agent-2', 'AGENT2'],
-    ['2024_report', 'REPORT'],
-    ['orchestrator-1', 'ORCHESTRA1'],
-    ['orchestrator-12', 'ORCHESTR12'],
-    ['claudeassistant_miniabyl', 'CLAUDEASSI'],
+    ['laneboard', 'LANE'],
+    ['my-web-app', 'MWA'],
+    ['agent-2', 'AGE2'],
+    ['2024_report', 'REPO'],
+    ['orchestrator-1', 'ORC1'],
+    ['orchestrator-12', 'OR12'],
+    ['agent-1234', 'AGEN'],
+    ['claudeassistant_miniabyl', 'CM'],
+    ['a-b-c-d-e', 'ABCD'],
+    ['café', 'CAFE'],
     ['x', 'X'],
     ['проект', undefined],
     ['123', undefined],
@@ -36,15 +39,15 @@ describe('prefix from the folder name', () => {
     const env = { HOME: tempDir() };
     const cwd = folder('my-web-app');
     const r = JSON.parse((await cli(['init', '--description', 'test board', '--json'], { cwd, env })).stdout);
-    expect(r).toMatchObject({ ok: true, store: path.join(cwd, '.laneboard'), prefix: 'MYWEBAPP', data: { config: { prefix: 'MYWEBAPP', name: 'my-web-app', description: 'test board' } }, warnings: [] });
+    expect(r).toMatchObject({ ok: true, store: path.join(cwd, '.laneboard'), prefix: 'MWA', data: { config: { prefix: 'MWA', name: 'my-web-app', description: 'test board' } }, warnings: [] });
     const other = tempDir();
     expect(JSON.parse((await cli(['init', '--description', 'test board', '--dir', path.join(other, 'stores', 'api'), '--json'], { cwd, env })).stdout).prefix).toBe('API');
-    expect(JSON.parse((await cli(['init', '--description', 'test board', '--dir', path.join(folder('agent-2'), '.laneboard'), '--json'], { cwd, env })).stdout).prefix).toBe('AGENT2');
+    expect(JSON.parse((await cli(['init', '--description', 'test board', '--dir', path.join(folder('agent-2'), '.laneboard'), '--json'], { cwd, env })).stdout).prefix).toBe('AGE2');
   });
 
   it('--name gives the board its name and the prefix is derived from the name, not the folder', async () => {
     const r = JSON.parse((await cli(['init', '--name', 'Billing API', '--description', 'billing service of the shop', '--json'], { cwd: folder('svc-1'), env: { HOME: tempDir() } })).stdout);
-    expect(r).toMatchObject({ prefix: 'BILLINGAPI', data: { config: { name: 'Billing API', description: 'billing service of the shop' } } });
+    expect(r).toMatchObject({ prefix: 'BA', data: { config: { name: 'Billing API', description: 'billing service of the shop' } } });
   });
 
   it('a name without latin letters falls back to LB and says how to pick one', async () => {
@@ -55,7 +58,7 @@ describe('prefix from the folder name', () => {
 });
 
 describe('nested agent folders', () => {
-  // parent/ has its own store (PARENT); parent/agent-2/ has its own (AGENT2, derived); parent/third/ has none but is a project
+  // parent/ has its own store (PARENT); parent/agent-2/ has its own (AGE2, derived); parent/third/ has none but is a project
   // of its own (its CLAUDE.md); parent/src/deep/ is a plain subfolder of parent's project.
   async function nested(): Promise<{ parent: string; child: string; third: string; deep: string }> {
     const parent = folder('parent');
@@ -71,13 +74,13 @@ describe('nested agent folders', () => {
   it('an agent in the child folder writes only to its own store, without a warning', async () => {
     const { parent, child } = await nested();
     const r = await cli(['create', 'child work', '--status', 'todo', '--as', 'dev', '--json'], { cwd: child });
-    expect(JSON.parse(r.stdout)).toMatchObject({ ok: true, store: path.join(child, '.laneboard'), prefix: 'AGENT2', data: { id: 'AGENT2-1' }, warnings: [] });
-    const human = await cli(['comment', 'AGENT2-1', 'step', '--as', 'dev'], { cwd: child });
+    expect(JSON.parse(r.stdout)).toMatchObject({ ok: true, store: path.join(child, '.laneboard'), prefix: 'AGE2', data: { id: 'AGE2-1' }, warnings: [] });
+    const human = await cli(['comment', 'AGE2-1', 'step', '--as', 'dev'], { cwd: child });
     expect(human.stderr).toBe('');
-    expect(readStore(path.join(child, '.laneboard'), 'active').tasks.map((t) => t.id)).toEqual(['AGENT2-1']);
+    expect(readStore(path.join(child, '.laneboard'), 'active').tasks.map((t) => t.id)).toEqual(['AGE2-1']);
     expect(readStore(path.join(parent, '.laneboard'), 'active').tasks).toEqual([]);
     const prime = JSON.parse((await cli(['prime', '--as', 'dev', '--json'], { cwd: child })).stdout);
-    expect(prime).toMatchObject({ store: path.join(child, '.laneboard'), prefix: 'AGENT2', data: { store_warning: null }, warnings: [] });
+    expect(prime).toMatchObject({ store: path.join(child, '.laneboard'), prefix: 'AGE2', data: { store_warning: null }, warnings: [] });
   });
 
   it('an agent in a separate project folder without its own store is warned that the parent store is used: --json, human stderr, prime, MCP', async () => {
@@ -166,12 +169,12 @@ describe('nested agent folders', () => {
     expect(JSON.parse((await cli(['init', '--description', 'again', '--json'], { cwd: parent, env })).stdout).error.message).toBe(`a store already exists at ${store}`);
     // The commands as written (placeholders filled): init, prime, then the create line prime prints, all with --dir.
     const init = JSON.parse((await cli(['init', '--dir', own, '--name', 'third', '--description', 'b work', '--json'], { cwd: third, env })).stdout);
-    expect(init).toMatchObject({ ok: true, store: own, prefix: 'THIRD', data: { next: `laneboard prime --dir ${own}` } });
+    expect(init).toMatchObject({ ok: true, store: own, prefix: 'THIR', data: { next: `laneboard prime --dir ${own}` } });
     const prime = await cli(['prime', '--dir', own, '--as', 'dev'], { cwd: third, env });
     expect(prime.stdout).toContain(`\n  laneboard create "<short title of your work>" --status todo --assignee dev --as dev --dir ${own} --json\n`);
     expect(prime.stdout).toContain(`Given a task id instead: laneboard claim <ID> --as dev --dir ${own} --json`);
     const made = JSON.parse((await cli(['create', 'b work', '--status', 'todo', '--assignee', 'dev', '--as', 'dev', '--dir', own, '--json'], { cwd: third, env })).stdout);
-    expect(made).toMatchObject({ ok: true, store: own, prefix: 'THIRD', data: { id: 'THIRD-1' }, warnings: [] });
+    expect(made).toMatchObject({ ok: true, store: own, prefix: 'THIR', data: { id: 'THIR-1' }, warnings: [] });
     expect(readStore(store, 'active').tasks).toEqual([]);
   });
 
@@ -206,7 +209,7 @@ describe('nested agent folders', () => {
 
   it('error envelopes name the store and prefix too', async () => {
     const { child } = await nested();
-    const r = JSON.parse((await cli(['get', 'AGENT2-9', '--json'], { cwd: child })).stdout);
-    expect(r).toMatchObject({ ok: false, store: path.join(child, '.laneboard'), prefix: 'AGENT2', error: { code: 'TASK_NOT_FOUND' } });
+    const r = JSON.parse((await cli(['get', 'AGE2-9', '--json'], { cwd: child })).stdout);
+    expect(r).toMatchObject({ ok: false, store: path.join(child, '.laneboard'), prefix: 'AGE2', error: { code: 'TASK_NOT_FOUND' } });
   });
 });

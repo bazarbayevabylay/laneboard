@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { buildConfig, configPath, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
+import { shellQuote } from '../shell.ts';
 import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { freePrefix, registerStore, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
@@ -48,10 +49,10 @@ export interface InitOptions extends LockOptions {
 function storeExists(target: string, envCwd: string | undefined): LaneboardError {
   const own = envCwd === undefined ? undefined : path.join(path.resolve(envCwd), STORE_DIR_NAME);
   if (own === undefined || samePath(own, target)) {
-    return new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${target}), or pass --dir <another empty directory>` });
+    return new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${shellQuote(target)}), or pass --dir <another empty directory>` });
   }
   return new LaneboardError('STORE_EXISTS', `LANEBOARD_DIR points to ${target}, which already holds a board (LANEBOARD_DIR may be set for a parent folder, e.g. by its .claude/settings.local.json)`, {
-    fix: `to create the board of ${path.dirname(own)}: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`,
+    fix: `to create the board of ${path.dirname(own)}: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(own)} on every command, starting with laneboard prime`,
   });
 }
 
@@ -85,6 +86,17 @@ function prefixTaken(prefix: string, owner: string, taken: ReadonlyMap<string, s
   });
 }
 
+// A prefix in the id format (1-10 uppercase letters and digits, starting with a letter); INVALID_VALUE otherwise.
+function checkPrefix(prefix: string): string {
+  if (!PREFIX_RE.test(prefix)) {
+    throw new LaneboardError('INVALID_VALUE', `prefix "${prefix}" must match ^[A-Z][A-Z0-9]{0,9}$`, {
+      input: { field: 'prefix', value: prefix, format: '<PREFIX like WEB>', ...(PREFIX_RE.test(prefix.toUpperCase()) ? { suggestion: prefix.toUpperCase() } : {}) },
+      fix: 'use 1-10 uppercase letters and digits starting with a letter, e.g. --prefix WEB',
+    });
+  }
+  return prefix;
+}
+
 // Folder whose name gives the default prefix: the project of `<project>/.laneboard`, else the store directory itself.
 function prefixSource(target: string): string {
   return path.basename(target) === STORE_DIR_NAME ? path.basename(path.dirname(target)) : path.basename(target);
@@ -108,13 +120,7 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   if (p.prefix === undefined && derived === undefined) {
     warnings.push(`no prefix could be derived from the name "${name}", so ids use ${DEFAULT_PREFIX}; pick one with laneboard init --prefix <PREFIX>`);
   }
-  const prefix = p.prefix ?? derived ?? DEFAULT_PREFIX;
-  if (!PREFIX_RE.test(prefix)) {
-    throw new LaneboardError('INVALID_VALUE', `prefix "${prefix}" must match ^[A-Z][A-Z0-9]{0,9}$`, {
-      input: { field: 'prefix', value: prefix, format: '<PREFIX like WEB>', ...(PREFIX_RE.test(prefix.toUpperCase()) ? { suggestion: prefix.toUpperCase() } : {}) },
-      fix: 'use 1-10 uppercase letters and digits starting with a letter, e.g. --prefix WEB',
-    });
-  }
+  const prefix = checkPrefix(p.prefix ?? derived ?? DEFAULT_PREFIX);
   const statuses = p.statuses ?? DEFAULT_STATUSES;
   for (const status of statuses) {
     if (!STATUS_RE.test(status)) {
@@ -130,11 +136,15 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   // `<home>/.laneboard` is the machine's board registry (with its own lock): a board there would lock itself out and hide the registry.
   if (opts.home !== undefined && samePath(target, registryDir(opts.home))) {
     throw new LaneboardError('STORE_EXISTS', `${target} is this machine's board registry (laneboard boards), so no board can be created there`, {
-      fix: `create the board in the project's own folder: mkdir -p ${path.join(opts.home, '<project>')} && cd ${path.join(opts.home, '<project>')} && laneboard init --name <name> --description "<whose project, what work>"`,
+      fix: `create the board in the project's own folder: mkdir -p ${shellQuote(opts.home)}/<project> && cd ${shellQuote(opts.home)}/<project> && laneboard init --name <name> --description "<whose project, what work>"`,
     });
   }
   const outer = enclosingStore(target);
-  if (outer) throw new LaneboardError('STORE_EXISTS', `${target} is inside the store ${outer}`, { fix: `run laneboard init in the project folder, not inside ${outer}` });
+  if (outer) {
+    throw new LaneboardError('STORE_EXISTS', `${target} is inside the store ${outer}`, {
+      fix: `use that board (laneboard prime --dir ${shellQuote(outer)}), or create a board for another project in its own folder: laneboard init --dir <project folder>/.laneboard --name <name> --description "<whose project, what work>"`,
+    });
+  }
   const config = validateConfig(buildConfig(prefix, [...statuses], { name, description }), 'config.json');
   const create = async (): Promise<void> => {
     ensureDir(target);
@@ -170,6 +180,8 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
 export const ConfigureInput = z.strictObject({
   name: z.string().optional(),
   description: z.string().optional(),
+  // New id prefix: only while the board has no task at all (active or archived), since ids carry it.
+  prefix: z.string().optional(),
 });
 export type ConfigureInputT = z.infer<typeof ConfigureInput>;
 
@@ -181,29 +193,64 @@ export interface ConfigureResult {
   changed: boolean;
 }
 
-// Show or change the board name and description (`laneboard config`); the prefix never changes (ids keep it). Refreshes the registry.
+// INVALID_VALUE when the board holds any task (active or archived): its ids, links and comments carry the old prefix.
+function checkNoTasks(storeDir: string, from: string, to: string): void {
+  const warnings: string[] = [];
+  const count = readStoreFile(storeDir, 'active', warnings).data.tasks.length + readStoreFile(storeDir, 'archive', warnings).data.tasks.length;
+  if (count === 0) return;
+  throw new LaneboardError('INVALID_VALUE', `the prefix of a board with tasks never changes: this board has ${count} task(s) with ids like ${from}-1, so it cannot become ${to}`, {
+    input: { field: 'prefix', value: to },
+    fix: `keep the prefix ${from}, or create a new board with the prefix you want: laneboard init --dir <project folder>/.laneboard --prefix ${to} --name <name> --description "<whose project, what work>"`,
+  });
+}
+
+// Show or change the board name, description and prefix (`laneboard config`); the prefix changes only while the board has no
+// task (ids keep it) and must be free on this machine. Refreshes the registry.
 export async function configureStore(ctx: OpContext, input: ConfigureInputT): Promise<OpResult<ConfigureResult>> {
   const p = parseInput(ConfigureInput, input);
   const warnings: string[] = [];
-  const change = p.name !== undefined || p.description !== undefined;
+  const change = p.name !== undefined || p.description !== undefined || p.prefix !== undefined;
   if (change && ctx.store.readOnly) {
     throw new LaneboardError('STORE_READ_ONLY', `${ctx.store.dir} was opened with --board, which is read-only`, { fix: 'change your own board without --board' });
   }
   const name = p.name === undefined ? undefined : checkBoardText(BoardName, p.name, 'name');
   const description = p.description === undefined ? undefined : checkBoardText(BoardDescription, p.description, 'description');
+  const prefix = p.prefix === undefined ? undefined : checkPrefix(p.prefix);
   const read = (): ConfigT => loadConfig(ctx.store.dir);
   const result = (config: ConfigT, changed: boolean): ConfigureResult => ({ name: config.name ?? null, description: config.description ?? null, prefix: config.prefix, changed });
   if (!change) return { data: result(read(), false), warnings };
-  const data = await withLock(ctx.store, ctx, (lock) => {
-    const before = read();
-    const next = validateConfig({ ...before, ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}) }, 'config.json');
-    if (serializeConfig(next) === serializeConfig(before)) return result(before, false);
-    lock.assertHeld();
-    writeFileAtomic(configPath(ctx.store.dir), serializeConfig(next), 0o644);
-    return result(next, true);
+  const write = (): Promise<ConfigureResult> =>
+    withLock(ctx.store, ctx, (lock) => {
+      const before = read();
+      if (prefix !== undefined && prefix !== before.prefix) checkNoTasks(ctx.store.dir, before.prefix, prefix);
+      const next = validateConfig(
+        { ...before, ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}), ...(prefix !== undefined ? { prefix } : {}) },
+        'config.json',
+      );
+      if (serializeConfig(next) === serializeConfig(before)) return result(before, false);
+      lock.assertHeld();
+      writeFileAtomic(configPath(ctx.store.dir), serializeConfig(next), 0o644);
+      return result(next, true);
+    });
+  if (ctx.home === undefined) {
+    const data = await write();
+    warnings.push(`HOME is not set, so the machine registry (laneboard boards) was not updated${prefix !== undefined ? ' and the prefix was not checked against other boards' : ''}`);
+    return { data, warnings };
+  }
+  if (prefix === undefined) {
+    const data = await write();
+    await registerStore(ctx.home, ctx.store.dir, ctx);
+    return { data, warnings };
+  }
+  // A new prefix: like init, the registry lock is held around the check and the write, so two boards cannot take one prefix.
+  const data = await updateRegistry(ctx.home, ctx, async (entries) => {
+    const taken = takenPrefixes(entries, ctx.store.dir);
+    const owner = taken.get(prefix);
+    if (owner !== undefined) throw prefixTaken(prefix, owner, taken);
+    const written = await write();
+    const entry = { path: ctx.store.dir, prefix: written.prefix, name: written.name, description: written.description, registered_at: new Date().toISOString() };
+    return { entries: upsertEntry(entries, entry), result: written };
   });
-  if (ctx.home !== undefined) await registerStore(ctx.home, ctx.store.dir, ctx);
-  else warnings.push('HOME is not set, so the machine registry (laneboard boards) was not updated');
   return { data, warnings };
 }
 

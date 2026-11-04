@@ -15,21 +15,29 @@ Conventions in this guide:
 
 ## 1. Install
 
-The CLI is one global npm package (Node.js 22 or newer, macOS or Linux).
+The CLI is one global npm package (Node.js 22 or newer, macOS or Linux). Check with `node --version`; when nvm's default is older,
+install 22 and make it the default (agents start new shells with it): `nvm install 22 && nvm alias default 22 && nvm use 22`.
+
+A global package belongs to the Node.js version active at install time: after switching versions, install the CLI again.
 
 <!-- guide:skip installs globally -->
 ```sh
 npm i -g laneboard
 ```
 
-Before the package is on npm, install it from git: build a tarball and install that.
+Without the npm registry, install from git: clone, build, then install the folder or a tarball.
 
 <!-- guide:skip installs globally -->
 ```sh
 git clone https://github.com/bazarbayevabylay/laneboard.git
-cd laneboard && npm ci && npm pack
-npm i -g ./laneboard-*.tgz
+cd laneboard && npm ci && npm run build
+npm i -g .
 ```
+
+| Way | Result |
+|---|---|
+| `npm i -g .` | a link to the clone: `git pull && npm ci && npm run build` updates the CLI |
+| `npm pack && npm i -g ./laneboard-*.tgz` | a copy from the tarball: the clone can be deleted afterwards |
 
 Check the CLI:
 
@@ -41,7 +49,9 @@ laneboard --version
 
 Run both in the project root. `init` creates the board `./.laneboard` and adds it to this machine's registry; `setup` registers the MCP server
 and adds a 3-line instruction block, pinned to that store. A board has a name and a one-line description (whose project, what work);
-the id prefix is derived from the name and must be free on this machine (a taken one fails with a free one in `fix`).
+the id prefix is derived from the name, at most 4 characters: the initials of its words (`my-web-app` -> `MWA`) or the start of one word
+(`demo` -> `DEMO`), a trailing number kept. `--prefix` sets your own; `laneboard config --prefix` changes it while the board has no task.
+It must be free on this machine (a taken one fails with a free one in `fix`).
 
 ```sh
 laneboard init --name demo --description "Demo project: the examples of this guide"
@@ -203,7 +213,7 @@ Copying the default name into `--as` changes nothing: a name equal to the sessio
 
 `.laneboard/config.json` is the only file people edit by hand; it is validated on every command, so a typo fails loudly.
 `statuses` is the order of the board, the last one is final. `fields` declares the extra keys a task may carry, with a type
-(`string`, `number`, `boolean`, `string[]`, `json`). `prefix` is set by `init --prefix` and should not change later.
+(`string`, `number`, `boolean`, `string[]`, `json`). `prefix` is set by `init` (`--prefix`, else derived from the name); `laneboard config --prefix` changes it only while the board has no task, active or archived.
 
 ```json file=.laneboard/config.json
 {
@@ -286,7 +296,8 @@ laneboard create "Not here" --status todo --board BILL --json  # exit 6
 
 ### 3.5 The board for people
 
-`laneboard view` draws the board in the terminal: one column per configured status, each card with id, title, assignee and time in status;
+`laneboard view` draws the board in the terminal: one column per configured status, each card with id, title, assignee and time in status
+(cards by `priority`, 0 first and none last, then the latest update; a default name drops its harness and keeps the session part);
 a narrow terminal gets a list grouped by status, and colors appear only on a terminal without `NO_COLOR`. Filters: `--assignee`, `--label`,
 `--text`. `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
 
