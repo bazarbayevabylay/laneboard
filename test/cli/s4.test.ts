@@ -40,13 +40,14 @@ async function inReview(): Promise<TestStore> {
   return s;
 }
 
-// The refusal of somebody else's finish of a task its assignee did not hand in with finish (S4b, by the data), and its fix.
-const NOT_HANDED_IN = (id: string, holder: string, status: string, actor = 'orch') =>
-  `task ${id} is claimed by ${holder} and is ${status}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status <status>); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status done --as ${actor}`;
-// Rewritten in LB-11: the hand-in statuses are the non-final finish statuses (a, not the current one), and a second way out closes it (d).
+// LB-11: the statuses the holder can hand a task in to on the default board (the non-final finish statuses).
 const OPEN = '<one of: in_progress, review>';
+// The refusal of somebody else's finish of a task its assignee did not hand in with finish (S4b, by the data), and its fix.
+const NOT_HANDED_IN = (id: string, holder: string, status: string, actor = 'orch', handIn = OPEN) =>
+  `task ${id} is claimed by ${holder} and is ${status}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status ${handIn}); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status done --as ${actor}`;
+// Rewritten in LB-11: the hand-in statuses are the non-final finish statuses (a, not the current one), the fix is the one comment command (rule 13).
 const HAND_IN_FIX = (id: string, handIn = OPEN, actor = 'orch') =>
-  `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}, or as the orchestrator: laneboard update ${id} --status done --as ${actor}`;
+  `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}`;
 // The refusal of somebody else's finish into a status that is not final.
 const NOT_FINAL = (id: string, holder: string, status: string) =>
   `task ${id} is claimed by ${holder} and is ${status}; somebody else's finish only accepts a task its assignee handed in, into done; do not take it over: comment or ask the orchestrator`;
@@ -68,7 +69,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
       const before = activeText(s);
       const r = await cli(['finish', 'LB-1', '--result', 'x', '--as', 'orch', '--json'], { cwd: s.root });
       expect(r.code, status).toBe(4);
-      expect(JSON.parse(r.stdout).error).toEqual({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-1', 'dev-1', status), details: { assignee: 'dev-1' }, fix: HAND_IN_FIX('LB-1', handIn) });
+      expect(JSON.parse(r.stdout).error).toEqual({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-1', 'dev-1', status, 'orch', handIn), details: { assignee: 'dev-1' }, fix: HAND_IN_FIX('LB-1', handIn) });
       expect(activeText(s)).toBe(before);
     }
   });
@@ -171,7 +172,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     await createTask(as(s, 'a'), { title: 'T', status: 'backlog', assignee: 'dev-1' });
     await claimTask(as(s, 'dev-1'), { id: 'LB-1', status: 'doing' });
     const err = await rejectsWith(finishTask(as(s, 'orch'), { id: 'LB-1', result: 'x', no_commit: true }), 'ALREADY_CLAIMED');
-    expect(err.message).toBe(NOT_HANDED_IN('LB-1', 'dev-1', 'doing').replace('--status done', '--status shipped'));
+    expect(err.message).toBe(NOT_HANDED_IN('LB-1', 'dev-1', 'doing', 'orch', 'doing').replace('--status done', '--status shipped'));
     await finishTask(as(s, 'dev-1'), { id: 'LB-1', result: 'ready', status: 'doing', no_commit: true });
     expect((await finishTask(as(s, 'orch'), { id: 'LB-1', result: 'ok', no_commit: true })).data.status).toBe('shipped');
   });

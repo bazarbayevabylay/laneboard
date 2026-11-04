@@ -1,4 +1,4 @@
-// LB-11 (review S4b tails): the hand-in fix lists the statuses a task can be handed in to and offers the orchestrator's update;
+// LB-11 (review S4b tails): the hand-in fix and message list the statuses a task can be handed in to, the message names the orchestrator's update;
 // the CLI line of a hand-in says "handed in". The footer note (b) is checked in s4b.test.ts.
 import { afterAll, describe, expect, it } from 'vitest';
 import { claimTask, createTask } from '../../src/core/index.ts';
@@ -7,16 +7,17 @@ import { as, cleanupTemp, cli, newStore } from '../helpers.ts';
 afterAll(cleanupTemp);
 
 describe('LB-11: hand-in texts that a weak model runs literally', () => {
-  it('(a, d) acceptance of a task in work: the fix never hands it in to its current status and offers update to the final one', async () => {
+  it('(a, d) acceptance of a task in work: the fix is one comment command with the hand-in statuses; the message names update to the final one', async () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'Working', status: 'todo', assignee: 'dev-1' });
     await claimTask(as(s, 'dev-1'), { id: 'LB-1', status: 'in_progress' });
     const r = await cli(['finish', 'LB-1', '--result', 'x', '--as', 'orch', '--json'], { cwd: s.root });
     expect(r.code).toBe(4);
-    const fix: string = JSON.parse(r.stdout).error.fix;
-    expect(fix).not.toContain('--status in_progress --result');
-    expect(fix).toContain('laneboard finish LB-1 --status <one of: in_progress, review> --result <result>');
-    expect(fix).toMatch(/, or as the orchestrator: laneboard update LB-1 --status done --as orch$/);
+    const { fix, message } = JSON.parse(r.stdout).error as { fix: string; message: string };
+    // Rule 13: the fix is exactly one command, run as is.
+    expect(fix).toBe('laneboard comment LB-1 "hand it in: laneboard finish LB-1 --status <one of: in_progress, review> --result <result>" --as orch');
+    expect(message).toContain('(laneboard finish LB-1 --status <one of: in_progress, review>)');
+    expect(message).toMatch(/close it as the orchestrator: laneboard update LB-1 --status done --as orch$/);
   });
 
   it('(a) one non-final finish status: named as it is', async () => {

@@ -431,7 +431,7 @@ describe('owner, S3b: claim --resume is offered only by the resume section, and 
       expect(e.code).toBe('ALREADY_CLAIMED');
       expect(`${e.message} ${e.fix}`).not.toContain('--resume');
       // Rewritten in S4 (LB-9): finish by somebody else names acceptance; claim keeps the old text. S4b: acceptance by the data.
-      expect(e.message).toBe(argv[0] === 'claim' ? `task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision` : `task LB-1 is claimed by ${NAME_A} and is in_progress, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish LB-1 --status <status>); do not take it over: ask ${NAME_A} to hand it in, or close it as the orchestrator: laneboard update LB-1 --status done --as ${NAME_B}`);
+      expect(e.message).toBe(argv[0] === 'claim' ? `task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision` : `task LB-1 is claimed by ${NAME_A} and is in_progress, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish LB-1 --status <one of: in_progress, review>); do not take it over: ask ${NAME_A} to hand it in, or close it as the orchestrator: laneboard update LB-1 --status done --as ${NAME_B}`);
     }
   });
 });

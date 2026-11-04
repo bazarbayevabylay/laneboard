@@ -298,17 +298,14 @@ function handInStatuses(statuses: readonly string[]): string {
   return open.length === 1 ? (open[0] ?? '<status>') : open.length === 0 ? '<status>' : `<one of: ${open.join(', ')}>`;
 }
 
-// ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix gives
-// two ways out (LB-11 d): ask the holder to hand it in (a comment), or close it as the orchestrator with update.
+// ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix is one
+// command run as is (rule 13): the comment asking the holder to hand it in; the message names the orchestrator's update (LB-11 d).
 function notHandedIn(id: string, holder: string, current: string, actor: string, final: string, statuses: readonly string[]): LaneboardError {
   const handIn = handInStatuses(statuses);
   return new LaneboardError(
     'ALREADY_CLAIMED',
-    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status <status>); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
-    {
-      details: { assignee: holder },
-      fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}, or as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
-    },
+    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status ${handIn}); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}` },
   );
 }
 
