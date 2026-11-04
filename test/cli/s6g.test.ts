@@ -21,13 +21,13 @@ async function doc(r: Promise<CliRun>): Promise<{ code: number } & ReturnType<ty
   return { code: out.code, ...JSON.parse(out.stdout) };
 }
 
-// A board `web` (prefix WEB): WEB-1 priority 1, WEB-2 priority 2, WEB-3 without fields, WEB-4 priority 3 (archived).
-async function board(): Promise<{ p: string; store: string; run(argv: string[]): Promise<CliRun> }> {
+// A board `web` (prefix WEB) in the folder `folder`: WEB-1 priority 1, WEB-2 priority 2, WEB-3 without fields, WEB-4 priority 3 (archived).
+async function board(folder = 'web'): Promise<{ p: string; store: string; run(argv: string[]): Promise<CliRun> }> {
   const home = tempDir();
-  const p = path.join(tempDir(), 'web');
+  const p = path.join(tempDir(), folder);
   fs.mkdirSync(p);
   const run = (argv: string[]): Promise<CliRun> => cli(argv, { cwd: p, env: { HOME: home } });
-  expect((await run(['init', '--description', 'web shop'])).code).toBe(0);
+  expect((await run(['init', '--name', 'web', '--description', 'web shop'])).code).toBe(0);
   for (const [title, field] of [
     ['one', 'priority=1'],
     ['two', 'priority=2'],
@@ -110,6 +110,19 @@ describe('config --field / --drop-field', () => {
     expect((await doc(run(['create', 'six', '--status', 'todo', '--field', 'priority=1', '--as', 'dev', '--json']))).error.code).toBe('UNKNOWN_FIELD');
   });
 
+  it('the fix names a store whose path has a space, a quote and $ as one argument: the loop unsets the values, then the drop goes through', async () => {
+    const { store, run } = await board("My Proj's $x");
+    const r = await doc(run(['config', '--drop-field', 'priority', '--as', 'owner', '--json']));
+    expect(r.error.fix).toBe(`for id in WEB-1 WEB-2; do laneboard update "$id" --unset-field priority --dir '${store.replaceAll("'", "'\\''")}' --as owner; done`);
+    const calls = fixCalls(r.error.fix);
+    expect(calls).toEqual([
+      ['update', 'WEB-1', '--unset-field', 'priority', '--dir', store, '--as', 'owner'],
+      ['update', 'WEB-2', '--unset-field', 'priority', '--dir', store, '--as', 'owner'],
+    ]);
+    for (const argv of calls) expect((await cli(argv, { cwd: tempDir(), env: {} })).code).toBe(0);
+    expect(await doc(run(['config', '--drop-field', 'priority', '--json']))).toMatchObject({ code: 0, data: { changed: true, fields: {} } });
+  });
+
   it('without a known name the fix asks for one (--as <your-name>)', async () => {
     const { run } = await board();
     const r = await doc(run(['config', '--drop-field', 'priority', '--json']));
@@ -154,6 +167,17 @@ describe('config --field / --drop-field', () => {
     writeRaw(path.join(store, 'active.json'), `${JSON.stringify({ ...active, tasks, content_sha256: contentSha(tasks) }, null, 2)}\n`);
     expect((await doc(run(['config', '--field', 'color:number', '--json']))).error.details).toEqual({ in_use: [{ field: 'color', change: 'type', type: 'number', tasks: ['WEB-3'] }] });
     expect(await doc(run(['config', '--field', 'color:string', '--json']))).toMatchObject({ code: 0, data: { fields: { color: { type: 'string' } } } });
+  });
+
+  it('a type that stays is not checked again: a new description goes through over a hand-edited value of another type, which stays', async () => {
+    const { store, run } = await board();
+    const active = readStore(store, 'active');
+    const tasks = active.tasks.map((t) => (t.id === 'WEB-3' ? { ...t, fields: { priority: 'x' } } : t));
+    writeRaw(path.join(store, 'active.json'), `${JSON.stringify({ ...active, tasks, content_sha256: contentSha(tasks) }, null, 2)}\n`);
+    const r = await doc(run(['config', '--field', 'priority:number:lower runs first', '--json']));
+    expect(r).toMatchObject({ code: 0, data: { changed: true, fields: { priority: { type: 'number', description: 'lower runs first' } } } });
+    expect(loadConfig(store).fields.priority).toEqual({ type: 'number', description: 'lower runs first' });
+    expect(readStore(store, 'active').tasks.find((t) => t.id === 'WEB-3')?.fields).toEqual({ priority: 'x' });
   });
 
   it('a dropped field and a retyped one in one command: both named, the fix unsets both', async () => {
