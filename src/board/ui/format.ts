@@ -135,3 +135,27 @@ export function eventLine(type: string, data: Record<string, unknown>): EventLin
       return line(TEXT.eventOther(type));
   }
 }
+
+// The one label name the core knows (core WAITING_OWNER_LABEL, ops/common.ts; the UI bundle does not import the core: a test pins both).
+export const WAITING_OWNER_LABEL = 'waiting-owner';
+
+// The marks a card carries (decided by the core: handed_in, stale, labels); only counted here.
+interface MarkedCard {
+  handed_in: boolean;
+  stale: boolean;
+  labels: string[];
+}
+
+// How many shown cards wait for acceptance, are stale, wait for the owner (the counters next to the board title).
+export function attentionCounts(cards: readonly MarkedCard[]): { handedIn: number; stale: number; owner: number } {
+  return {
+    handedIn: cards.filter((c) => c.handed_in).length,
+    stale: cards.filter((c) => c.stale).length,
+    owner: cards.filter((c) => c.labels.includes(WAITING_OWNER_LABEL)).length,
+  };
+}
+
+// A comment that finish wrote as the task's result (`data.result`, ADR §27); plain comments and older finishes have no mark.
+export function isResult(type: string, data: Record<string, unknown>): boolean {
+  return type === 'commented' && data.result === true;
+}

@@ -3,14 +3,17 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { LaneboardError } from '../../core/index.ts';
 import type { StoreRef } from '../../core/index.ts';
 import { apiRoute, errorReply, eventStore } from './api.ts';
 import type { ApiReply } from './api.ts';
+import { ATTACHMENT_ROUTE_RE, attachmentReply } from './attachments.ts';
+import type { FileReply } from './attachments.ts';
 import { streamChanges } from './sse.ts';
 import type { StreamOptions } from './sse.ts';
-import { hostAllowed, LOOPBACK, newToken, presentedToken, SECURITY_HEADERS, tokenMatches } from './security.ts';
+import { hasDotSegment, hostAllowed, LOOPBACK, newToken, presentedToken, SECURITY_HEADERS, tokenMatches } from './security.ts';
 
 export interface BoardServerOptions {
   // 0 = the OS picks a free port.
@@ -59,7 +62,7 @@ export function defaultUiDir(): string {
 
 // Text of `/` when the UI is not built (a source checkout before `npm run build`): the API keeps working, tests need no build.
 export function notBuiltText(dir: string): string {
-  return `The web board is not built: no ${path.join(dir, 'index.html')}. Build it in the laneboard source folder: npm ci && npm run build`;
+  return `The web board is not built: no ${path.join(dir, 'index.html')}. Build it in the laneboard source folder: npm ci && npm run build; or reinstall laneboard: npm i -g laneboard`;
 }
 
 // index.html with the run's token in a meta tag, and every asset file read once at start (only listed files are ever served);
@@ -89,6 +92,26 @@ function sendText(res: http.ServerResponse, status: number, text: string, extra:
 function sendJson(res: http.ServerResponse, reply: ApiReply): void {
   res.writeHead(reply.status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(reply.body));
+}
+
+// Send an attachment file as a stream from the descriptor attachments.ts opened and checked (no second open by name, no whole
+// file in memory, the event loop stays free for the other tabs), never past the size its headers announce. Own headers only:
+// the page's CSP would not sandbox a stored file opened in a tab of its own.
+async function sendFile(res: http.ServerResponse, reply: FileReply): Promise<void> {
+  res.writeHead(reply.status, reply.headers);
+  if (reply.size === 0) {
+    await reply.file.close();
+    res.end();
+    return;
+  }
+  // autoClose: the stream closes the descriptor at its end, on an error and when the browser goes away.
+  const stream = reply.file.createReadStream({ start: 0, end: reply.size - 1 });
+  try {
+    await pipeline(stream, res);
+  } catch {
+    // The browser left or the read failed mid-file: the headers are out, so the only honest answer is a cut connection.
+    res.destroy();
+  }
 }
 
 // Listen on the loopback address; a taken port is PORT_IN_USE whose fix lets the OS pick one.
@@ -124,6 +147,7 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     if (!hostAllowed(req.headers.host, port)) return sendText(res, 403, 'Forbidden: this server answers only to 127.0.0.1 and localhost');
     if (req.method !== 'GET') return sendText(res, 405, 'Method not allowed: the board is read-only', { Allow: 'GET' });
+    if (hasDotSegment(req.url ?? '/')) return sendText(res, 404, 'Not found');
     const url = new URL(req.url ?? '/', `http://${LOOPBACK}:${port}`);
     if (url.pathname === '/') {
       if (ui.index === null) return sendText(res, 503, notBuiltText(uiDir));
@@ -149,6 +173,12 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
         return sendJson(res, errorReply(err));
       }
       return streamChanges(req, res, store, shutdown.signal, opts.stream);
+    }
+    if (ATTACHMENT_ROUTE_RE.test(url.pathname)) {
+      const reply = await attachmentReply(ctx, url);
+      if ('text' in reply) return sendText(res, reply.status, `Not found: ${reply.text}`);
+      if ('headers' in reply) return sendFile(res, reply);
+      return sendJson(res, reply);
     }
     const reply = await apiRoute(ctx, url);
     if (!reply) return sendText(res, 404, 'Not found');

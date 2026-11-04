@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // The web board (read-only, ADR-0001 §31): tabs of the machine's boards, filters, status columns, the archive and a task panel.
 // State lives in the address (?board=&task=&view=&assignee=&label=&text=&q=); live updates come from the server's event stream,
-// with a 5 s poll when the stream fails, and the board is fetched again every 60 s so ages move on.
+// with a 5 s poll when the stream fails, and the board is fetched again every 60 s so ages and the stale mark move on without a
+// write (?refresh_ms= shortens that for the e2e test). Next to the title: how many shown cards wait for acceptance, for the owner, are stale.
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { ApiError, apiGet, boardToken, errorText } from './api.ts';
-import { boardQuery, eventsQuery, hasFilters, parseState, stateSearch } from './query.ts';
+import { attentionCounts } from './format.ts';
+import { boardQuery, eventsQuery, hasFilters, parseState, refreshInterval, stateSearch } from './query.ts';
 import type { BoardFilters as Filters, PageState } from './query.ts';
 import { TEXT } from './text.ts';
 import type { BoardData, BoardTab, LiveState } from './types.ts';
@@ -15,9 +17,9 @@ import BoardIcon from './components/BoardIcon.vue';
 import BoardTopBar from './components/BoardTopBar.vue';
 import TaskPanel from './components/TaskPanel.vue';
 
-// Poll interval after the event stream failed, and the plain refresh interval (ages, other boards' counts).
+// Poll interval after the event stream failed, and the plain refresh interval (ages, stale marks, other boards' counts).
 const POLL_MS = 5000;
-const REFRESH_MS = 60_000;
+const REFRESH_MS = refreshInterval(window.location.search);
 
 const page = reactive<PageState>(parseState(window.location.search));
 const tabs = ref<BoardTab[]>([]);
@@ -44,6 +46,9 @@ const activeTab = computed(() => tabs.value.find((t) => t.key === activeKey.valu
 const title = computed(() => board.value?.name ?? activeTab.value?.name ?? board.value?.prefix ?? activeTab.value?.prefix ?? TEXT.brand);
 const description = computed(() => board.value?.description ?? activeTab.value?.description ?? '');
 const isEmpty = computed(() => board.value !== null && board.value.shown + board.value.final_shown === 0);
+// The counters next to the title, over the cards the board shows (its filters apply).
+const attention = computed(() => attentionCounts(board.value?.columns.flatMap((c) => c.cards) ?? []));
+const hasAttention = computed(() => attention.value.handedIn + attention.value.stale + attention.value.owner > 0);
 
 // Address of a page state (the current one with changes), for links that also work in a new tab.
 function hrefWith(change: Partial<PageState>): string {
@@ -215,7 +220,14 @@ onBeforeUnmount(() => {
     <main id="board" class="board" tabindex="-1">
       <div class="head">
         <div class="titles">
-          <h1>{{ title }}</h1>
+          <div class="h1row">
+            <h1>{{ title }}</h1>
+            <p v-if="page.view === 'board' && hasAttention" class="attn" :aria-label="TEXT.attentionLabel" data-testid="attention">
+              <span v-if="attention.handedIn" class="is-you" data-testid="count-handed"><i aria-hidden="true"></i>{{ TEXT.waitingCount(attention.handedIn) }}</span>
+              <span v-if="attention.owner" class="is-you" data-testid="count-owner"><i aria-hidden="true"></i>{{ TEXT.ownerCount(attention.owner) }}</span>
+              <span v-if="attention.stale" class="is-bad" data-testid="count-stale"><i aria-hidden="true"></i>{{ TEXT.staleCount(attention.stale) }}</span>
+            </p>
+          </div>
           <p v-if="description" class="desc" :title="description">{{ description }}</p>
         </div>
         <div v-if="page.view === 'board'" class="head-tools">
@@ -277,6 +289,6 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </main>
-    <TaskPanel v-if="page.task" :id="page.task" :board="page.board" :refresh-tick="refreshTick" :now="now" @close="closeTask" />
+    <TaskPanel v-if="page.task" :id="page.task" :board="page.board" :refresh-tick="refreshTick" :now="now" :href-for="taskHref" @close="closeTask" @open="openTask" />
   </div>
 </template>

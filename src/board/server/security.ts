@@ -6,7 +6,8 @@ import type http from 'node:http';
 // The only address the server binds to (constant, not configurable).
 export const LOOPBACK = '127.0.0.1';
 
-// Header that carries the token on /api calls (EventSource cannot set headers: /api/events takes ?token=).
+// Header that carries the token on /api calls (EventSource, <img> and download links cannot set headers: the event stream and
+// the attachment files take ?token=).
 export const TOKEN_HEADER = 'x-laneboard-token';
 
 // Headers on every response: the page may load only its own files, never be framed, never send a Referer.
@@ -34,9 +35,20 @@ export function tokenMatches(given: string | undefined, token: string): boolean 
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// The token a request presents: the header for /api calls, the query parameter for the event stream.
+// Routes that take the token as ?token= (no way to set a header): the event stream and attachment files.
+const QUERY_TOKEN_RE = /^\/api\/(events|tasks\/[^/]+\/attachments\/[^/]+)$/;
+
+// The token a request presents: the header for /api calls, the query parameter for the event stream and attachment files.
 export function presentedToken(req: http.IncomingMessage, url: URL): string | undefined {
-  if (url.pathname === '/api/events') return url.searchParams.get('token') ?? undefined;
+  if (QUERY_TOKEN_RE.test(url.pathname)) return url.searchParams.get('token') ?? undefined;
   const header = req.headers[TOKEN_HEADER];
   return typeof header === 'string' ? header : undefined;
+}
+
+// A raw request path with a `.` or `..` segment (also %2e-escaped): URL parsing would quietly resolve it into another route, so the
+// server answers 404 instead of guessing (no traversal, ever). Segments end at `/` and at `\` (the WHATWG URL parser treats a
+// backslash as a slash in http URLs), and at its escape %5C too, so `x\..\..\board` cannot reach another route either.
+export function hasDotSegment(rawUrl: string): boolean {
+  const pathPart = rawUrl.split('?')[0] ?? '';
+  return pathPart.split(/\/|\\|%5c/i).some((seg) => /^(\.|%2e){1,2}$/i.test(seg));
 }

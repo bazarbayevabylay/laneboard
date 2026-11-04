@@ -107,7 +107,7 @@ export async function boardTabs(ctx: ApiContext): Promise<{ tabs: BoardTab[]; pr
 
 // The store a request names with ?board= (absent: the current board); always read-only. Resolved from the tab list without
 // reading any board's tasks, so a broken board never blocks the others.
-async function storeFor(ctx: ApiContext, key: string | null): Promise<StoreRef> {
+export async function storeFor(ctx: ApiContext, key: string | null): Promise<StoreRef> {
   if (key === null || key === '') return { ...ctx.current, readOnly: true };
   const { tabs } = await tabList(ctx);
   const tab = tabs.find((t) => t.key === key);
@@ -165,7 +165,7 @@ async function filterChoices(store: StoreRef): Promise<{ assignees: string[]; la
 }
 
 // The task id of /api/tasks/:id; a malformed %-escape is bad input (400), not a server bug.
-function taskId(raw: string): string {
+export function taskId(raw: string): string {
   try {
     return decodeURIComponent(raw);
   } catch {
@@ -210,7 +210,7 @@ export async function apiRoute(ctx: ApiContext, url: URL): Promise<ApiReply | nu
     const one = /^\/api\/tasks\/([^/]+)$/.exec(url.pathname);
     if (one?.[1] !== undefined) {
       store = await storeFor(ctx, url.searchParams.get('board'));
-      const r = await getTask({ store }, { id: taskId(one[1]) });
+      const r = await getTask({ store, home: ctx.home }, { id: taskId(one[1]) });
       return ok(store, r.data, r.warnings);
     }
     return null;
