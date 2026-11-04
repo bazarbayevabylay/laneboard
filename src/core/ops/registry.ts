@@ -4,6 +4,7 @@ import { attachFile } from './attach.ts';
 import { configureStore, doctor, initStore, migrateStore } from './admin.ts';
 import { createTask } from './create.ts';
 import { importTasks } from './import.ts';
+import { redactTask } from './redact.ts';
 import { getTask, listEvents, listTasks, taskSummary, viewBoard } from './read.ts';
 import { listBoards } from '../boards.ts';
 import { claimTask, commentTask, finishTask, updateTask } from './update.ts';
@@ -20,6 +21,7 @@ export const OPS = {
   archiveTasks,
   restoreTask,
   deleteTask,
+  redactTask,
   listEvents,
   taskSummary,
   initStore,

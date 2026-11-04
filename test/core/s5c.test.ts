@@ -21,7 +21,7 @@ import {
   restoreTask,
   updateTask,
 } from '../../src/core/index.ts';
-import { as, cleanupTemp, newStore, readStore, rejectsWith, tempDir } from '../helpers.ts';
+import { as, cleanupTemp, newStore, readStore, rejectsWith, tempDir, writeRaw } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -98,8 +98,13 @@ describe('links to tasks of other boards (ADR §30)', () => {
         { kind: 'task', ref: 'WEB-3' },
       ],
     });
-    // A link the write checked, to a task deleted since (a delete leaves links to it).
+    // A link the write checked, to a task deleted since (a delete leaves links to it): its tombstone is an archived task (S6e).
     await deleteTask(as(lb, 'w', { home }), { id: 'LB-1', confirm_id: 'LB-1' });
+    const tomb = (await getTask(as(lb, 'x', { home }), { id: 'LB-2' })).data.linked_tasks[1];
+    expect(tomb).toEqual({ ref: 'LB-1', board: 'LB', found: true, title: 'Own target', status: 'in_progress', final: false, archived: true });
+    // A task gone without a trace (deleted by 0.3.1, which left none).
+    const archive = readStore(lb.dir, 'archive');
+    writeRaw(path.join(lb.dir, 'archive.json'), JSON.stringify({ ...archive, tasks: archive.tasks.filter((t) => t.id !== 'LB-1') }));
     const got = (await getTask(as(lb, 'x', { home }), { id: 'LB-2' })).data;
     expect(got.linked_tasks).toEqual([
       { ref: 'WEB-1', board: 'WEB', found: true, title: 'Web open', status: 'todo', final: false, archived: false },

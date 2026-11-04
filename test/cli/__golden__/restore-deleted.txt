@@ -1,0 +1,15 @@
+# restore-deleted
+$ laneboard restore LB-1 --as a
+exit 2
+--- stdout
+
+--- stderr
+error INVALID_VALUE: LB-1 was deleted at YYYY-MM-DDTHH:MM:SS.mmmZ by a
+  fix: nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get LB-1
+
+$ laneboard restore LB-1 --as a --json
+exit 2
+--- stdout
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"INVALID_VALUE","message":"LB-1 was deleted at YYYY-MM-DDTHH:MM:SS.mmmZ by a","fix":"nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get LB-1"}}
+--- stderr
+

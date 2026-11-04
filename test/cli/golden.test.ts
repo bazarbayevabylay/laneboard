@@ -141,6 +141,9 @@ const CASES: Case[] = [
   { name: 'archive-dry-run', argv: ['archive', '--status', 'todo', '--updated-before', '1d', '--dry-run'], setup: seed },
   { name: 'restore', argv: ['restore', 'LB-1', '--as', 'a'], setup: seedArchived },
   { name: 'delete', argv: ['delete', 'LB-1', '--confirm', 'LB-1', '--as', 'a'], setup: seed },
+  { name: 'restore-deleted', argv: ['restore', 'LB-1', '--as', 'a'], error: 'INVALID_VALUE', setup: async (e) => void (await seed(e), await e.run(['delete', 'LB-1', '--confirm', 'LB-1', '--as', 'a'])) },
+  { name: 'redact', argv: ['redact', 'LB-1', '--text-file', '-', '--as', 'a'], stdin: 'sk-test-123\n', setup: async (e) => void (await seed(e), await e.run(['comment', 'LB-1', 'token sk-test-123 pasted', '--as', 'b'])) },
+  { name: 'redact-not-found', argv: ['redact', 'LB-1', '--text-file', '-', '--as', 'a'], error: 'INVALID_VALUE', stdin: 'sk-test-123\n', setup: seed },
   {
     name: 'events',
     argv: ['events'],

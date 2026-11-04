@@ -39,6 +39,18 @@ import {
 import type { OpContext, OpResult, TaskView } from './common.ts';
 import { checkForeignTaskLinks, missingTask } from './links.ts';
 
+// Longest replaced description an `updated` event keeps (code points): a replace must not lose the text, but an event stays small.
+export const PREVIOUS_DESCRIPTION_MAX = 10000;
+
+// The replaced text for the event (ADR §24): `previous`, cut to PREVIOUS_DESCRIPTION_MAX code points with `previous_cut: true`;
+// nothing for an empty description (`chars` [0, n] already says no text was replaced).
+function previousDescription(text: string): { previous?: string; previous_cut?: true } {
+  if (text === '') return {};
+  const chars = [...text];
+  if (chars.length <= PREVIOUS_DESCRIPTION_MAX) return { previous: text };
+  return { previous: chars.slice(0, PREVIOUS_DESCRIPTION_MAX).join(''), previous_cut: true };
+}
+
 export const UpdateInput = z.strictObject({
   id: IdInput,
   title: TitleInput.optional(),
@@ -124,7 +136,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
         task.title = p.title;
       }
       if (p.description !== undefined && p.description !== task.description) {
-        diff.description = { chars: [task.description.length, p.description.length] };
+        diff.description = { chars: [task.description.length, p.description.length], ...previousDescription(task.description) };
         task.description = p.description;
       }
       if (p.append_description !== undefined) {

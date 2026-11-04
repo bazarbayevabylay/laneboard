@@ -18,13 +18,14 @@ import { list } from './list.ts';
 import { mcp } from './mcp.ts';
 import { migrate } from './migrate.ts';
 import { prime } from './prime.ts';
+import { redact } from './redact.ts';
 import { restore } from './restore.ts';
 import { setup } from './setup.ts';
 import type { CommandDef } from './types.ts';
 import { update } from './update.ts';
 import { view } from './view.ts';
 
-export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim, comment, finish, attach, archive, restore, remove, events, init, config, setup, importCommand, prime, view, board, boards, mcp, migrate, doctor];
+export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim, comment, finish, attach, archive, restore, remove, redact, events, init, config, setup, importCommand, prime, view, board, boards, mcp, migrate, doctor];
 
 // Find a command by name.
 export function findCommand(name: string): CommandDef | undefined {

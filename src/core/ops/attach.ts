@@ -212,9 +212,12 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
       ensureDir(dir);
       const size = bytes.length;
       const sha256 = sha256Of(bytes);
-      // File first, metadata second: a crash leaves an orphan file, never metadata without a file.
+      // File first, metadata second: a crash leaves an orphan file, never metadata without a file; a failed metadata write removes it.
       const file = path.join(dir, name);
       writeFileAtomic(file, bytes, 0o444, { tmpDir: storeDir });
+      // The metadata write below may still fail (full disk): then the file goes too, the task stays as it was. After a lost lock the
+      // file stays (transact skips the hook): another process may have stored its own file under this name meanwhile.
+      s.onRollback(() => removeFile(file));
       // Metadata only for the bytes that are on disk (a short write on a full disk must not be recorded as the source file).
       verifyStored(file, size, sha256);
       const meta = {
