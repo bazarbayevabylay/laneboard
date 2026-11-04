@@ -218,6 +218,8 @@ describe('prime', () => {
     fields: { priority: { type: 'number', description: '0 = highest', example: 'priority=1' } },
     tasks: Array.from({ length: n }, (_, i) => ({ id: `LB-${i + 1}`, title: 'x'.repeat(len), status: 'todo', assignee: 'dev-1', labels: [], updated_at: '', updated_by: 'a', rev: 1, archived: false })),
     in_progress: n,
+    unassigned: [],
+    unassigned_total: 0,
   });
 
   it(`never exceeds ${PRIME_MAX_CHARS} characters and the footer counts exactly the tasks left out, for every title length`, () => {

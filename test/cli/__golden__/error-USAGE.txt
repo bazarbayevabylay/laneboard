@@ -5,11 +5,11 @@ exit 2
 
 --- stderr
 error USAGE: nothing to change: pass at least one of title, description, status, assignee, labels, links, fields
-  fix: laneboard update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N]
+  fix: laneboard update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N] [--full]
 
 $ laneboard update LB-1 --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"USAGE","message":"nothing to change: pass at least one of title, description, status, assignee, labels, links, fields","fix":"laneboard update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N]"}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"USAGE","message":"nothing to change: pass at least one of title, description, status, assignee, labels, links, fields","fix":"laneboard update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N] [--full]"}}
 --- stderr
 

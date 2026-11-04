@@ -1,12 +1,13 @@
 // laneboard update
 import { LaneboardError, parseLinkArg, updateTask } from '../../core/index.ts';
 import { description, flag, int, list, str } from './args.ts';
+import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
 export const update: CommandDef = {
   name: 'update',
   usage:
-    'update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N]',
+    'update <id> [--title T] [--description T | --description-file P|-] [--status S] [--assignee A | --unassign] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N] [--full]',
   summary: 'Change a task (at least one change). Status changes only here. --description replaces the whole text.',
   options: {
     title: { type: 'string' },
@@ -22,6 +23,7 @@ export const update: CommandDef = {
     field: { type: 'string', multiple: true },
     'unset-field': { type: 'string', multiple: true },
     'expected-rev': { type: 'string' },
+    ...FULL_OPTION,
   },
   args: { min: 1, max: 1 },
   async run(c) {
@@ -43,6 +45,6 @@ export const update: CommandDef = {
       expected_rev: int(c.values, 'expected-rev'),
     });
     const verb = r.warnings.some((w) => w.startsWith('no changes')) ? 'unchanged' : 'updated';
-    return { ...r, human: `${r.data.id} ${verb} (rev ${r.data.rev})` };
+    return taskReply(c, r, verb);
   },
 };

@@ -221,7 +221,14 @@ export interface SummaryResult {
   assigned: ListItem[];
   // Active tasks not in the final status that are assigned to `assignee` (without one: to anybody) - work in progress.
   in_progress: number;
+  // Free work: active tasks without an assignee, not in the final status; by priority (when declared), then newest update;
+  // at most SUMMARY_UNASSIGNED_MAX of them, `unassigned_total` counts all.
+  unassigned: ListItem[];
+  unassigned_total: number;
 }
+
+// How many free tasks the summary lists (prime stays short; the rest: list --unassigned).
+export const SUMMARY_UNASSIGNED_MAX = 10;
 
 // Session summary for `prime`: counts per status and the active tasks of one assignee (active.json only, lock-free).
 export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise<OpResult<SummaryResult>> {
@@ -235,6 +242,8 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const finalStatus = config.statuses.at(-1) ?? '';
   const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
+  const free = tasks.filter(({ task }) => task.assignee === null && task.status !== finalStatus);
+  free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
   return {
     data: {
       prefix: config.prefix,
@@ -247,6 +256,8 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       assignee: p.assignee ?? null,
       assigned: assigned.map(({ task, archived }) => toListItem(task, archived)),
       in_progress: inProgress.length,
+      unassigned: free.slice(0, SUMMARY_UNASSIGNED_MAX).map(({ task, archived }) => toListItem(task, archived)),
+      unassigned_total: free.length,
     },
     warnings,
   };

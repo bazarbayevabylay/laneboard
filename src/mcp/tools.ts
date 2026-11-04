@@ -21,8 +21,9 @@ import {
   toErrorObject,
   toLaneboardError,
   UpdateInput,
+  writeReply,
 } from '../core/index.ts';
-import type { ErrorObject, OpContext, OpName, OpResult, StoreRef } from '../core/index.ts';
+import type { ErrorObject, OpContext, OpName, OpResult, StoreRef, TaskView } from '../core/index.ts';
 
 export interface ToolDef {
   name: string;
@@ -32,6 +33,8 @@ export interface ToolDef {
   // Writes take `actor`; reads take none.
   write: boolean;
   destructive?: boolean;
+  // The op returns one task: the reply is short (id, rev, status, assignee) unless `full` is passed.
+  taskReply?: boolean;
 }
 
 // Where the server finds the store: same discovery as the CLI, resolved again on every call (W3).
@@ -49,18 +52,26 @@ const actor = z
   .optional()
   .describe('your name, e.g. dev-1 (the same one in every call); omitted: LANEBOARD_AGENT, else the session default name');
 
+const full = z.boolean().optional().describe('true: reply with the whole task (as task_get); default: only id, rev, status, assignee');
+
 // Advertised parameters of a write tool: the op input plus the actor (explicit, else LANEBOARD_AGENT, else the session default).
 function writeParams(input: z.ZodObject): z.ZodObject {
   return input.extend({ actor });
+}
+
+// Advertised parameters of a write tool that changes one task: also `full`.
+function taskWriteParams(input: z.ZodObject): z.ZodObject {
+  return input.extend({ actor, full });
 }
 
 // One entry per core op: an MCP tool, or "cli-only" (typecheck fails when a new op is not listed).
 export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   createTask: {
     name: 'task_create',
-    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields. Returns the task with its id.',
-    params: writeParams(CreateInput.omit({ field_args: true })),
+    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields. Returns its id, rev, status, assignee (full: the whole task).',
+    params: taskWriteParams(CreateInput.omit({ field_args: true })),
     write: true,
+    taskReply: true,
   },
   getTask: {
     name: 'task_get',
@@ -77,26 +88,30 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   updateTask: {
     name: 'task_update',
     description: 'Change a task (at least one change); status changes only here. assignee null unassigns. description replaces the whole text. Pass expected_rev from your last read or write (every write returns the new rev).',
-    params: writeParams(UpdateInput.omit({ field_args: true })),
+    params: taskWriteParams(UpdateInput.omit({ field_args: true })),
     write: true,
+    taskReply: true,
   },
   claimTask: {
     name: 'task_claim',
     description: 'Take a task: assignee := actor, optionally set status. Held by someone else: ALREADY_CLAIMED, do not take it over.',
-    params: writeParams(ClaimInput),
+    params: taskWriteParams(ClaimInput),
     write: true,
+    taskReply: true,
   },
   commentTask: {
     name: 'task_comment',
     description: 'Add a comment to a task (notes, results). A comment is a change: rev +1; task_get shows it as an event of type commented.',
-    params: writeParams(CommentInput),
+    params: taskWriteParams(CommentInput),
     write: true,
+    taskReply: true,
   },
   attachFile: {
     name: 'task_attach',
     description: 'Attach a file (path: absolute path, optional name) or remove an attachment (remove: its name). Exactly one of path and remove.',
-    params: writeParams(AttachInput),
+    params: taskWriteParams(AttachInput),
     write: true,
+    taskReply: true,
   },
   archiveTasks: {
     name: 'task_archive',
@@ -107,8 +122,9 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   restoreTask: {
     name: 'task_restore',
     description: 'Move an archived task back to active.',
-    params: writeParams(RestoreInput),
+    params: taskWriteParams(RestoreInput),
     write: true,
+    taskReply: true,
   },
   deleteTask: {
     name: 'task_delete',
@@ -177,17 +193,20 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-// Split call arguments into the actor and the op input; unknown parameters fail like unknown op input keys.
-function splitArgs(def: ToolDef, args: Record<string, unknown>): { actor?: string; input: Record<string, unknown> } {
+// Split call arguments into the actor, `full` and the op input; unknown parameters fail like unknown op input keys.
+function splitArgs(def: ToolDef, args: Record<string, unknown>): { actor?: string; full: boolean; input: Record<string, unknown> } {
   const known = Object.keys(def.params.shape);
   const unknown = Object.keys(args).filter((k) => !known.includes(k));
   if (unknown.length) throw new LaneboardError('USAGE', `unknown parameter: ${unknown.join(', ')}`);
-  if (!def.write) return { input: args };
-  const { actor: who, ...input } = args;
+  if (!def.write) return { full: false, input: args };
+  const { actor: who, full: wantFull, ...input } = args;
   if (who !== undefined && typeof who !== 'string') {
     throw new LaneboardError('INVALID_VALUE', `actor must be a string like dev-1, got ${JSON.stringify(who)}`, { fix: `pass actor: "<your-name>" (e.g. dev-1) to ${def.name}` });
   }
-  return { actor: who, input };
+  if (wantFull !== undefined && typeof wantFull !== 'boolean') {
+    throw new LaneboardError('INVALID_VALUE', `full must be true or false, got ${JSON.stringify(wantFull)}`, { fix: `pass full: true to ${def.name} for the whole task, or leave it out` });
+  }
+  return { actor: who, full: wantFull === true, input };
 }
 
 // Run one tool call: parse arguments, call the core op, map the result (thin adapter).
@@ -200,23 +219,25 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     }
     const args = rawArgs ?? {};
     if (typeof args !== 'object' || Array.isArray(args)) throw new LaneboardError('USAGE', 'arguments must be an object');
-    const { actor: who, input } = splitArgs(entry.def, args as Record<string, unknown>);
+    const { actor: who, full: wantFull, input } = splitArgs(entry.def, args as Record<string, unknown>);
     store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd, home: env.env.HOME || undefined });
     // Same order as the CLI: the actor parameter, LANEBOARD_AGENT, then the session's default name (recorded as such on events).
     const named = entry.def.write ? resolveActor(who, env.env) : {};
     const ctx: OpContext = { store, ...named, lockWaitMs: env.lockWaitMs };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     const result = await op(ctx, input);
+    // Same short reply as the CLI unless the whole task is asked for (the attachment added rides along, as in the CLI).
+    const data = entry.def.taskReply && !wantFull ? { ...writeReply(result.data as unknown as TaskView, entry.op === 'attachFile' && input.remove === undefined) } : result.data;
     // Same notice as the CLI: a store found in a parent directory may belong to another project.
     const prefix = storePrefix(store.dir);
     const parent = parentStoreWarning(store, env.cwd, prefix, env.env.HOME || undefined);
     const warnings = parent ? [parent, ...result.warnings] : result.warnings;
     // The CLI envelope's store, prefix and warnings, next to the data (structuredContent stays the CLI `data`).
     const content = [
-      { type: 'text' as const, text: JSON.stringify(result.data) },
+      { type: 'text' as const, text: JSON.stringify(data) },
       { type: 'text' as const, text: JSON.stringify({ store: store.dir, prefix, warnings }) },
     ];
-    return { content, structuredContent: result.data };
+    return { content, structuredContent: data };
   } catch (raw) {
     const error = mcpError(toLaneboardError(raw), entry?.def);
     const where = { store: store?.dir ?? null, prefix: store ? storePrefix(store.dir) : null };

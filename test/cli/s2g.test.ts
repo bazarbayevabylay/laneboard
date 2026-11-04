@@ -1,0 +1,224 @@
+// S2g: short replies of writes (LB-7), prime for subagents - free tasks, explicit names, the default-name hint (LB-8),
+// the session part of a default name in the narrow view, the registry init fix (review S2f).
+import fs from 'node:fs';
+import path from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import { renderBoard } from '../../src/cli/board-view.ts';
+import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
+import type { PrimeData } from '../../src/cli/format.ts';
+import { agentRules, archiveTasks, claimTask, commentTask, createTask } from '../../src/core/index.ts';
+import type { ListItem, ViewResult } from '../../src/core/index.ts';
+import { callTool } from '../../src/mcp/tools.ts';
+import { as, cleanupTemp, cli, newStore } from '../helpers.ts';
+
+afterAll(cleanupTemp);
+
+// A default session name as Claude Code sessions get it (agent-name.ts).
+const SESSION = { LANEBOARD_DEFAULT_AGENT: 'claude-code@Test-Person', CLAUDE_CODE_SESSION_ID: '1a2b3c4d-0000-4000-8000-000000000001' };
+const DEFAULT_NAME = 'claude-code@Test-Person:1a2b3c4d';
+
+describe('write replies are short (LB-7)', () => {
+  it('every task write prints id, rev, status, assignee with --json and one line for people; --full gives the whole task', async () => {
+    const s = await newStore();
+    fs.writeFileSync(path.join(s.root, 'notes.txt'), 'some notes\n');
+    const run = async (argv: string[]) => {
+      const r = await cli(argv, { cwd: s.root });
+      expect(r.code, r.stdout + r.stderr).toBe(0);
+      return r;
+    };
+    const json = async (argv: string[]) => JSON.parse((await run([...argv, '--json'])).stdout);
+    expect((await json(['create', 'Fix login', '--status', 'todo', '--as', 'a'])).data).toEqual({ id: 'LB-1', rev: 1, status: 'todo', assignee: null });
+    expect((await json(['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: 'dev-1' });
+    expect((await json(['update', 'LB-1', '--title', 'Fix the login', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 3, status: 'in_progress', assignee: 'dev-1' });
+    expect((await json(['comment', 'LB-1', 'step', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 4, status: 'in_progress', assignee: 'dev-1' });
+    const sha256 = 'af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf';
+    expect((await json(['attach', 'LB-1', 'notes.txt', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 5, status: 'in_progress', assignee: 'dev-1', attachment: { name: 'notes.txt', size: 11, sha256 } });
+    expect((await json(['attach', 'LB-1', '--remove', 'notes.txt', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 6, status: 'in_progress', assignee: 'dev-1' });
+    await run(['update', 'LB-1', '--status', 'done', '--as', 'dev-1']);
+    await run(['archive', 'LB-1', '--as', 'dev-1']);
+    expect((await json(['restore', 'LB-1', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 9, status: 'done', assignee: 'dev-1' });
+    // The envelope keeps store, prefix and warnings.
+    const created = await json(['create', 'For someone', '--status', 'todo', '--assignee', 'dev-2', '--as', 'a']);
+    expect(created).toMatchObject({ ok: true, store: s.dir, prefix: 'LB', data: { id: 'LB-2', rev: 1, status: 'todo', assignee: 'dev-2' } });
+    expect(created.warnings[0]).toMatch(/^LB-2 is assigned to dev-2, not to you \(a\)/);
+    // People: one line with what changed and the state after it.
+    expect((await run(['comment', 'LB-2', 'note', '--as', 'a'])).stdout).toBe('LB-2 commented (rev 2, todo, dev-2)\n');
+    expect((await run(['claim', 'LB-2', '--as', 'dev-2'])).stdout).toBe('LB-2 claimed (rev 2, todo, dev-2)\n');
+    expect((await run(['update', 'LB-2', '--unassign', '--as', 'a'])).stdout).toBe('LB-2 updated (rev 3, todo, unassigned)\n');
+    // --full: the task as get shows it, in JSON and for people.
+    const full = await json(['comment', 'LB-2', 'more', '--as', 'a', '--full']);
+    const got = await json(['get', 'LB-2']);
+    expect(full.data).toEqual(got.data);
+    expect(full.data.events.at(-1)).toMatchObject({ type: 'commented', data: { text: 'more' } });
+    const human = (await run(['comment', 'LB-2', 'last', '--as', 'a', '--full'])).stdout;
+    expect(human).toMatch(/^LB-2 {2}For someone\n {2}status: todo · assignee: - · rev: 5 /);
+    expect(human).toContain('commented  last');
+    expect((await run(['create', 'x', '--status', 'todo', '--as', 'a', '--full', '--json'])).stdout).toContain('"events":[');
+  });
+
+  it('a comment on a task with 50 events: the reply does not grow with the task', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'Busy task', status: 'todo', description: 'd'.repeat(500) });
+    for (let i = 0; i < 49; i++) await commentTask(as(s, 'a'), { id: 'LB-1', text: `step ${i} of the work, with a sentence of detail` });
+    const short = await cli(['comment', 'LB-1', 'one more', '--as', 'a', '--json'], { cwd: s.root });
+    const long = await cli(['comment', 'LB-1', 'one more', '--as', 'a', '--json', '--full'], { cwd: s.root });
+    // created + 49 comments = 50 events before the short reply, 51 before the full one.
+    expect(JSON.parse(long.stdout).data.events).toHaveLength(52);
+    expect(short.stdout.length).toBeLessThan(300);
+    expect(long.stdout.length).toBeGreaterThan(20 * short.stdout.length);
+  });
+
+  it('MCP: task writes reply short unless full: true; full must be a boolean', async () => {
+    const s = await newStore();
+    fs.writeFileSync(path.join(s.root, 'notes.txt'), 'some notes\n');
+    const env = { cwd: s.root, env: {} };
+    const created = await callTool('task_create', { title: 'via MCP', status: 'todo', actor: 'm' }, env);
+    expect(created.structuredContent).toEqual({ id: 'LB-1', rev: 1, status: 'todo', assignee: null });
+    expect(JSON.parse(created.content[0]?.text ?? '')).toEqual(created.structuredContent);
+    expect(JSON.parse(created.content[1]?.text ?? '')).toEqual({ store: s.dir, prefix: 'LB', warnings: [] });
+    expect((await callTool('task_claim', { id: 'LB-1', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'todo', assignee: 'm' });
+    expect((await callTool('task_update', { id: 'LB-1', status: 'review', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'm' });
+    expect((await callTool('task_comment', { id: 'LB-1', text: 'x', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 4, status: 'review', assignee: 'm' });
+    const attached = await callTool('task_attach', { id: 'LB-1', path: path.join(s.root, 'notes.txt'), actor: 'm' }, env);
+    expect(attached.structuredContent).toMatchObject({ id: 'LB-1', rev: 5, attachment: { name: 'notes.txt', size: 11 } });
+    expect((await callTool('task_attach', { id: 'LB-1', remove: 'notes.txt', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 6, status: 'review', assignee: 'm' });
+    await archiveTasks(as(s, 'm'), { ids: ['LB-1'] });
+    expect((await callTool('task_restore', { id: 'LB-1', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 8, status: 'review', assignee: 'm' });
+    const full = await callTool('task_comment', { id: 'LB-1', text: 'y', actor: 'm', full: true }, env);
+    expect(full.structuredContent).toMatchObject({ id: 'LB-1', rev: 9, title: 'via MCP', archived: false });
+    expect((full.structuredContent.events as unknown[]).length).toBe(9);
+    const bad = await callTool('task_comment', { id: 'LB-1', text: 'z', actor: 'm', full: 'yes' }, env);
+    expect(bad.isError).toBe(true);
+    expect(bad.structuredContent).toMatchObject({ code: 'INVALID_VALUE', message: 'full must be true or false, got "yes"' });
+    // Reads take no `full`; archive and delete keep their own short replies.
+    expect((await callTool('task_get', { id: 'LB-1', full: true }, env)).structuredContent).toMatchObject({ code: 'USAGE', message: 'unknown parameter: full' });
+    expect((await callTool('task_archive', { ids: ['LB-1'], actor: 'm', full: true }, env)).structuredContent).toMatchObject({ code: 'USAGE', message: 'unknown parameter: full' });
+  });
+});
+
+describe('prime for subagents (LB-8)', () => {
+  it('lists free tasks (no assignee, not final, not archived) by priority with the claim command', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'Free low', status: 'todo', fields: { priority: 2 } });
+    await createTask(as(s, 'a'), { title: 'Free top', status: 'review', fields: { priority: 0 } });
+    await createTask(as(s, 'a'), { title: 'Taken', status: 'todo', assignee: 'dev-2' });
+    await createTask(as(s, 'a'), { title: 'Finished', status: 'done' });
+    await createTask(as(s, 'a'), { title: 'Archived', status: 'todo' });
+    await archiveTasks(as(s, 'a'), { ids: ['LB-5'] });
+    await createTask(as(s, 'a'), { title: 'Free none', status: 'in_progress' });
+    const r = await cli(['prime', '--as', 'dev-1'], { cwd: s.root });
+    expect(r.stdout.endsWith('\nFree tasks (no assignee); take one: laneboard claim <ID> --as dev-1 --json\n  LB-2  [review]  rev 1  Free top\n  LB-1  [todo]  rev 1  Free low\n  LB-6  [in_progress]  rev 1  Free none\n')).toBe(true);
+    const json = JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).data;
+    expect(json.unassigned.map((t: ListItem) => t.id)).toEqual(['LB-2', 'LB-1', 'LB-6']);
+    expect(json.unassigned_total).toBe(3);
+    // The claim command carries the name the way the other commands of prime do.
+    expect((await cli(['prime'], { cwd: s.root })).stdout).toContain('take one: laneboard claim <ID> --as <your-name> --json\n');
+    expect((await cli(['prime'], { cwd: s.root, env: SESSION })).stdout).toContain('take one: laneboard claim <ID> --json\n');
+    expect((await cli(['prime', '--dir', s.dir, '--as', 'dev-1'], { cwd: s.root })).stdout).toContain(`take one: laneboard claim <ID> --as dev-1 --dir ${s.dir} --json\n`);
+  });
+
+  it('more than 10 free tasks: the rest in a footer; none free: no section', async () => {
+    const s = await newStore();
+    expect((await cli(['prime', '--as', 'dev-1'], { cwd: s.root })).stdout).not.toContain('Free tasks');
+    for (let i = 1; i <= 12; i++) await createTask(as(s, 'a'), { title: `Task ${i}`, status: 'todo' });
+    const r = await cli(['prime', '--as', 'dev-1'], { cwd: s.root });
+    expect(r.stdout.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l))).toHaveLength(10);
+    expect(r.stdout.endsWith('\n  LB-3  [todo]  rev 1  Task 3\n... 2 more: laneboard list --unassigned --json\n')).toBe(true);
+    expect(JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).data).toMatchObject({ unassigned_total: 12 });
+  });
+
+  it('--as and LANEBOARD_AGENT list the tasks of that name, not those of the session default name', async () => {
+    const s = await newStore();
+    await createTask(as(s, DEFAULT_NAME), { title: 'Parent work', status: 'in_progress', assignee: DEFAULT_NAME });
+    await createTask(as(s, 'a'), { title: 'Sub work', status: 'todo' });
+    await claimTask(as(s, 'backend-dev'), { id: 'LB-2', status: 'in_progress' });
+    for (const r of [await cli(['prime', '--as', 'backend-dev'], { cwd: s.root, env: SESSION }), await cli(['prime'], { cwd: s.root, env: { ...SESSION, LANEBOARD_AGENT: 'backend-dev' } })]) {
+      expect(r.stdout).toContain('Your active tasks (backend-dev), newest update first:\n  LB-2  [in_progress]  rev 2  Sub work');
+      expect(r.stdout).not.toContain('Parent work');
+      expect(r.stdout).not.toContain('Subagent or parallel worker?');
+    }
+  });
+
+  it('a session default name with tasks: says a subagent passes its own --as, the tasks may be the parent session\'s', async () => {
+    const s = await newStore();
+    const hint = "Subagent or parallel worker? Then the tasks above may be your parent session's (you share its default name): pass your own --as <name> on every command, prime too.";
+    // No task of the default name yet: no hint (the create command already says how to pick a name).
+    expect((await cli(['prime'], { cwd: s.root, env: SESSION })).stdout).not.toContain(hint);
+    await createTask(as(s, DEFAULT_NAME), { title: 'Parent work', status: 'in_progress', assignee: DEFAULT_NAME });
+    await createTask(as(s, 'a'), { title: 'For the subagent', status: 'todo' });
+    const r = await cli(['prime'], { cwd: s.root, env: SESSION });
+    expect(r.stdout).toContain(
+      `Your active tasks (${DEFAULT_NAME}), newest update first:\n  LB-1  [in_progress]  rev 1  Parent work\n${hint}\nFree tasks (no assignee); take one: laneboard claim <ID> --json\n  LB-2  [todo]  rev 1  For the subagent\n`,
+    );
+    // The same tasks under an explicit name are that agent's own: no hint.
+    expect((await cli(['prime', '--as', DEFAULT_NAME.replace(':1a2b3c4d', ':ffffffff')], { cwd: s.root, env: SESSION })).stdout).not.toContain(hint);
+  });
+
+  // A prime summary with `own` tasks of the agent and `free` free tasks (10 listed at most), titles `len` characters long.
+  const data = (own: number, free: number, len: number): PrimeData => {
+    const item = (i: number, assignee: string | null): ListItem => ({ id: `LB-${i}`, title: 'x'.repeat(len), status: 'todo', assignee, labels: [], updated_at: '', updated_by: 'a', rev: 1, archived: false });
+    return {
+      rules: agentRules(),
+      agent: DEFAULT_NAME,
+      agent_source: 'default',
+      name: 'n'.repeat(60),
+      description: 'd'.repeat(200),
+      store: '/home/someone/projects/a-project-with-a-long-name/.laneboard',
+      prefix: 'ABCDEFGHIJ',
+      store_warning: null,
+      store_problem: null,
+      statuses: ['todo', 'in_progress', 'review', 'done'].map((status) => ({ status, count: 0 })),
+      first_status: 'todo',
+      final_status: 'done',
+      fields: { priority: { type: 'number', description: '0 = highest', example: 'priority=1' } },
+      tasks: Array.from({ length: own }, (_, i) => item(i + 1, DEFAULT_NAME)),
+      in_progress: own,
+      unassigned: Array.from({ length: Math.min(free, 10) }, (_, i) => item(own + i + 1, null)),
+      unassigned_total: free,
+    };
+  };
+
+  it(`with own and free tasks prime stays within ${PRIME_MAX_CHARS} characters, keeps the hint and the free header, and both footers count right`, () => {
+    for (const [own, free] of [[1, 1], [30, 50], [400, 12], [0, 400]] as const) {
+      for (const len of [1, 40, 120, 200]) {
+        const d = data(own, free, len);
+        const text = primeText(d);
+        const where = `own=${own} free=${free} len=${len}`;
+        expect(text.length, where).toBeLessThanOrEqual(PRIME_MAX_CHARS);
+        expect(text.includes('Subagent or parallel worker?'), where).toBe(own > 0);
+        expect(text, where).toContain('Free tasks (no assignee); take one: laneboard claim <ID> --json');
+        const [mine = '', freePart = ''] = text.split('Free tasks (no assignee)');
+        const count = (part: string) => part.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;
+        const footer = (part: string, re: RegExp) => Number(re.exec(part)?.[1] ?? 0);
+        expect(count(mine) + footer(mine, /\n\.\.\. (\d+) more: laneboard list --assignee /), where).toBe(own);
+        expect(count(freePart) + footer(freePart, /\n\.\.\. (\d+) more: laneboard list --unassigned --json$/), where).toBe(free);
+      }
+    }
+  });
+
+  it("no free-task claim command under a warning that the store looks like another project's", () => {
+    const text = primeText({ ...data(0, 3, 5), store_warning: 'the store looks like another project' });
+    expect(text).not.toContain('Free tasks');
+    expect(text).not.toContain('take one: laneboard claim');
+  });
+});
+
+describe('narrow view keeps the session part of a default name (review S2f)', () => {
+  it('list mode: the holder gets the room after the id, so `:<session>` is not cut', () => {
+    const now = new Date().toISOString();
+    const card = (id: string) => ({ id, title: 'A title that is long enough to be cut', assignee: 'claude-code@abylaybazarbayev:f92f65da', labels: [], status_since: now, rev: 1 });
+    const d: ViewResult = {
+      name: 'b',
+      description: null,
+      prefix: 'LANE',
+      columns: ['todo', 'in_progress', 'review', 'done'].map((status) => ({ status, known: true, cards: status === 'todo' ? [card('LANE-12')] : [] })),
+      shown: 1,
+      total: 1,
+    };
+    for (const width of [40, 36]) {
+      const line = renderBoard(d, { width, color: false, now: new Date(), store: '/s', filters: [] }).split('\n').find((l) => l.includes('LANE-12')) ?? '';
+      expect(line.length, `width ${width}`).toBeLessThanOrEqual(width);
+      expect(line, `width ${width}`).toMatch(/^ {2}LANE-12 {2}<1m · \S*…:f92f65da/);
+    }
+  });
+});

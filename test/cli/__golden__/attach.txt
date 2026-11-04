@@ -2,13 +2,13 @@
 $ laneboard attach LB-1 notes.txt --as a
 exit 0
 --- stdout
-LB-1 attached notes.txt, 11 bytes (rev 2)
+LB-1 attached notes.txt, 11 bytes (rev 2, todo, unassigned)
 --- stderr
 
 
 $ laneboard attach LB-1 notes.txt --as a --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":2,"title":"Fix login","description":"","status":"todo","assignee":null,"labels":[],"links":[],"fields":{},"attachments":[{"name":"notes.txt","size":11,"sha256":"af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf","mime":"text/plain","added_by":"a","added_at":"YYYY-MM-DDTHH:MM:SS.mmmZ"}],"events":[{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","actor_source":"explicit","type":"created","data":{"title":"Fix login","status":"todo","assignee":null}},{"at":"YYYY-MM-DDTHH:MM:SS.mmmZ","actor":"a","actor_source":"explicit","type":"attached","data":{"name":"notes.txt","size":11,"sha256":"af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf"}}],"events_dropped":0,"created_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","created_by":"a","updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","archived_at":null,"archived":false},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":2,"status":"todo","assignee":null,"attachment":{"name":"notes.txt","size":11,"sha256":"af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf"}},"warnings":[]}
 --- stderr
 

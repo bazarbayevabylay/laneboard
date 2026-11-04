@@ -144,8 +144,10 @@ export function renderBoard(d: ViewResult, o: RenderOptions): string {
     for (const c of d.columns) {
       lines.push(paint([{ text: fit(columnTitle(c), o.width), style: 'bold' }], o.color));
       for (const card of c.cards) {
-        // Time and holder come before the title, so cutting a long title keeps them.
-        lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now, o.width)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
+        // Time and holder come before the title, so cutting a long title keeps them; the holder gets the room after `  <id>  `,
+        // so a default name is shortened by its user part and its session part stays visible.
+        const room = o.width - width(`  ${card.id}  `);
+        lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now, room)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
       }
     }
   } else {

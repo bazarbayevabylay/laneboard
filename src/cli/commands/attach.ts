@@ -2,13 +2,14 @@
 import path from 'node:path';
 import { attachFile, LaneboardError } from '../../core/index.ts';
 import { str } from './args.ts';
+import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
 export const attach: CommandDef = {
   name: 'attach',
-  usage: 'attach <id> <path> [--name N]  |  attach <id> --remove <name>',
+  usage: 'attach <id> <path> [--name N] [--full]  |  attach <id> --remove <name> [--full]',
   summary: 'Attach a file to a task, or remove an attachment.',
-  options: { name: { type: 'string' }, remove: { type: 'string' } },
+  options: { name: { type: 'string' }, remove: { type: 'string' }, ...FULL_OPTION },
   args: { min: 1, max: 2 },
   async run(c) {
     const source = c.positionals[1];
@@ -20,8 +21,8 @@ export const attach: CommandDef = {
       name: str(c.values, 'name'),
       remove,
     });
-    if (remove !== undefined) return { ...r, human: `${r.data.id} detached ${remove} (rev ${r.data.rev})` };
-    const added = r.data.attachments[r.data.attachments.length - 1];
-    return { ...r, human: `${r.data.id} attached ${added?.name ?? ''}, ${added?.size ?? 0} bytes (rev ${r.data.rev})` };
+    if (remove !== undefined) return taskReply(c, r, `detached ${remove}`);
+    const added = r.data.attachments.at(-1);
+    return taskReply(c, r, `attached ${added?.name ?? ''}, ${added?.size ?? 0} bytes`, true);
   },
 };

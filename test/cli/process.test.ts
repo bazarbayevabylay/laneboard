@@ -28,7 +28,7 @@ describe('laneboard process', () => {
     const sub = path.join(root, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
     const store = path.join(root, '.laneboard');
-    const fromSub = await spawnNode([CLI_SOURCE, 'create', 'one', '--status', 'todo', '--json'], { cwd: sub, env: { LANEBOARD_AGENT: 'env-agent' } });
+    const fromSub = await spawnNode([CLI_SOURCE, 'create', 'one', '--status', 'todo', '--json', '--full'], { cwd: sub, env: { LANEBOARD_AGENT: 'env-agent' } });
     expect(JSON.parse(fromSub.stdout)).toMatchObject({ ok: true, store, data: { id: 'LB-1', created_by: 'env-agent' } });
     const elsewhere = tempDir();
     const viaEnv = await spawnNode([CLI_SOURCE, 'get', 'LB-1', '--json'], { cwd: elsewhere, env: { LANEBOARD_DIR: store } });
@@ -44,7 +44,7 @@ describe('laneboard process', () => {
     const cwd = tempDir();
     await spawnNode([CLI_SOURCE, 'init', '--description', 'test board', '--prefix', 'LB'], { cwd });
     const { spawn } = await import('node:child_process');
-    const child = spawn(process.execPath, [CLI_SOURCE, 'create', 'piped', '--status', 'todo', '--description-file', '-', '--as', 'a', '--json'], { cwd });
+    const child = spawn(process.execPath, [CLI_SOURCE, 'create', 'piped', '--status', 'todo', '--description-file', '-', '--as', 'a', '--json', '--full'], { cwd });
     let out = '';
     child.stdout.on('data', (d: Buffer) => (out += d.toString()));
     child.stdin.end('from stdin\n');

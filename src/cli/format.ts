@@ -241,11 +241,37 @@ export interface PrimeData {
   tasks: ListItem[];
   // The agent's tasks not in the final status (without a name: anybody's assigned ones, used by the edit hook).
   in_progress: number;
+  // Free work: active tasks without an assignee, not in the final status (at most 10, by priority), and how many there are.
+  unassigned: ListItem[];
+  unassigned_total: number;
 }
+
+// Under tasks of the session's default name: the parent session and its subagents share that name (LB-8).
+const SESSION_HINT =
+  'Subagent or parallel worker? Then the tasks above may be your parent session\'s (you share its default name): pass your own --as <name> on every command, prime too.';
 
 // `line` cut to `room` characters, marked with an ellipsis when cut.
 function fit(line: string, room: number): string {
   return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
+}
+
+// `--as` for a printed command: the agent's own name, none for the default name (writes use it anyway), a placeholder without one.
+function asOption(d: PrimeData): string {
+  if (d.agent === null) return ' --as <your-name>';
+  return d.agent_source === 'default' ? '' : ` --as ${shellQuote(d.agent)}`;
+}
+
+// `text` plus one line per task while the whole stays under PRIME_MAX_CHARS with `reserve` characters left for what follows;
+// tasks that do not fit (or that `total` counts beyond `items`) end in the `more` footer.
+function withTasks(text: string, items: readonly ListItem[], total: number, more: (n: number) => string, reserve: number): string {
+  let out = text;
+  for (const [i, t] of items.entries()) {
+    const line = `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
+    const left = total - i - 1;
+    if (out.length + line.length + (left ? more(left).length : 0) + reserve > PRIME_MAX_CHARS) return out + more(total - i);
+    out += line;
+  }
+  return total > items.length ? out + more(total - items.length) : out;
 }
 
 // What to do when the agent has no task in progress: the exact create command (and how to keep a name without one); `dir` is
@@ -275,20 +301,26 @@ function noTaskText(d: PrimeData, dir: string): string {
   return ['You have no task in progress. Create one now:', create, `Given a task id instead: laneboard claim <ID> --as ${name}${dir} --json`].join('\n');
 }
 
-// Rules, store, statuses (final one named), fields, then the agent's tasks or the command to create one; at most PRIME_MAX_CHARS characters.
-// `storeDir`: the store was named by --dir, so the printed commands carry it.
+// Rules, store, statuses (final one named), fields, then the agent's tasks or the command to create one, then the free tasks with the
+// claim command; at most PRIME_MAX_CHARS characters. `storeDir`: the store was named by --dir, so the printed commands carry it.
 export function primeText(d: PrimeData, storeDir?: string): string {
   const head = `${d.rules}\n`;
   if (d.store_problem !== null) return fit(`${head}\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
   const dir = storeDir === undefined ? '' : ` --dir ${shellQuote(storeDir)}`;
   const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'}${dir} --json`;
+  const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${dir} --json`;
   const listed = d.agent !== null && d.tasks.length > 0;
   // Without a name the agent's own tasks are unknown, so the create command is always shown.
   const closing = [d.agent === null || d.in_progress === 0 ? noTaskText(d, dir) : '', listed ? `Your active tasks (${d.agent}), newest update first:` : ''].filter(Boolean).join('\n');
+  const hint = listed && d.agent_source === 'default' ? `\n${SESSION_HINT}` : '';
+  // Under a warning that the store looks like another project's, no claim command for it (as noTaskText).
+  const free = d.store_warning === null && d.unassigned_total > 0;
+  const freeHead = free ? `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json` : '';
   const board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
   const store = [`Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})${board}`, ...(d.store_warning ? [`warning: ${d.store_warning}`] : [])].join('\n');
-  // Status and field lines share what is left after the rules, the store, the closing lines and the longest footer.
-  const room = PRIME_MAX_CHARS - head.length - store.length - closing.length - (listed ? more(d.tasks.length).length : 0) - 4;
+  // Status and field lines share what is left after the rules, the store, the closing lines, the hint, the free header and the footers.
+  const tail = hint.length + freeHead.length + (free ? freeMore(d.unassigned_total).length : 0);
+  const room = PRIME_MAX_CHARS - head.length - store.length - closing.length - (listed ? more(d.tasks.length).length : 0) - tail - 4;
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
   if (status.length + 1 + fields.length > room) {
@@ -296,15 +328,11 @@ export function primeText(d: PrimeData, storeDir?: string): string {
     status = fit(status, room - 1 - fields.length);
   }
   let text = [head, store, status, fields, closing].join('\n');
-  if (!listed) return fit(text, PRIME_MAX_CHARS);
-  for (const [i, t] of d.tasks.entries()) {
-    const line = `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
-    const left = d.tasks.length - i - 1;
-    // Keep room for the "N more" footer unless this is the last task.
-    if (text.length + line.length + (left ? more(left).length : 0) > PRIME_MAX_CHARS) return text + more(d.tasks.length - i);
-    text += line;
-  }
-  return text;
+  // The agent's own tasks first; the hint and the free header keep their room, so they are never cut.
+  if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, tail);
+  text += hint;
+  if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0);
+  return fit(text, PRIME_MAX_CHARS);
 }
 
 // Human setup report: one line per file, diffs of replaced values, notes.

@@ -136,7 +136,8 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   // `<home>/.laneboard` is the machine's board registry (with its own lock): a board there would lock itself out and hide the registry.
   if (opts.home !== undefined && samePath(target, registryDir(opts.home))) {
     throw new LaneboardError('STORE_EXISTS', `${target} is this machine's board registry (laneboard boards), so no board can be created there`, {
-      fix: `create the board in the project's own folder: mkdir -p ${shellQuote(opts.home)}/<project> && cd ${shellQuote(opts.home)}/<project> && laneboard init --name <name> --description "<whose project, what work>"`,
+      // --dir, not a bare init in that folder: a bare init takes LANEBOARD_DIR, which may be this very folder (ADR-0001 §16).
+      fix: `create the board in the project's own folder: laneboard init --dir ${shellQuote(opts.home)}/<project>/.laneboard --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(opts.home)}/<project>/.laneboard on every command, starting with laneboard prime`,
     });
   }
   const outer = enclosingStore(target);

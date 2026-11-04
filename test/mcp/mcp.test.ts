@@ -126,7 +126,7 @@ const CASES: ParityCase[] = [
     tool: 'task_update',
     args: { id: 'LB-1', actor: 'a' },
     error: 'USAGE',
-    mcpFix: 'call task_update with these parameters (? = optional): id, title?, description?, status?, assignee?, add_labels?, remove_labels?, add_links?, remove_links?, fields?, unset_fields?, expected_rev?, actor?',
+    mcpFix: 'call task_update with these parameters (? = optional): id, title?, description?, status?, assignee?, add_labels?, remove_labels?, add_links?, remove_links?, fields?, unset_fields?, expected_rev?, actor?, full?',
   },
 ];
 
@@ -177,17 +177,17 @@ describe('MCP server over stdio (SDK client)', () => {
         called.add(name);
         return ok(name, args);
       };
-      expect(await call('task_create', { title: 'From MCP', status: 'todo', actor: 'm' })).toMatchObject({ id: 'LB-4', created_by: 'm', rev: 1 });
+      expect(await call('task_create', { title: 'From MCP', status: 'todo', actor: 'm', full: true })).toMatchObject({ id: 'LB-4', created_by: 'm', rev: 1 });
       expect(await call('task_get', { id: 'LB-4' })).toMatchObject({ id: 'LB-4', archived: false });
       expect(await call('task_list', { scope: 'all' })).toMatchObject({ total: 4, scope: 'all' });
       expect(await call('task_claim', { id: 'LB-4', actor: 'm' })).toMatchObject({ assignee: 'm', rev: 2 });
       expect(await call('task_update', { id: 'LB-4', status: 'in_progress', expected_rev: 2, actor: 'm' })).toMatchObject({ status: 'in_progress', rev: 3 });
       expect(await call('task_comment', { id: 'LB-4', text: '- item one', actor: 'm' })).toMatchObject({ rev: 4 });
-      const attached = await call('task_attach', { id: 'LB-4', path: base.file, actor: 'm' });
+      const attached = await call('task_attach', { id: 'LB-4', path: base.file, actor: 'm', full: true });
       expect(attached.attachments).toMatchObject([{ name: 'notes.txt', size: 11 }]);
-      expect(await call('task_attach', { id: 'LB-4', remove: 'notes.txt', actor: 'm' })).toMatchObject({ attachments: [] });
+      expect(await call('task_attach', { id: 'LB-4', remove: 'notes.txt', actor: 'm', full: true })).toMatchObject({ attachments: [] });
       expect(await call('task_archive', { ids: ['LB-4'], actor: 'm' })).toMatchObject({ archived: [{ id: 'LB-4' }], dry_run: false });
-      expect(await call('task_restore', { id: 'LB-4', actor: 'm' })).toMatchObject({ archived: false });
+      expect(await call('task_restore', { id: 'LB-4', actor: 'm', full: true })).toMatchObject({ archived: false });
       const events = await call('task_events', { task: 'LB-4', limit: 50 });
       expect((events.items as Array<{ type: string }>).map((e) => e.type)).toEqual(['restored', 'archived', 'detached', 'attached', 'commented', 'status', 'assigned', 'created']);
       expect(await call('task_delete', { id: 'LB-4', confirm_id: 'LB-4', actor: 'm' })).toEqual({ id: 'LB-4', deleted: true });
@@ -257,7 +257,7 @@ describe('MCP server over stdio (SDK client)', () => {
       const r = await mcp.call('task_create', { title: 'x', status: 'todo', field_args: ['priority=1'], actor: 'a' });
       expect(r.isError).toBe(true);
       expect(r.structured).toMatchObject({ code: 'USAGE', message: 'unknown parameter: field_args' });
-      expect(r.structured.fix).toBe('call task_create with these parameters (? = optional): title, status, description?, assignee?, labels?, links?, fields?, actor?');
+      expect(r.structured.fix).toBe('call task_create with these parameters (? = optional): title, status, description?, assignee?, labels?, links?, fields?, actor?, full?');
       const read = await mcp.call('task_get', { id: 'LB-1', actor: 'a' });
       expect(read.structured).toMatchObject({ code: 'USAGE', message: 'unknown parameter: actor' });
     } finally {

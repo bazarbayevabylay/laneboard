@@ -440,6 +440,24 @@ export function toTaskView(task: TaskT, archived: boolean, eventsLimit?: number)
   };
 }
 
+// Short reply of a write that changed one task (CLI --json and MCP by default): what the next step needs, not the whole task
+// (`get` or --full / MCP `full` gives that). The newest attachment rides along after an attach (its name removes it again).
+export interface WriteReply {
+  id: string;
+  rev: number;
+  status: string;
+  assignee: string | null;
+  attachment?: { name: string; size: number; sha256: string };
+}
+
+// Explicit mapping of a task view to the short write reply; `attached`: the write added an attachment (attach appends it last).
+export function writeReply(task: TaskView, attached = false): WriteReply {
+  const reply: WriteReply = { id: task.id, rev: task.rev, status: task.status, assignee: task.assignee };
+  const added = attached ? task.attachments.at(-1) : undefined;
+  if (added) reply.attachment = { name: added.name, size: added.size, sha256: added.sha256 };
+  return reply;
+}
+
 // Throw helper for invariants that need a specific code.
 export function fail(code: ErrorCode, message: string, fix?: string): never {
   throw new LaneboardError(code, message, fix ? { fix } : {});

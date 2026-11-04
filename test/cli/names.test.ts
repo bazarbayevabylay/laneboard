@@ -67,11 +67,11 @@ describe('default agent name', () => {
 describe('agents without a name', () => {
   it('a write without --as and LANEBOARD_AGENT uses the default name; the event says "default"; get shows it', async () => {
     const s = await newStore();
-    const r = JSON.parse((await cli(['create', 'Haiku work', '--status', 'todo', '--json'], { cwd: s.root, env: session(A) })).stdout);
+    const r = JSON.parse((await cli(['create', 'Haiku work', '--status', 'todo', '--json', '--full'], { cwd: s.root, env: session(A) })).stdout);
     expect(r).toMatchObject({ ok: true, data: { created_by: 'claude-code@Test-Person:1a2b3c4d' } });
     expect(r.data.events[0]).toMatchObject({ actor: 'claude-code@Test-Person:1a2b3c4d', actor_source: 'default', type: 'created' });
     expect(readStore(s.dir, 'active').tasks[0]?.events).toMatchObject([{ actor_source: 'default' }]);
-    const named = JSON.parse((await cli(['comment', 'LB-1', 'step', '--as', 'dev-1', '--json'], { cwd: s.root, env: session(A) })).stdout);
+    const named = JSON.parse((await cli(['comment', 'LB-1', 'step', '--as', 'dev-1', '--json', '--full'], { cwd: s.root, env: session(A) })).stdout);
     expect(named.data.events.at(-1)).toMatchObject({ actor: 'dev-1', actor_source: 'explicit' });
     const human = await cli(['get', 'LB-1'], { cwd: s.root });
     expect(human.stdout).toContain('claude-code@Test-Person:1a2b3c4d (default name)  created');
@@ -118,10 +118,10 @@ describe('agents without a name', () => {
 
   it('MCP: a write tool without actor uses LANEBOARD_AGENT, else the default name of the session that started the server', async () => {
     const s = await newStore();
-    const created = await callTool('task_create', { title: 'via MCP', status: 'todo' }, { cwd: s.root, env: session(B) });
+    const created = await callTool('task_create', { title: 'via MCP', status: 'todo', full: true }, { cwd: s.root, env: session(B) });
     expect(created.isError).toBeUndefined();
     expect(created.structuredContent).toMatchObject({ created_by: 'claude-code@Test-Person:9f8e7d6c', events: [{ actor_source: 'default' }] });
-    const viaEnv = await callTool('task_comment', { id: 'LB-1', text: 'x' }, { cwd: s.root, env: { ...session(B), LANEBOARD_AGENT: 'dev-7' } });
+    const viaEnv = await callTool('task_comment', { id: 'LB-1', text: 'x', full: true }, { cwd: s.root, env: { ...session(B), LANEBOARD_AGENT: 'dev-7' } });
     expect(viaEnv.structuredContent).toMatchObject({ updated_by: 'dev-7' });
     const none = await callTool('task_comment', { id: 'LB-1', text: 'x' }, { cwd: s.root, env: {} });
     expect(none.structuredContent).toMatchObject({ code: 'ACTOR_REQUIRED' });

@@ -114,6 +114,8 @@ export const prime: CommandDef = {
       fields: summary?.fields ?? {},
       tasks: summary?.assigned ?? [],
       in_progress: summary?.in_progress ?? 0,
+      unassigned: summary?.unassigned ?? [],
+      unassigned_total: summary?.unassigned_total ?? 0,
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).

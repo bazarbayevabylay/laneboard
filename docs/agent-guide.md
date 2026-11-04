@@ -111,11 +111,13 @@ laneboard setup gemini --remove
 - Before your first file change: claim your task or create one. Comment each meaningful step. When done: set the final status and add a result comment.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
 - Always pass `--json`. Your name: `--as <name>` or `export LANEBOARD_AGENT=<name>` (MCP: `actor`); without them Claude Code sessions write under their default name (2.5).
-- `laneboard prime` prints the full rules, the statuses in order (the last one is final) and the declared fields.
+- `laneboard prime` prints the full rules, the statuses in order (the last one is final), the declared fields, your tasks and the free
+  ones (no assignee, not final) with the claim command.
 
 ### 2.2 A task from start to end
 
-Your name once for the session, then create, claim, work, finish, archive. Every write returns the task with its new `rev`.
+Your name once for the session, then create, claim, work, finish, archive. Every write replies short: `id`, the new `rev`, `status`,
+`assignee` (after `attach` also the `attachment`). The whole task: `laneboard get <ID>`, or `--full` on the write (MCP: `full: true`).
 
 ```sh
 export LANEBOARD_AGENT=dev-1
@@ -204,7 +206,8 @@ LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=bbbb2222 laneboar
 export LANEBOARD_AGENT=dev-1
 ```
 
-Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`. Codex, Cursor, Gemini CLI and OpenCode get no default name
+Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
+So when `prime` lists tasks under the default name, it adds that a subagent or parallel worker passes its own `--as` (the tasks may be the parent session's). Codex, Cursor, Gemini CLI and OpenCode get no default name
 (they expose no session id, and one shared name would merge parallel sessions again), so pass `--as` there.
 
 ## 3. Configure

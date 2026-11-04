@@ -54,10 +54,10 @@ describe('repeated options (M3)', () => {
 
   it('options that the spec makes repeatable still repeat', async () => {
     const { run } = await seeded();
-    const r = await run(['update', 'LB-1', '--add-link', 'pr=https://example.com/1', '--add-link', 'commit=abc123', '--add-label', 'ui', '--add-label', 'auth', '--as', 'a', '--json']);
+    const r = await run(['update', 'LB-1', '--add-link', 'pr=https://example.com/1', '--add-link', 'commit=abc123', '--add-label', 'ui', '--add-label', 'auth', '--as', 'a', '--json', '--full']);
     expect(r.code, r.stdout).toBe(0);
     expect(JSON.parse(r.stdout).data.links).toHaveLength(2);
-    const c = await run(['create', 'two labels', '--status', 'todo', '--label', 'a', '--label', 'b', '--field', 'priority=1', '--as', 'a', '--json']);
+    const c = await run(['create', 'two labels', '--status', 'todo', '--label', 'a', '--label', 'b', '--field', 'priority=1', '--as', 'a', '--json', '--full']);
     expect(c.code, c.stdout).toBe(0);
     expect(JSON.parse(c.stdout).data.labels).toEqual(['a', 'b']);
   });
@@ -106,7 +106,7 @@ describe('text that starts with "-" (M4)', () => {
     const { run } = await seeded();
     const r = await run(['comment', 'LB-1', '--as', 'a', '--', '--json']);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toBe('LB-1 commented (rev 2)\n');
+    expect(r.stdout).toBe('LB-1 commented (rev 2, todo, unassigned)\n');
     const got = JSON.parse((await run(['get', 'LB-1', '--json'])).stdout);
     expect(got.data.events.at(-1).data.text).toBe('--json');
   });
@@ -120,7 +120,7 @@ describe('fixes name a concrete format, not --help (m3, m4)', () => {
     [['update', 'LB-1', '--assignee', 'bad name', '--as', 'a'], 'laneboard update LB-1 --assignee <name like dev-1> --as a --json'],
     [['events', '--since', 'yesterday'], 'laneboard events --since <YYYY-MM-DDTHH:MM:SS.sssZ> --json'],
     [['list', '--limit', 'ten'], 'laneboard list --limit <whole number> --json'],
-    [['comment', 'LB-1'], 'laneboard comment <id> (<text> | --file P|-)'],
+    [['comment', 'LB-1'], 'laneboard comment <id> (<text> | --file P|-) [--full]'],
   ])('%j', async (argv, fix) => {
     const { run } = await seeded();
     const err = await errorOf(run, argv);

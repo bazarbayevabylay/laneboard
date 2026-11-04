@@ -81,6 +81,8 @@ laneboard update WEB-1 --status done --expected-rev 3 --as dev-1 --json
 laneboard list --scope all --json
 ```
 
+Ответ записи короткий: `id`, новый `rev`, `status`, `assignee` (после `attach` ещё `attachment`); без `--json` — одна строка.
+Задача целиком — `laneboard get WEB-1` или `--full` у записи (в MCP — `full: true`).
 Человеку удобнее без `--json`: `laneboard list`, `laneboard get WEB-1`, `laneboard events`, а доску целиком показывает `laneboard view` (ниже).
 
 ## Имена агентов
@@ -92,7 +94,7 @@ laneboard list --scope all --json
 | Имя по умолчанию в Claude Code | `claude-code@<git user.name или пользователь ОС>:<8 символов id сессии>`; основу пишет `setup`, id сессии Claude Code даёт сам (`CLAUDE_CODE_SESSION_ID`) |
 | Две параллельные сессии без имён | получают разные имена, поэтому `claim` второй сессии даёт `ALREADY_CLAIMED` |
 | Откуда имя у записи | в каждом событии задачи поле `actor_source`: `explicit` или `default`; `get` помечает такое имя `(default name)` |
-| Сабагенты одной сессии | делят её имя по умолчанию, поэтому передают своё `--as` |
+| Сабагенты одной сессии | делят её имя по умолчанию, поэтому передают своё `--as`; `prime` под таким именем с задачами напоминает об этом, а свободные задачи (без исполнителя) показывает с командой `claim` |
 | Codex, Cursor, Gemini, OpenCode | имени по умолчанию нет: id сессии они не дают, общее имя склеило бы параллельные сессии; нужно `--as` |
 
 ```sh
