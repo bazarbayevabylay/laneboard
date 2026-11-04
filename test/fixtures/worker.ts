@@ -1,10 +1,11 @@
-// Child process for multi-process tests: concurrent creates, archive/restore flipping, holding the lock, a paused writer.
+// Child process for multi-process tests: concurrent creates, archive/restore flipping, holding the lock, a paused writer, creates that
+// link a task of another board (ADR §30).
 import fs from 'node:fs';
 import path from 'node:path';
 import { archiveTasks, createTask, LaneboardError, restoreTask, transact } from '../../src/core/index.ts';
 import { acquireLock } from '../../src/core/lock.ts';
 
-const [mode, dir = '', arg = ''] = process.argv.slice(2);
+const [mode, dir = '', arg = '', count = '0', home = ''] = process.argv.slice(2);
 const ctx = { store: { dir }, actor: `worker-${process.pid}` };
 
 if (mode === 'create') {
@@ -34,6 +35,18 @@ if (mode === 'create') {
   } catch (err) {
     process.stdout.write(`${err instanceof LaneboardError ? err.code : String(err)}\n`);
   }
+} else if (mode === 'link') {
+  // `count` creates on the board at `dir`, each linking task `arg` of another board of the registry under `home`; prints each outcome.
+  const outcomes: string[] = [];
+  for (let i = 0; i < Number(count); i++) {
+    try {
+      await createTask({ ...ctx, home, lockWaitMs: 5000 }, { title: `link ${i}`, status: 'todo', links: [{ kind: 'task', ref: arg }] });
+      outcomes.push('ok');
+    } catch (err) {
+      outcomes.push(err instanceof LaneboardError ? err.code : String(err));
+    }
+  }
+  process.stdout.write(`${outcomes.join(' ')}\n`);
 } else {
   process.stderr.write(`unknown mode ${String(mode)}\n`);
   process.exitCode = 2;

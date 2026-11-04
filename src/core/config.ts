@@ -104,10 +104,10 @@ export function validateConfig(json: unknown, label: string): ConfigT {
   return config;
 }
 
-// errno codes of a store file that is not a readable file (a directory in its place, a path part that is a file, a disk error):
-// restoring it is the fix. Any other code (EMFILE, ENFILE, EAGAIN, ENOMEM...) is a passing state of the process or the machine: the file
-// is intact, so the fix is to run the command again, never a restore that would roll live tasks back (review S5a MINOR 2).
-const DAMAGED_CODES = new Set(['EISDIR', 'ENOTDIR', 'EIO']);
+// errno codes of a passing state of the process or the machine (out of file handles or memory, busy, interrupted, timed out): the
+// file is intact, so the fix is to run the command again, never a restore that would roll live tasks back (review S5a MINOR 2). Only
+// these: any other code (ELOOP, ENXIO, EISDIR, EIO, an unknown one) stays on a second run, so it is never "run it again" (review S5b MINOR 2).
+const TRANSIENT_CODES = new Set(['EMFILE', 'ENFILE', 'EAGAIN', 'EBUSY', 'EINTR', 'ENOMEM', 'ETIMEDOUT']);
 
 // Does this process have read, write and search permission on `dir`?
 function dirAccessible(dir: string): boolean {
@@ -122,7 +122,8 @@ function dirAccessible(dir: string): boolean {
 
 // A store file that exists but cannot be read: a store error with one runnable fix, not INTERNAL (review LB-19 MINOR 1, S5a MINOR 1-2).
 // No permission: the chmod that gives it back, on the store directory too when that is what was taken away (a file in a directory
-// without search permission cannot be chmod-ed). Damaged: restore it. Anything else: INTERNAL, run the same command again.
+// without search permission cannot be chmod-ed). A passing state (TRANSIENT_CODES): INTERNAL, run the same command again. Anything
+// else (a directory or a symlink loop in its place, a disk error, an unknown code): the path is not a readable file, restore it.
 export function unreadableStoreFile(file: string, label: string, err: unknown): LaneboardError {
   const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
   if (code === 'EACCES' || code === 'EPERM') {
@@ -130,11 +131,11 @@ export function unreadableStoreFile(file: string, label: string, err: unknown): 
     const fix = dirAccessible(dir) ? `chmod u+rw ${shellQuote(file)}` : `chmod u+rwx ${shellQuote(dir)} && chmod u+rw ${shellQuote(file)}`;
     return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix });
   }
-  if (DAMAGED_CODES.has(code)) {
-    return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix: `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor` });
+  if (TRANSIENT_CODES.has(code)) {
+    // The CLI fix is the caller's own command unchanged (an empty edit); MCP gets the text.
+    return new LaneboardError('INTERNAL', `${label} cannot be read right now (${code}): ${file}; the file is not damaged`, { fix: 'run the same command again', edit: {} });
   }
-  // The CLI fix is the caller's own command unchanged (an empty edit); MCP gets the text.
-  return new LaneboardError('INTERNAL', `${label} cannot be read right now (${code}): ${file}; the file is not damaged`, { fix: 'run the same command again', edit: {} });
+  return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix: `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor` });
 }
 
 // Read and validate config.json fresh from disk.

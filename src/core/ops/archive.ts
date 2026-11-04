@@ -14,7 +14,6 @@ import {
   IdInput,
   locate,
   normalizeId,
-  notFound,
   openChildrenWarning,
   parseInput,
   requireActor,
@@ -25,6 +24,7 @@ import {
   unique,
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
+import { missingTask } from './links.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -101,7 +101,7 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
         const ids = unique(p.ids.map((raw) => normalizeId(raw, s.config.prefix)));
         tasks = ids.map((id) => {
           const found = locate(s, id);
-          if (!found) throw notFound(id);
+          if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
           if (found.archived) {
             throw new LaneboardError('TASK_ARCHIVED', `task ${id} is already archived`, { fix: `nothing to do; to see it: laneboard get ${id}` });
           }
@@ -145,7 +145,7 @@ export async function restoreTask(ctx: OpContext, input: RestoreInputT): Promise
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
       const found = locate(s, id);
-      if (!found) throw notFound(id);
+      if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
       if (!found.archived) throw new LaneboardError('INVALID_VALUE', `task ${id} is not archived`, { input: { field: 'id', value: id }, fix: `nothing to do; to see it: laneboard get ${id}` });
       const task = found.task;
       touch(task, s.now, actor);
@@ -186,7 +186,7 @@ export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<O
         });
       }
       const found = locate(s, id);
-      if (!found) throw notFound(id);
+      if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
       checkExpectedRev(found.task, found.archived, p.expected_rev);
       found.file.tasks = found.file.tasks.filter((t) => t.id !== id);
       for (const child of [...s.active.tasks, ...s.archive.tasks].filter((t) => t.parent === id)) {

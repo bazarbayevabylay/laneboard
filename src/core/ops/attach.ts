@@ -11,6 +11,7 @@ import type { ConfigT } from '../schema.ts';
 import { transact } from '../transact.ts';
 import { actorSourceOf, addEvent, IdInput, normalizeId, parseInput, requireActiveTask, requireActor, toTaskView, touch, txOptions } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
+import { missingTask } from './links.ts';
 
 export const AttachInput = z.strictObject({
   id: IdInput,
@@ -141,7 +142,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
       { files: ['active', 'archive'] },
       (s) => {
         const id = normalizeId(p.id, s.config.prefix);
-        const task = requireActiveTask(s, id);
+        const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
         const index = task.attachments.findIndex((a) => a.name === name);
         if (index < 0) {
           throw new LaneboardError('ATTACHMENT_NOT_FOUND', `${id} has no attachment "${name}"`, {
@@ -185,7 +186,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
     { files: ['active', 'archive'] },
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
-      const task = requireActiveTask(s, id);
+      const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       if (task.attachments.some((a) => a.name === name)) {
         throw new LaneboardError('ATTACHMENT_EXISTS', `${id} already has an attachment "${name}"`, {
           fix: `pick another --name, or remove the old one first: laneboard attach ${id} --remove ${name}`,

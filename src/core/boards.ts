@@ -63,6 +63,19 @@ export function isLiveBoard(dir: string): boolean {
   return fs.existsSync(configPath(dir));
 }
 
+// What a registered path holds: a store ('live'), nothing any more ('missing': the path or a part of it is gone), or something that
+// cannot be checked ('unreadable': no permission on the folder, an I/O error). An unreadable board is read like a live one, so it is
+// reported with its problem and fix instead of as missing (existsSync says false on EACCES too; review S5b MINOR 1).
+export function storeState(dir: string): 'live' | 'missing' | 'unreadable' {
+  try {
+    fs.statSync(configPath(dir));
+    return 'live';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'unreadable';
+  }
+}
+
 // Change the registry under its own lock: `fn` gets the entries and returns the new list (or throws to change nothing).
 export async function updateRegistry<T>(
   home: string,
@@ -140,7 +153,7 @@ export interface BoardInfo {
 // One registry entry with what its store says now (lock-free reads, nothing written).
 function boardInfo(e: BoardEntry): BoardInfo {
   const base: BoardInfo = { path: e.path, name: e.name, prefix: e.prefix, description: e.description, missing: false, problem: null, counts: [], total: 0, updated_at: null };
-  if (!isLiveBoard(e.path)) return { ...base, missing: true };
+  if (storeState(e.path) === 'missing') return { ...base, missing: true };
   try {
     const config = loadConfig(e.path);
     const warnings: string[] = [];
@@ -191,7 +204,8 @@ export interface MissingBoard {
 }
 
 // The boards the all-boards reads walk, one after another (ADR §29): the current store first (also when it is not registered), then
-// every registry entry holding a store, each path once (canonicalPath); entries without a store come back as `missing`, not thrown.
+// every registry entry holding a store (or one that cannot be checked: its read reports why), each path once (canonicalPath); entries
+// without a store come back as `missing`, not thrown.
 export function liveBoards(home: string, current?: StoreRef): { boards: LiveBoard[]; missing: MissingBoard[] } {
   const seen = new Set<string>();
   const boards: LiveBoard[] = [];
@@ -206,10 +220,19 @@ export function liveBoards(home: string, current?: StoreRef): { boards: LiveBoar
     const key = canonicalPath(e.path);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (isLiveBoard(e.path)) boards.push({ store: { dir: e.path, found: 'board', readOnly: true }, current: false, prefix: e.prefix, name: e.name });
+    if (storeState(e.path) !== 'missing') boards.push({ store: { dir: e.path, found: 'board', readOnly: true }, current: false, prefix: e.prefix, name: e.name });
     else missing.push({ path: e.path, prefix: e.prefix, name: e.name, problem: 'missing (no store at this path)' });
   }
   return { boards, missing };
+}
+
+// The board of this machine whose prefix is `prefix` (its config.json, else as registered), other than `current`, and the prefixes
+// of all those boards (`allowed` of an error): task links and ids of another board find their board here (ADR §30).
+export function boardByPrefix(home: string, prefix: string, current?: StoreRef): { board: LiveBoard | undefined; prefixes: string[] } {
+  const others = liveBoards(home, current)
+    .boards.filter((b) => !b.current)
+    .map((b) => ({ ...b, prefix: storePrefix(b.store.dir) ?? b.prefix }));
+  return { board: others.find((b) => b.prefix === prefix), prefixes: [...new Set(others.map((b) => b.prefix))] };
 }
 
 // Does the value name a path (not a prefix or a name)?

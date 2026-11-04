@@ -28,6 +28,7 @@ import {
   unique,
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
+import { checkForeignTaskLinks } from './links.ts';
 
 export const CreateInput = z.strictObject({
   title: TitleInput,
@@ -66,6 +67,8 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
   labels.forEach(checkLabel);
   const links = unique(p.links ?? [], linkKey);
   const warnings: string[] = [];
+  // Links to other boards: checked there before this board's lock is taken (ADR §30).
+  const checked = await checkForeignTaskLinks(ctx, links, warnings);
   const data = await transact(
     ctx.store,
     { files: ['active', 'archive'] },
@@ -73,7 +76,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
       checkStatus(s.config, p.status);
       const fields = { ...(p.fields ?? {}), ...parseFieldArgs(s.config, p.field_args ?? []) };
       checkFields(s.config, fields);
-      checkTaskLinks(links, [s.active, s.archive], s.config.prefix);
+      checkTaskLinks(links, [s.active, s.archive], s.config.prefix, checked);
       const parent = p.parent === undefined ? undefined : checkParent(s, p.parent, s.config.prefix, undefined, 'links');
       if (s.active.next_id === undefined) throw new LaneboardError('STORE_INVALID', 'active.json next_id is missing');
       // next_id never decreases and never reuses an id, even after a hand edit (W9).

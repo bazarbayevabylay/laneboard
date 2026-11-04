@@ -37,6 +37,7 @@ import {
   workStartedAt,
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
+import { checkForeignTaskLinks, missingTask } from './links.ts';
 
 export const UpdateInput = z.strictObject({
   id: IdInput,
@@ -91,6 +92,8 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
   const addLinks = unique(p.add_links ?? [], linkKey);
   const removeKeys = new Set((p.remove_links ?? []).map(linkKey));
   const warnings: string[] = [];
+  // Links to other boards: checked there before this board's lock is taken (ADR §30).
+  const checked = await checkForeignTaskLinks(ctx, addLinks, warnings);
   const data = await transact(
     ctx.store,
     { files: ['active', 'archive'] },
@@ -102,9 +105,9 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const unset = unique(p.unset_fields ?? []);
       const clash = unset.find((k) => Object.hasOwn(setFields, k));
       if (clash) throw new LaneboardError('USAGE', `field "${clash}" is both set and unset`, { edit: { drop: [{ name: 'unset_fields', value: clash }] } });
-      const task = requireActiveTask(s, id);
+      const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       checkExpectedRev(task, false, p.expected_rev);
-      checkTaskLinks(addLinks, [s.active, s.archive], s.config.prefix);
+      checkTaskLinks(addLinks, [s.active, s.archive], s.config.prefix, checked);
       const parent = typeof p.parent === 'string' ? checkParent(s, p.parent, s.config.prefix, id, 'add_links') : p.parent;
       for (const key of unset) {
         if (!Object.hasOwn(s.config.fields, key) && !Object.hasOwn(task.fields, key)) {
@@ -226,7 +229,7 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
       if (p.status !== undefined) checkStatus(s.config, p.status);
-      const task = requireActiveTask(s, id);
+      const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       checkExpectedRev(task, false, p.expected_rev);
       const holder = task.assignee;
       const resumed = p.resume === true && heldByEarlierSession(task, ctx.sessionBase, actor);
@@ -273,7 +276,7 @@ export async function commentTask(ctx: OpContext, input: CommentInputT): Promise
     { files: ['active', 'archive'] },
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
-      const task = requireActiveTask(s, id);
+      const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       touch(task, s.now, actor);
       addEvent(task, s.config, s.now, actor, 'commented', { text: p.text }, actorSourceOf(ctx));
       return toTaskView(task, false);
@@ -398,7 +401,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
           input: finals.length === 1 ? { field: 'status', value: status, suggestion: finals[0] ?? '' } : { field: 'status', value: status },
         });
       }
-      const task = requireActiveTask(s, id);
+      const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>")`;
       // The owner first: somebody else's task is ALREADY_CLAIMED (review S3 NIT), unless this is an acceptance or the task is closed.
       const holder = task.assignee;

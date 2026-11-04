@@ -331,6 +331,12 @@ laneboard list --board BILL --json
 laneboard create "Not here" --status todo --board BILL --json  # exit 6
 ```
 
+A task that depends on a task of another board links it: `create --link task=WEB-12` or `update <ID> --add-link task=WEB-12`. The link is
+checked on board WEB (found by its prefix in the registry, so `HOME` must be set) before your write; `get` lists every task link in
+`linked_tasks` with its board, status and whether that status is final (`links: task=WEB-12 (WEB in_progress: <title>)`); nothing is
+blocked by it. An id of another board on your board's commands fails with `TASK_NOT_FOUND` naming that board: the fix is your command
+with `--board WEB` for a read (`get`, `events --task`, `list --parent`) and with `--dir <its store>` for a write.
+
 For orchestrators: `list --all-boards` reads every board of this machine (the current one first) and merges their tasks, newest update
 first; `--open` leaves out each board's own final status, `data.boards` names the boards read (one that cannot be read is skipped with a
 warning). It needs `HOME` (the registry lives there) and does not go with `--board`. `prime --all-boards` (also with `--hook`) adds a

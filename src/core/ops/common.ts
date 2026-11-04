@@ -377,10 +377,11 @@ export function linkKey(link: LinkT): string {
   return `${link.kind}=${link.ref}`;
 }
 
-// `kind=task` links must reference an existing id in either file.
-export function checkTaskLinks(links: readonly LinkT[], files: readonly StoreFileT[], prefix: string): void {
+// `kind=task` links must reference an existing id in either file; `checked`: links to another board's tasks, checked on that board
+// before the lock (checkForeignTaskLinks, ADR §30).
+export function checkTaskLinks(links: readonly LinkT[], files: readonly StoreFileT[], prefix: string, checked: ReadonlySet<string> = new Set()): void {
   for (const link of links) {
-    if (link.kind !== 'task') continue;
+    if (link.kind !== 'task' || checked.has(link.ref)) continue;
     normalizeId(link.ref, prefix, 'link');
     if (!files.some((f) => f.tasks.some((t) => t.id === link.ref))) {
       throw new LaneboardError('TASK_NOT_FOUND', `link task=${link.ref}: no such task`, { input: { field: 'link', value: link.ref } });
@@ -482,10 +483,11 @@ export function lastComment(task: TaskT): LastComment | null {
   return null;
 }
 
-// Find a task that may be changed: must exist and not be archived.
-export function requireActiveTask(files: { active: StoreFileT; archive: StoreFileT }, id: string): TaskT {
+// Find a task that may be changed: must exist and not be archived; `missing` builds the not-found error (missingTask names the board
+// of an id with another board's prefix, ADR §30).
+export function requireActiveTask(files: { active: StoreFileT; archive: StoreFileT }, id: string, missing: (id: string) => LaneboardError = notFound): TaskT {
   const found = locate(files, id);
-  if (!found) throw notFound(id);
+  if (!found) throw missing(id);
   if (found.archived) {
     throw new LaneboardError('TASK_ARCHIVED', `task ${id} is archived and read-only`, { fix: `laneboard restore ${id}` });
   }

@@ -1,6 +1,6 @@
 // Output for the CLI: JSON envelopes, human text and error blocks (the fixes themselves are built in argv.ts).
 import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject, WAITING_OWNER_LABEL } from '../core/index.ts';
-import type { DoctorResult, EventsResult, FieldInfo, LastComment, ListItem, ListResult, OverviewBoard, OverviewCard, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
+import type { DoctorResult, EventsResult, FieldInfo, LastComment, LinkedTask, LinkT, ListItem, ListResult, OverviewBoard, OverviewCard, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import { age, fit as fitChars, shortName } from './board-view.ts';
 import type { SetupResult } from '../setup/index.ts';
@@ -112,12 +112,22 @@ function parentText(t: TaskView & Partial<TaskDetail>): string {
   return t.parent_task === null ? `${t.parent ?? ''} (no such task)` : `${t.parent_task.id} ${t.parent_task.title} [${t.parent_task.status}${t.parent_task.archived ? ', archived' : ''}]`;
 }
 
-// Human view of one task (with `get`: its parent's title and status, and its children).
+// A link as people see it; with `get` a task link also says where its task stands, on this board or another one (ADR §30):
+// `task=WEB-12 (WEB in_progress: <title>)`, `(WEB done, archived: <title>)`, `(WEB: no such task)`, `(WEB: <why it cannot be read>)`.
+function linkText(l: LinkT, linked: readonly LinkedTask[] | undefined): string {
+  const plain = `${l.kind}=${l.ref}`;
+  const t = l.kind === 'task' ? linked?.find((x) => x.ref === l.ref) : undefined;
+  if (t === undefined) return plain;
+  if (!t.found) return `${plain} (${t.board}: ${t.problem ?? 'no such task'})`;
+  return `${plain} (${t.board} ${t.status ?? ''}${t.archived ? ', archived' : ''}: ${t.title ?? ''})`;
+}
+
+// Human view of one task (with `get`: its parent's title and status, its children, and where its linked tasks stand).
 export function taskText(t: TaskView & Partial<TaskDetail>): string {
   const lines = [`${t.id}  ${t.title}`];
   lines.push(`  status: ${t.status} · assignee: ${t.assignee ?? '-'} · rev: ${t.rev} · archived: ${t.archived ? `yes (${t.archived_at ?? ''})` : 'no'}`);
   if (t.labels.length) lines.push(`  labels: ${t.labels.join(', ')}`);
-  if (t.links.length) lines.push(`  links: ${t.links.map((l) => `${l.kind}=${l.ref}`).join(', ')}`);
+  if (t.links.length) lines.push(`  links: ${t.links.map((l) => linkText(l, t.linked_tasks)).join(', ')}`);
   if (t.parent !== null) lines.push(`  parent: ${parentText(t)}`);
   if (t.children?.length) lines.push(`  children: ${t.children.map(refText).join(', ')}`);
   const fields = Object.entries(t.fields);

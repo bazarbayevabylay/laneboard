@@ -100,13 +100,16 @@ describe('cards and list rows (ADR §28)', () => {
 
   it('parent and children {total, final} from active.json; the card keeps the contract key order for the web board', async () => {
     const s = await newStore();
-    await createTask(as(s, 'a'), { title: 'Parent', status: 'todo' });
-    await createTask(as(s, 'a'), { title: 'Child 1', status: 'todo', parent: 'LB-1' });
-    await createTask(as(s, 'a'), { title: 'Child 2', status: 'done', parent: 'LB-1' });
+    await createTask(as(s, 'a'), { title: 'Parent', status: 'todo', assignee: 'orc' });
+    await createTask(as(s, 'a'), { title: 'Child 1', status: 'todo', parent: 'LB-1', assignee: 'dev-1' });
+    await createTask(as(s, 'a'), { title: 'Child 2', status: 'done', parent: 'LB-1', assignee: 'dev-1' });
     const c = await cards(s);
     expect(c.get('LB-1')).toMatchObject({ parent: null, children: { total: 2, final: 1 } });
     expect(c.get('LB-2')).toMatchObject({ parent: 'LB-1', children: { total: 0, final: 0 } });
     expect(Object.keys(c.get('LB-1') ?? {})).toEqual(['id', 'title', 'assignee', 'labels', 'status_since', 'rev', 'last_comment', 'parent', 'children', 'updated_at', 'handed_in', 'in_work', 'stale']);
+    // Counted before the filters (review S5b MINOR 3): a filter that hides the children keeps the parent's count.
+    const filtered = (await viewBoard(as(s), { assignee: 'orc' })).data.columns.flatMap((col) => col.cards);
+    expect(filtered.map((card) => [card.id, card.children])).toEqual([['LB-1', { total: 2, final: 1 }]]);
   });
 
   it('waiting-owner is a plain label: the usual filters find it', async () => {

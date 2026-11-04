@@ -6,8 +6,10 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, notFound, parseInput, suggestClosest, toTaskView, unique } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, parseInput, suggestClosest, toTaskView, unique } from './common.ts';
 import type { FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
+import { foreignTask, linkedTasks, missingTask } from './links.ts';
+import type { LinkedTask } from './links.ts';
 import { handedIn } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
@@ -28,11 +30,12 @@ export interface TaskRef {
   archived: boolean;
 }
 
-// `get` result: the task, its parent (null: none, or the id names no task) and its children in id order, from both files.
-// Write replies and --full have neither (they map the task alone).
+// `get` result: the task, its parent (null: none, or the id names no task), its children in id order, from both files, and where each
+// task link stands, on this board or another one (ADR §30). Write replies and --full have none of them (they map the task alone).
 export interface TaskDetail extends TaskView {
   parent_task: TaskRef | null;
   children: TaskRef[];
+  linked_tasks: LinkedTask[];
 }
 
 // Explicit mapping of a task to a TaskRef.
@@ -40,20 +43,22 @@ function toTaskRef(task: TaskT, archived: boolean): TaskRef {
   return { id: task.id, title: task.title, status: task.status, assignee: task.assignee, archived };
 }
 
-// Get one task from active or archive (both files, read under the lock), with its parent and children.
+// Get one task from active or archive (both files, read under the lock), with its parent and children; the boards of its links to other
+// boards are read after this board's lock is released (one lock at a time).
 export async function getTask(ctx: OpContext, input: GetInputT): Promise<OpResult<TaskDetail>> {
   const p = parseInput(GetInput, input);
   const warnings: string[] = [];
   const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
   const id = normalizeId(p.id, view.config.prefix);
   const found = locate(view, id);
-  if (!found) throw notFound(id);
+  if (!found) throw missingTask(ctx, id, view.config.prefix, 'read');
   const parent = found.task.parent === undefined ? undefined : locate(view, found.task.parent);
   const children = [...view.active.tasks.map((t) => ({ t, archived: false })), ...view.archive.tasks.map((t) => ({ t, archived: true }))]
     .filter(({ t }) => t.parent === id)
     .sort((a, b) => idNumber(a.t.id) - idNumber(b.t.id))
     .map(({ t, archived }) => toTaskRef(t, archived));
-  const data: TaskDetail = { ...toTaskView(found.task, found.archived, p.events), parent_task: parent ? toTaskRef(parent.task, parent.archived) : null, children };
+  const linked = await linkedTasks(ctx, found.task, view);
+  const data: TaskDetail = { ...toTaskView(found.task, found.archived, p.events), parent_task: parent ? toTaskRef(parent.task, parent.archived) : null, children, linked_tasks: linked };
   return { data, warnings };
 }
 
@@ -167,8 +172,12 @@ function taskMatches(task: TaskT, f: TaskFilter): boolean {
   return true;
 }
 
+// The context of list: all_boards also runs where no board is found (a folder outside every project: the orchestrator's root, where
+// `prime --all-boards` points to it; review S5b MINOR 4), so its store is optional there.
+export type ListContext = Omit<OpContext, 'store'> & { store?: StoreRef };
+
 // List tasks with filters; the envelope always states scope, limit, offset and total.
-export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpResult<ListResult>> {
+export async function listTasks(ctx: ListContext, input: ListInputT): Promise<OpResult<ListResult>> {
   const p = parseInput(ListInput, input);
   if (p.assignee !== undefined && p.unassigned) throw new LaneboardError('USAGE', 'assignee and unassigned cannot be combined', { edit: { drop: [{ name: 'unassigned' }] } });
   if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
@@ -177,11 +186,16 @@ export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpRe
   const limit = p.limit ?? DEFAULT_LIST_LIMIT;
   const offset = p.offset ?? 0;
   if (p.all_boards) return listAllBoards(ctx, p, scope, limit, offset);
+  if (ctx.store === undefined) throw new LaneboardError('STORE_NOT_FOUND', 'list reads one board, and none was given; only all_boards lists without one');
+  const own: OpContext = { ...ctx, store: ctx.store };
   const warnings: string[] = [];
-  const { config, tasks } = await scopedTasks(ctx, scope, warnings);
+  const { config, tasks } = await scopedTasks(own, scope, warnings);
   (p.status ?? []).forEach((s) => checkStatus(config, s));
   checkLimit(config, limit);
   const parent = p.parent === undefined ? undefined : normalizeId(p.parent, config.prefix, 'parent');
+  // A parent is on its children's board: an id of another board names it, with the same list there (ADR §30; review S5b NIT).
+  const elsewhere = parent === undefined ? undefined : foreignTask(own, parent, config.prefix, 'read');
+  if (elsewhere) throw elsewhere;
   const finals = finalStatuses(config.statuses);
   const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals }));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
@@ -190,7 +204,7 @@ export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpRe
 }
 
 // all_boards needs the machine registry: HOME is where it lives (the CLI fix sets it before the command, ADR §23).
-function needHome(ctx: OpContext): string {
+function needHome(ctx: ListContext): string {
   if (ctx.home !== undefined) return ctx.home;
   throw new LaneboardError('USAGE', 'all_boards reads the board registry of this machine (<HOME>/.laneboard/boards.json), and HOME is not set', {
     fix: 'set HOME to your home directory and run the same command again',
@@ -211,9 +225,9 @@ function checkStatusOfBoards(statuses: readonly string[], status: string): void 
 
 // list with all_boards (ADR §29): each live board read on its own, one after another (never two locks at once), filtered by the same
 // taskMatches, merged newest update first and paged over the merge. A board that cannot be read is skipped with a warning (reads fail
-// open); the current board's config sets the limit check.
-async function listAllBoards(ctx: OpContext, p: ListInputT, scope: Scope, limit: number, offset: number): Promise<OpResult<ListResult>> {
-  if (ctx.store.found === 'board') {
+// open); the first board read sets the limit check. Without a current store (no board where it runs) only the registry's boards are read.
+async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, limit: number, offset: number): Promise<OpResult<ListResult>> {
+  if (ctx.store?.found === 'board') {
     throw new LaneboardError('USAGE', 'all_boards reads every board of this machine; --board opens one board: pass one of them', { edit: { drop: [{ name: 'board' }] } });
   }
   const home = needHome(ctx);
@@ -301,7 +315,7 @@ export async function listEvents(ctx: OpContext, input: EventsInputT): Promise<O
     config = view.config;
     const id = normalizeId(p.task, config.prefix, 'task');
     const found = locate(view, id);
-    if (!found) throw notFound(id);
+    if (!found) throw missingTask(ctx, id, config.prefix, 'read');
     tasks = [found.task];
   } else {
     const scoped = await scopedTasks(ctx, scope, warnings);

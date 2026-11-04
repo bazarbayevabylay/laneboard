@@ -258,11 +258,11 @@ describe('review S5a MINOR 2: an unreadable store file gets the fix for its caus
     expect((await cli(['list', '--json'], { cwd: s.root })).code).toBe(0);
   });
 
-  it('a passing error (EMFILE, no code): INTERNAL, the file is not damaged, the CLI fix is the same command; never a restore', () => {
-    for (const code of ['EMFILE', 'ENFILE', 'EAGAIN', 'ENOMEM', undefined]) {
+  it('a passing error (EMFILE, EBUSY...): INTERNAL, the file is not damaged, the CLI fix is the same command; never a restore', () => {
+    for (const code of ['EMFILE', 'ENFILE', 'EAGAIN', 'EBUSY', 'EINTR', 'ENOMEM', 'ETIMEDOUT']) {
       const err = unreadableStoreFile('/p/.laneboard/active.json', 'active.json', { code });
       expect(err.code).toBe('INTERNAL');
-      expect(err.message).toBe(`active.json cannot be read right now (${code ?? 'UNKNOWN'}): /p/.laneboard/active.json; the file is not damaged`);
+      expect(err.message).toBe(`active.json cannot be read right now (${code}): /p/.laneboard/active.json; the file is not damaged`);
       expect(err.fix).not.toMatch(/restore/);
       const argv = ['list', '--status', 'todo', '--json'];
       expect(cliFix(err, argv, list, { json: { type: 'boolean' }, ...list.options })).toBe('laneboard list --status todo --json');

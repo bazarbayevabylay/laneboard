@@ -1,12 +1,12 @@
 // Multi-process rules: W2 concurrent creates and the lost lock, W7 two-file reads vs a flipper, W8 SIGKILLed holder, K5 parent cycles,
-// parallel description appends (review S5a MINOR 3).
+// parallel description appends (review S5a MINOR 3), task links between two boards (ADR §30).
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createTask, getTask, listTasks } from '../../src/core/index.ts';
-import { as, CLI_SOURCE, cleanupTemp, newStore, readStore, rejectsWith, spawnNode, WORKER } from '../helpers.ts';
+import { createTask, getTask, listTasks, registerStore } from '../../src/core/index.ts';
+import { as, CLI_SOURCE, cleanupTemp, newStore, readStore, rejectsWith, spawnNode, tempDir, WORKER } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
@@ -156,5 +156,48 @@ describe('review S5a MINOR 3 (ADR §26): appends computed under the lock, never 
     expect(task.description.split('\n\n').sort()).toEqual(['start', ...Array.from({ length: 8 }, (_, i) => `para-${i}`)].sort());
     expect(task.title).toBe('Renamed');
     expect(task.rev).toBe(10);
+  });
+});
+
+describe("ADR §30: a link to another board is checked before this board's lock, never under it", () => {
+  // Two registered boards LB and WEB in a fresh HOME, each with task 1.
+  async function linkedPair() {
+    const home = tempDir();
+    const lb = await newStore();
+    const web = await newStore({ prefix: 'WEB' });
+    await registerStore(home, lb.dir);
+    await registerStore(home, web.dir);
+    await createTask(as(lb), { title: 'LB target', status: 'todo' });
+    await createTask(as(web), { title: 'WEB target', status: 'todo' });
+    return { home, lb, web };
+  }
+
+  it('while the other board is written (its lock held), this board stays free for other writers; the link lands after', async () => {
+    const { home, lb, web } = await linkedPair();
+    const holder = await holdLock(web.dir);
+    let linked: ReturnType<typeof createTask> | undefined;
+    try {
+      linked = createTask(as(lb, 'a', { home, lockWaitMs: 20_000 }), { title: 'waits for WEB', status: 'todo', links: [{ kind: 'task', ref: 'WEB-1' }] });
+      // Give the linking write time to reach the other board's lock.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      // A plain write to LB in the meantime: LB's lock is free, so it does not wait (1 s budget).
+      expect((await createTask(as(lb, 'b', { lockWaitMs: 1000 }), { title: 'not blocked', status: 'todo' })).data.id).toBe('LB-2');
+    } finally {
+      holder.kill('SIGTERM');
+      await new Promise((resolve) => holder.on('exit', resolve));
+    }
+    const done = await linked;
+    expect(done?.data).toMatchObject({ id: 'LB-3', links: [{ kind: 'task', ref: 'WEB-1' }] });
+  });
+
+  it('two boards link each other in a loop, 20 creates each, at the same time: no LOCK_TIMEOUT (locks never nest)', async () => {
+    const { home, lb, web } = await linkedPair();
+    const runs = await Promise.all([spawnNode([WORKER, 'link', lb.dir, 'WEB-1', '20', home]), spawnNode([WORKER, 'link', web.dir, 'LB-1', '20', home])]);
+    for (const r of runs) {
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout.trim().split(' ')).toEqual(Array.from({ length: 20 }, () => 'ok'));
+    }
+    expect(readStore(lb.dir, 'active').tasks).toHaveLength(21);
+    expect(readStore(web.dir, 'active').tasks).toHaveLength(21);
   });
 });
