@@ -3,8 +3,9 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { RULES_MAX_CHARS, SHORT_RULES_MAX_CHARS, shortRules } from '../src/cli/format.ts';
 import { runCli } from '../src/cli/run.ts';
-import { initStore, LaneboardError } from '../src/core/index.ts';
+import { agentRules, initStore, LaneboardError } from '../src/core/index.ts';
 import type { ErrorCode, OpContext, StoreRef } from '../src/core/index.ts';
 
 export const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -108,4 +109,23 @@ export async function rejectsWith(promise: Promise<unknown>, code: ErrorCode): P
     throw new Error(`expected ${code}, got ${err instanceof LaneboardError ? err.code : String(err)}`);
   }
   throw new Error(`expected ${code}, but the call succeeded`);
+}
+
+// The agent rules padded to the prime budgets (review S5a MINOR 1): the header line (it has no short form) grows by the room left under
+// SHORT_RULES_MAX_CHARS, rule 5 (it has one) by the rest up to RULES_MAX_CHARS. Prime tests built on it check prime at the ceiling of
+// the budgets, so a longer rule fails the budget test, not them.
+export function ceilingRules(): string {
+  const rules = agentRules();
+  const lines = rules.split('\n');
+  lines[0] = `${lines[0] ?? ''}${'x'.repeat(SHORT_RULES_MAX_CHARS - shortRules(rules).length)}`;
+  const five = lines.findIndex((l) => l.startsWith('5. '));
+  lines[five] = `${lines[five] ?? ''}${'y'.repeat(RULES_MAX_CHARS - lines.join('\n').length)}`;
+  const out = lines.join('\n');
+  if (out.length !== RULES_MAX_CHARS || shortRules(out).length !== SHORT_RULES_MAX_CHARS) throw new Error('ceilingRules: the budgets cannot both be reached');
+  return out;
+}
+
+// A store path of exactly `len` characters for primeText (the tmpdir differs between macOS and Linux; prime prints the path).
+export function fixedStorePath(len = 100): string {
+  return `/${'p'.repeat(len - '/'.length - '/.laneboard'.length)}/.laneboard`;
 }

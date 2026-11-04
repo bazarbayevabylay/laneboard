@@ -1,4 +1,5 @@
-// Multi-process rules: W2 concurrent creates and the lost lock, W7 two-file reads vs a flipper, W8 SIGKILLed holder, K5 parent cycles.
+// Multi-process rules: W2 concurrent creates and the lost lock, W7 two-file reads vs a flipper, W8 SIGKILLed holder, K5 parent cycles,
+// parallel description appends (review S5a MINOR 3).
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
@@ -131,5 +132,29 @@ describe('K5 (ADR §25): no parent cycle under parallel writers', () => {
       const parents = await Promise.all(['LB-1', 'LB-2'].map(async (id) => (await getTask(as(s), { id })).data.parent));
       expect(parents.filter((p) => p !== null)).toHaveLength(1);
     }
+  });
+});
+
+describe('review S5a MINOR 3 (ADR §26): appends computed under the lock, never from an earlier read', () => {
+  it('8 processes append and 1 renames while another process holds the lock, then all write: every paragraph, the new title, rev 10', async () => {
+    const s = await newStore();
+    await createTask(as(s), { title: 'Shared', status: 'todo', description: 'start' });
+    // Every writer starts while the lock is held, so a writer that built its text before taking the lock would read the same old text.
+    const holder = await holdLock(s.dir);
+    const writers: Array<Promise<Awaited<ReturnType<typeof spawnNode>>>> = [];
+    try {
+      for (let i = 0; i < 8; i++) writers.push(spawnNode([CLI_SOURCE, 'update', 'LB-1', '--append-description', `para-${i}`, '--as', `w-${i}`, '--json'], { cwd: s.root }));
+      writers.push(spawnNode([CLI_SOURCE, 'update', 'LB-1', '--title', 'Renamed', '--as', 'w-title', '--json'], { cwd: s.root }));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    } finally {
+      holder.kill('SIGTERM');
+      await new Promise((resolve) => holder.on('exit', resolve));
+    }
+    const runs = await Promise.all(writers);
+    for (const r of runs) expect(r, r.stdout + r.stderr).toMatchObject({ code: 0 });
+    const task = (await getTask(as(s), { id: 'LB-1' })).data;
+    expect(task.description.split('\n\n').sort()).toEqual(['start', ...Array.from({ length: 8 }, (_, i) => `para-${i}`)].sort());
+    expect(task.title).toBe('Renamed');
+    expect(task.rev).toBe(10);
   });
 });

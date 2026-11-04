@@ -331,6 +331,19 @@ laneboard list --board BILL --json
 laneboard create "Not here" --status todo --board BILL --json  # exit 6
 ```
 
+For orchestrators: `list --all-boards` reads every board of this machine (the current one first) and merges their tasks, newest update
+first; `--open` leaves out each board's own final status, `data.boards` names the boards read (one that cannot be read is skipped with a
+warning). It needs `HOME` (the registry lives there) and does not go with `--board`. `prime --all-boards` (also with `--hook`) adds a
+section of at most 3000 characters after the usual prime: per board its counts, then its tasks not in the final status, the urgent first
+(`waiting-owner`, `handed in`, `stale` = in work with no change for 4 hours, `in work`, `open`), each with its newest comment line.
+A task that waits for the owner's answer gets the label `waiting-owner` plus a comment with the question; the usual `--label` filters find it.
+
+```sh
+laneboard list --all-boards --open --json
+laneboard list --all-boards --label waiting-owner --json
+laneboard prime --all-boards --as orchestrator
+```
+
 ### 3.5 The board for people
 
 `laneboard view` draws the board in the terminal: one column per configured status, each card with id, title, assignee and time in status
@@ -338,6 +351,9 @@ laneboard create "Not here" --status todo --board BILL --json  # exit 6
 a narrow terminal gets a list grouped by status, and colors appear only on a terminal without `NO_COLOR`. Filters: `--assignee`, `--label`,
 `--text`. Active tasks are those not in the final status (footer `3 active tasks, 12 done`); the final column lists the newest 5 updates and
 `+7 more: laneboard list --status done` with the view's filters and `--dir`/`--board` (no auto-archive: `laneboard archive`). `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
+A card's second line adds `waiting-owner`, `^LB-3` for a subtask and `2/5` (children final/total) for a parent; under it the newest comment, `> <first line>` (finish's result: `= <first line>`).
+`list` prints the same line under a row. In `view --json` and `list --json` it is `last_comment {at, actor, text, result}`; cards also carry
+`parent`, `children {total, final}`, `updated_at`, `handed_in` (awaiting acceptance), `in_work` and `stale`.
 
 ```sh
 laneboard view --board BILL

@@ -11,7 +11,7 @@ import type { PrimeData } from '../../src/cli/format.ts';
 import type { ListItem } from '../../src/core/index.ts';
 import { runCli } from '../../src/cli/run.ts';
 import { callTool } from '../../src/mcp/tools.ts';
-import { as, cleanupTemp, cli, newStore, readStore, tempDir } from '../helpers.ts';
+import { as, ceilingRules, cleanupTemp, cli, newStore, readStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -102,11 +102,11 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
   });
 
   // Synthetic summaries: own tasks, earlier-session tasks, free tasks, at a store path of `len` characters.
-  const item = (id: number, title: string, assignee: string | null): ListItem => ({ id: `LB-${id}`, title, status: 'todo', assignee, labels: [], parent: null, updated_at: new Date().toISOString(), updated_by: 'a', rev: 1, archived: false });
+  const item = (id: number, title: string, assignee: string | null): ListItem => ({ id: `LB-${id}`, title, status: 'todo', assignee, labels: [], parent: null, last_comment: null, updated_at: new Date().toISOString(), updated_by: 'a', rev: 1, archived: false });
   // Default name bases: the length of the real one on the owner's machine, and the longest a name may get (64 with the session part).
   const BASES = ['claude-code@abylaybazarbayev', `claude-code@${'u'.repeat(43)}`];
   const summary = (len: number, own: number, resume: number, free: number, description: string, base: string): PrimeData => ({
-    rules: readRules(),
+    rules: ceilingRules(),
     agent: `${base}:bbbb2222`,
     agent_source: 'default',
     name: 'shop',

@@ -7,8 +7,8 @@ import type { CommandDef } from './types.ts';
 
 export const list: CommandDef = {
   name: 'list',
-  usage: 'list [--status S]... [--assignee A | --unassigned] [--label L]... [--text Q] [--parent ID] [--scope active|archive|all] [--limit N] [--offset N]',
-  summary: 'List tasks, newest update first (default: scope active, limit 20).',
+  usage: 'list [--status S]... [--open] [--assignee A | --unassigned] [--label L]... [--text Q] [--parent ID] [--all-boards] [--scope active|archive|all] [--limit N] [--offset N]',
+  summary: 'List tasks, newest update first (default: scope active, limit 20), each with its newest comment line. --open: not in the final status. --all-boards: every board of this machine (laneboard boards), merged.',
   options: {
     status: { type: 'string', multiple: true },
     assignee: { type: 'string' },
@@ -16,6 +16,8 @@ export const list: CommandDef = {
     label: { type: 'string', multiple: true },
     text: { type: 'string' },
     parent: { type: 'string' },
+    'all-boards': { type: 'boolean' },
+    open: { type: 'boolean' },
     scope: { type: 'string' },
     limit: { type: 'string' },
     offset: { type: 'string' },
@@ -30,6 +32,8 @@ export const list: CommandDef = {
       labels: many(c.values, 'label'),
       text: str(c.values, 'text'),
       parent: str(c.values, 'parent'),
+      all_boards: flag(c.values, 'all-boards') || undefined,
+      open: flag(c.values, 'open') || undefined,
       scope: str(c.values, 'scope') as Scope | undefined,
       limit: int(c.values, 'limit'),
       offset: int(c.values, 'offset'),

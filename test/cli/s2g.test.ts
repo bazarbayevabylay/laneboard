@@ -9,7 +9,7 @@ import type { PrimeData } from '../../src/cli/format.ts';
 import { agentRules, archiveTasks, claimTask, commentTask, createTask } from '../../src/core/index.ts';
 import type { ListItem, ViewResult } from '../../src/core/index.ts';
 import { callTool } from '../../src/mcp/tools.ts';
-import { as, cleanupTemp, cli, newStore } from '../helpers.ts';
+import { as, ceilingRules, cleanupTemp, cli, fixedStorePath, newStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
@@ -130,14 +130,26 @@ describe('prime for subagents (LB-8)', () => {
     expect(busy).not.toContain('first way that fits');
   });
 
+  // Rewritten in S5b (review S5a MINOR 1): the cap of 10 is checked apart from the rules and the store path (both have budget tests:
+  // a longer rule or a longer tmpdir leaves less room, and then fewer free tasks are listed); at the rules ceiling and through the CLI
+  // the footer still counts exactly the tasks not shown.
   it('more than 10 free tasks: the rest in a footer; none free: no section', async () => {
     const s = await newStore();
     expect((await cli(['prime', '--as', 'dev-1'], { cwd: s.root })).stdout).not.toContain('Free tasks');
     for (let i = 1; i <= 12; i++) await createTask(as(s, 'a'), { title: `Task ${i}`, status: 'todo' });
-    const r = await cli(['prime', '--as', 'dev-1'], { cwd: s.root });
-    expect(r.stdout.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l))).toHaveLength(10);
-    expect(r.stdout.endsWith('\n  LB-3  [todo]  rev 1  Task 3\n... 2 more: laneboard list --unassigned --status todo --status in_progress --status review --json\n')).toBe(true);
-    expect(JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).data).toMatchObject({ unassigned_total: 12 });
+    const footer = '... 2 more: laneboard list --unassigned --status todo --status in_progress --status review --json';
+    const data = JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).data as PrimeData;
+    expect(data).toMatchObject({ unassigned_total: 12 });
+    expect(data.unassigned).toHaveLength(10);
+    const capped = primeText({ ...data, rules: 'laneboard agent rules', store: fixedStorePath() });
+    expect(capped.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l))).toHaveLength(10);
+    expect(capped.endsWith(`\n  LB-3  [todo]  rev 1  Task 3\n${footer}`)).toBe(true);
+    const shownPlusMore = (text: string): number => {
+      const more = /\n\.\.\. (\d+) more: laneboard list --unassigned --status todo --status in_progress --status review --json\n?$/.exec(text);
+      return text.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length + Number(more?.[1] ?? 0);
+    };
+    expect(shownPlusMore(primeText({ ...data, rules: ceilingRules(), store: fixedStorePath() }))).toBe(12);
+    expect(shownPlusMore((await cli(['prime', '--as', 'dev-1'], { cwd: s.root })).stdout)).toBe(12);
   });
 
   it('--as and LANEBOARD_AGENT list the tasks of that name, not those of the session default name', async () => {
@@ -173,9 +185,9 @@ describe('prime for subagents (LB-8)', () => {
   // A prime summary with `own` tasks of the agent, `free` free tasks (10 listed at most) and `earlier` tasks of earlier sessions
   // (5 at most), titles `len` characters long.
   const data = (own: number, free: number, len: number, earlier = 0): PrimeData => {
-    const item = (i: number, assignee: string | null): ListItem => ({ id: `LB-${i}`, title: 'x'.repeat(len), status: 'todo', assignee, labels: [], parent: null, updated_at: '', updated_by: 'a', rev: 1, archived: false });
+    const item = (i: number, assignee: string | null): ListItem => ({ id: `LB-${i}`, title: 'x'.repeat(len), status: 'todo', assignee, labels: [], parent: null, last_comment: null, updated_at: '', updated_by: 'a', rev: 1, archived: false });
     return {
-      rules: agentRules(),
+      rules: ceilingRules(),
       agent: DEFAULT_NAME,
       agent_source: 'default',
       name: 'n'.repeat(60),
@@ -231,7 +243,7 @@ describe('prime for subagents (LB-8)', () => {
 describe('narrow view keeps the session part of a default name (review S2f)', () => {
   it('list mode: the holder gets the room after the id, so `:<session>` is not cut', () => {
     const now = new Date().toISOString();
-    const card = (id: string) => ({ id, title: 'A title that is long enough to be cut', assignee: 'claude-code@abylaybazarbayev:f92f65da', labels: [], status_since: now, rev: 1 });
+    const card = (id: string) => ({ id, title: 'A title that is long enough to be cut', assignee: 'claude-code@abylaybazarbayev:f92f65da', labels: [], status_since: now, rev: 1, last_comment: null, parent: null, children: { total: 0, final: 0 }, updated_at: now, handed_in: false, in_work: false, stale: false });
     const d: ViewResult = {
       name: 'b',
       description: null,

@@ -104,14 +104,37 @@ export function validateConfig(json: unknown, label: string): ConfigT {
   return config;
 }
 
-// A store file that exists but cannot be read (no permission, a directory, an I/O error): a store error with a fix, not INTERNAL
-// (review LB-19 MINOR 1). Without read and write permission the fix is the chmod that gives them back.
+// errno codes of a store file that is not a readable file (a directory in its place, a path part that is a file, a disk error):
+// restoring it is the fix. Any other code (EMFILE, ENFILE, EAGAIN, ENOMEM...) is a passing state of the process or the machine: the file
+// is intact, so the fix is to run the command again, never a restore that would roll live tasks back (review S5a MINOR 2).
+const DAMAGED_CODES = new Set(['EISDIR', 'ENOTDIR', 'EIO']);
+
+// Does this process have read, write and search permission on `dir`?
+function dirAccessible(dir: string): boolean {
+  try {
+    fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+    return true;
+  } catch {
+    // Any failure means the chmod of the directory is part of the fix.
+    return false;
+  }
+}
+
+// A store file that exists but cannot be read: a store error with one runnable fix, not INTERNAL (review LB-19 MINOR 1, S5a MINOR 1-2).
+// No permission: the chmod that gives it back, on the store directory too when that is what was taken away (a file in a directory
+// without search permission cannot be chmod-ed). Damaged: restore it. Anything else: INTERNAL, run the same command again.
 export function unreadableStoreFile(file: string, label: string, err: unknown): LaneboardError {
-  const code = (err as NodeJS.ErrnoException).code ?? 'EIO';
-  const permission = code === 'EACCES' || code === 'EPERM';
-  return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, {
-    fix: permission ? `chmod u+rw ${shellQuote(file)}` : `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor`,
-  });
+  const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+  if (code === 'EACCES' || code === 'EPERM') {
+    const dir = path.dirname(file);
+    const fix = dirAccessible(dir) ? `chmod u+rw ${shellQuote(file)}` : `chmod u+rwx ${shellQuote(dir)} && chmod u+rw ${shellQuote(file)}`;
+    return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix });
+  }
+  if (DAMAGED_CODES.has(code)) {
+    return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix: `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor` });
+  }
+  // The CLI fix is the caller's own command unchanged (an empty edit); MCP gets the text.
+  return new LaneboardError('INTERNAL', `${label} cannot be read right now (${code}): ${file}; the file is not damaged`, { fix: 'run the same command again', edit: {} });
 }
 
 // Read and validate config.json fresh from disk.

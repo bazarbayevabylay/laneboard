@@ -82,7 +82,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   listTasks: {
     name: 'task_list',
-    description: 'List task summaries, newest update first (default scope active, limit 20). Use task_get for a full task.',
+    description: 'List task summaries, newest update first (default scope active, limit 20), each with its newest comment line. all_boards: every board of this machine (registry under HOME), open: only tasks not in their final status. Use task_get for a full task.',
     params: ListInput,
     write: false,
   },
@@ -233,7 +233,7 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd, home: env.env.HOME || undefined });
     // Same order as the CLI: the actor parameter, LANEBOARD_AGENT, then the session's default name (recorded as such on events).
     const named = entry.def.write ? resolveActor(who, env.env) : {};
-    const ctx: OpContext = { store, ...named, cwd: env.cwd, lockWaitMs: env.lockWaitMs };
+    const ctx: OpContext = { store, ...named, cwd: env.cwd, home: env.env.HOME || undefined, lockWaitMs: env.lockWaitMs };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     const result = await op(ctx, input);
     // Same short reply as the CLI unless the whole task is asked for (the attachment added rides along, as in the CLI).

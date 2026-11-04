@@ -4,11 +4,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { configPath, loadConfig } from './config.ts';
+import { configPath, loadConfig, storePrefix } from './config.ts';
 import { LaneboardError } from './errors.ts';
 import { ensureDir, writeFileAtomic } from './fsio.ts';
 import { PREFIX_RE } from './schema.ts';
-import { readStoreFile, STORE_DIR_NAME } from './store.ts';
+import { canonicalPath, readStoreFile, STORE_DIR_NAME } from './store.ts';
 import type { StoreRef } from './store.ts';
 import { withLock } from './transact.ts';
 import type { LockOptions } from './lock.ts';
@@ -171,6 +171,45 @@ export interface BoardsResult {
 export async function listBoards(home: string): Promise<{ data: BoardsResult; warnings: string[] }> {
   const boards = readRegistry(home).map(boardInfo);
   return { data: { registry: registryFile(home), boards }, warnings: [] };
+}
+
+// A board of the machine the all-boards reads open (ADR §29): read-only like --board; `current`: the store the command runs on.
+export interface LiveBoard {
+  store: StoreRef;
+  current: boolean;
+  // As registered (the store's config.json is the truth once it is read): what a board that cannot be read is listed by.
+  prefix: string;
+  name: string | null;
+}
+
+// A registry entry whose path holds no store any more: listed with its problem, never read.
+export interface MissingBoard {
+  path: string;
+  prefix: string;
+  name: string | null;
+  problem: string;
+}
+
+// The boards the all-boards reads walk, one after another (ADR §29): the current store first (also when it is not registered), then
+// every registry entry holding a store, each path once (canonicalPath); entries without a store come back as `missing`, not thrown.
+export function liveBoards(home: string, current?: StoreRef): { boards: LiveBoard[]; missing: MissingBoard[] } {
+  const seen = new Set<string>();
+  const boards: LiveBoard[] = [];
+  const missing: MissingBoard[] = [];
+  const entries = readRegistry(home);
+  if (current !== undefined) {
+    seen.add(canonicalPath(current.dir));
+    const entry = entries.find((e) => canonicalPath(e.path) === canonicalPath(current.dir));
+    boards.push({ store: { dir: current.dir, found: 'board', readOnly: true }, current: true, prefix: storePrefix(current.dir) ?? entry?.prefix ?? '?', name: entry?.name ?? null });
+  }
+  for (const e of entries) {
+    const key = canonicalPath(e.path);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (isLiveBoard(e.path)) boards.push({ store: { dir: e.path, found: 'board', readOnly: true }, current: false, prefix: e.prefix, name: e.name });
+    else missing.push({ path: e.path, prefix: e.prefix, name: e.name, problem: 'missing (no store at this path)' });
+  }
+  return { boards, missing };
 }
 
 // Does the value name a path (not a prefix or a name)?

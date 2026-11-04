@@ -453,6 +453,35 @@ export function openChildrenWarning(active: StoreFileT, parent: string, finals: 
   return `${parent} has open children: ${open.map((t) => `${t.id} [${t.status}]`).join(', ')}; they keep parent ${parent}`;
 }
 
+// The one label name the core knows (ADR §28): the orchestrator marks a task that waits for the owner's answer with it; filters
+// are the usual --label ones, cards and the all-boards overview show it.
+export const WAITING_OWNER_LABEL = 'waiting-owner';
+
+// Longest first line of a comment a card or a list row shows (code points, cut with an ellipsis).
+export const COMMENT_LINE_MAX = 120;
+
+// The newest comment of a task as a card line: when, who, its first non-blank line, and whether it is finish's result (ADR §27).
+export interface LastComment {
+  at: string;
+  actor: string;
+  text: string;
+  result: boolean;
+}
+
+// The newest `commented` event as a card line (ADR §28): its first non-blank line, trimmed, cut to COMMENT_LINE_MAX; null without one.
+export function lastComment(task: TaskT): LastComment | null {
+  for (let i = task.events.length - 1; i >= 0; i--) {
+    const e = task.events[i];
+    if (e?.type !== 'commented') continue;
+    const raw = typeof e.data.text === 'string' ? e.data.text : '';
+    const line = (raw.split('\n').find((l) => l.trim() !== '') ?? '').trim();
+    const chars = [...line];
+    const text = chars.length <= COMMENT_LINE_MAX ? line : `${chars.slice(0, COMMENT_LINE_MAX - 1).join('')}…`;
+    return { at: e.at, actor: e.actor, text, result: e.data.result === true };
+  }
+  return null;
+}
+
 // Find a task that may be changed: must exist and not be archived.
 export function requireActiveTask(files: { active: StoreFileT; archive: StoreFileT }, id: string): TaskT {
   const found = locate(files, id);

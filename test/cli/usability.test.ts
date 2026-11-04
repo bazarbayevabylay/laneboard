@@ -90,7 +90,7 @@ describe('view', () => {
       name: 'b',
       description: null,
       prefix: 'B',
-      columns: [{ status: 'todo', known: true, cards: cards.map((c) => ({ id: c.id, title: 'T', assignee: c.assignee, labels: [], status_since: now, rev: 1 })), more: 0 }],
+      columns: [{ status: 'todo', known: true, cards: cards.map((c) => ({ id: c.id, title: 'T', assignee: c.assignee, labels: [], status_since: now, rev: 1, last_comment: null, parent: null, children: { total: 0, final: 0 }, updated_at: now, handed_in: false, in_work: false, stale: false })), more: 0 }],
       shown: cards.length,
       total: cards.length,
       final_status: 'done',

@@ -1,8 +1,8 @@
 // laneboard prime
 import path from 'node:path';
-import { agentRules, foreignStore, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
-import type { ActorSource, ForeignStore, OpContext, SummaryResult } from '../../core/index.ts';
-import { primeText } from '../format.ts';
+import { agentRules, boardsOverview, foreignStore, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
+import type { ActorSource, ForeignStore, OpContext, OverviewBoard, StoreRef, SummaryResult } from '../../core/index.ts';
+import { OVERVIEW_MAX_CHARS, overviewText, primeText } from '../format.ts';
 import type { PrimeData } from '../format.ts';
 import { flag } from './args.ts';
 import type { CommandContext, CommandDef, CommandOutput } from './types.ts';
@@ -75,15 +75,34 @@ function sessionStartSource(io: CommandContext['io']): string | undefined {
   return typeof source === 'string' ? source : undefined;
 }
 
+// prime --all-boards: every board of the machine (ADR §29), or one line saying why not; a read, so it never fails prime.
+async function allBoards(home: string | undefined, current: StoreRef | undefined, warnings: string[]): Promise<{ boards: OverviewBoard[]; line?: string }> {
+  if (home === undefined) {
+    warnings.push('all boards: HOME is not set, so the board registry cannot be read');
+    return { boards: [], line: 'all boards: HOME is not set' };
+  }
+  try {
+    const r = await boardsOverview(home, current);
+    warnings.push(...r.warnings);
+    return { boards: r.data };
+  } catch (raw) {
+    // A broken registry: the line names it with its fix; the usual prime above stays.
+    const err = toLaneboardError(raw);
+    warnings.push(`all boards: ${err.message}`);
+    return { boards: [], line: `all boards: ${err.code}: ${err.message}; fix: ${err.fix}` };
+  }
+}
+
 export const prime: CommandDef = {
   name: 'prime',
-  usage: 'prime [--hook | --edit-hook]',
+  usage: 'prime [--hook | --edit-hook] [--all-boards]',
   summary:
     'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the ways to start one: ' +
       'claim a task from the request, resume your own task from before /clear (claim --resume), take a free task, create one. ' +
     '--hook: plain text for a SessionStart hook, never fails; the resume way only after /clear (source "clear" in the hook input on stdin). ' +
-    '--edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing.',
-  options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' } },
+    '--edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing. ' +
+    '--all-boards (orchestrators): then every board of this machine with its tasks not in the final status, waiting on the owner, handed in and stale first.',
+  options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' }, 'all-boards': { type: 'boolean' } },
   args: { min: 0, max: 0 },
   async run(c) {
     const hook = flag(c.values, 'hook');
@@ -93,6 +112,8 @@ export const prime: CommandDef = {
       throw new LaneboardError('USAGE', `--${hook ? 'hook' : 'edit-hook'} prints output for a hook; it cannot be combined with --json`, { edit: { drop: [{ name: 'hook' }, { name: 'edit-hook' }] } });
     }
     if (hook && edit) throw new LaneboardError('USAGE', '--hook and --edit-hook are two different hooks; pass one of them', { edit: { drop: [{ name: 'edit-hook' }] } });
+    const everyBoard = flag(c.values, 'all-boards');
+    if (edit && everyBoard) throw new LaneboardError('USAGE', '--edit-hook prints a reminder after an edit; --all-boards goes with prime or prime --hook', { edit: { drop: [{ name: 'all-boards' }] } });
     // The same name a write would use: --as, LANEBOARD_AGENT, else the session's default name.
     const named = resolveActor(typeof c.values.as === 'string' ? c.values.as : undefined, c.io.env);
     const agent = named.actor;
@@ -145,7 +166,12 @@ export const prime: CommandDef = {
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).
-    const human = hook && noStore ? noStore : primeText(data, ctx?.store.found === 'dir' ? ctx.store.dir : undefined);
-    return { data, warnings, human, storeWarningInText: true };
+    const own = hook && noStore ? noStore : primeText(data, ctx?.store.found === 'dir' ? ctx.store.dir : undefined);
+    if (!everyBoard) return { data, warnings, human: own, storeWarningInText: true };
+    const overview = await allBoards(c.io.env.HOME || undefined, summary && ctx ? ctx.store : undefined, warnings);
+    data.boards = overview.boards;
+    // Its own budget after a blank line: together at most PRIME_MAX_CHARS + OVERVIEW_MAX_CHARS.
+    const section = overview.line ?? overviewText(overview.boards, new Date(), OVERVIEW_MAX_CHARS - 2);
+    return { data, warnings, human: `${own}\n\n${section}`, storeWarningInText: true };
   },
 };

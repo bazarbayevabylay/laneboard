@@ -146,8 +146,9 @@ describe('review S3b MAJOR: the short forms of the rules live in agent-rules.md 
 
   it('one short form per rule number, never the whole rules, and not in the text of the skill, MCP or prime', () => {
     const forms = shortRuleForms();
-    // S4: rule 7 got a short form (its acceptance sentence did not fit the prime grid).
-    expect(forms.map((f) => f.n)).toEqual(['3', '4', '5', '6', '7', '8', '9', '11', '12', '14']);
+    // S4: rule 7 got a short form (its acceptance sentence did not fit the prime grid). S5b: rule 1 too (room for the rules budget,
+    // review S5a MINOR 1).
+    expect(forms.map((f) => f.n)).toEqual(['1', '3', '4', '5', '6', '7', '8', '9', '11', '12', '14']);
     expect(agentRules()).not.toContain('short forms');
     expect(agentRules().split('\n').at(-1)?.startsWith('14. ')).toBe(true);
   });

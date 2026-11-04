@@ -7,7 +7,7 @@ import { agentRules, createTask, VIEW_FINAL_MAX } from '../../src/core/index.ts'
 import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import type { ListItem } from '../../src/core/index.ts';
-import { as, cleanupTemp, cli, newStore, tempDir } from '../helpers.ts';
+import { as, ceilingRules, cleanupTemp, cli, newStore, tempDir } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
@@ -111,10 +111,10 @@ describe('review S4 MINOR: the "Your active tasks" footer of prime counts what i
 });
 
 // Summary for primeText (as the s3b grid), with the statuses as a parameter.
-const item = (id: number, title: string, assignee: string | null): ListItem => ({ id: `LB-${id}`, title, status: 'todo', assignee, labels: [], parent: null, updated_at: new Date().toISOString(), updated_by: 'a', rev: 1, archived: false });
+const item = (id: number, title: string, assignee: string | null): ListItem => ({ id: `LB-${id}`, title, status: 'todo', assignee, labels: [], parent: null, last_comment: null, updated_at: new Date().toISOString(), updated_by: 'a', rev: 1, archived: false });
 function primeData(len: number, own: number, resume: number, free: number, description: string, base: string, statuses: string[]): PrimeData {
   return {
-    rules: agentRules(),
+    rules: ceilingRules(),
     agent: `${base}:bbbb2222`,
     agent_source: 'default',
     name: 'shop',

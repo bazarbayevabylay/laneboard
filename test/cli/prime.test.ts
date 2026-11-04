@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, claimTask, createTask, shortRuleForms } from '../../src/core/index.ts';
 import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
-import { as, cleanupTemp, cli, newStore, tempDir, writeRaw } from '../helpers.ts';
+import { as, ceilingRules, cleanupTemp, cli, newStore, tempDir, writeRaw } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
@@ -203,7 +203,7 @@ describe('prime', () => {
 
   // A summary with `n` tasks whose titles are `len` characters long.
   const data = (n: number, len: number, statuses = ['todo', 'in_progress', 'review', 'done']): PrimeData => ({
-    rules: agentRules(),
+    rules: ceilingRules(),
     agent: 'dev-1',
     agent_source: 'explicit',
     // The longest name and description a board may have, so the cap holds for every board.
@@ -218,7 +218,7 @@ describe('prime', () => {
     final_status: statuses.at(-1) ?? null,
     open_statuses: statuses.slice(0, -1),
     fields: { priority: { type: 'number', description: '0 = highest', example: 'priority=1' } },
-    tasks: Array.from({ length: n }, (_, i) => ({ id: `LB-${i + 1}`, title: 'x'.repeat(len), status: 'todo', assignee: 'dev-1', labels: [], parent: null, updated_at: '', updated_by: 'a', rev: 1, archived: false })),
+    tasks: Array.from({ length: n }, (_, i) => ({ id: `LB-${i + 1}`, title: 'x'.repeat(len), status: 'todo', assignee: 'dev-1', labels: [], parent: null, last_comment: null, updated_at: '', updated_by: 'a', rev: 1, archived: false })),
     in_progress: n,
     unassigned: [],
     unassigned_total: 0,
@@ -264,7 +264,7 @@ describe('prime', () => {
     const forms = [data(30, 60, statuses), { ...data(0, 1, statuses), agent: null }, data(0, 1, statuses)];
     // Rewritten in S3b: at the limit the rules with a short form are short; every rule stays, the others word for word, and the create
     // command stays whole. S3c: the short forms come from agent-rules.md and are checked word for word too.
-    const ruleLines = agentRules().split('\n');
+    const ruleLines = ceilingRules().split('\n');
     const short = new Map(shortRuleForms().map((r) => [r.n, `${r.n}. ${r.text}`]));
     for (const d of forms) {
       const text = primeText(d);

@@ -1,6 +1,6 @@
 // Human views of boards for people in a terminal: the kanban of `laneboard view` and the table of `laneboard boards`.
 // Plain text by default; ANSI styles only on a terminal without NO_COLOR (no-color.org).
-import { shellQuote } from '../core/index.ts';
+import { shellQuote, WAITING_OWNER_LABEL } from '../core/index.ts';
 import type { BoardInfo, BoardsResult, ViewCard, ViewResult } from '../core/index.ts';
 
 // Narrowest column that still shows an id and a few words; below it the board becomes a list grouped by status.
@@ -109,15 +109,36 @@ export function shortName(name: string, room: number): string {
   return `${fit(m[1] ?? '', Math.max(1, room - width(session)))}${session}`;
 }
 
-// Who has the card and for how long it has been in this status, in `room` columns; the time comes first, so it is never cut.
-function holder(card: ViewCard, now: Date, room: number): string {
-  const time = `${age(card.status_since, now)} · `;
-  return `${time}${card.assignee === null ? 'unassigned' : shortName(card.assignee, room - width(time))}`;
+// Marks after the holder (ADR §28): waiting on the owner, the parent of a child (`^LB-3`), children final/total of a parent (`2/5`).
+function marks(card: ViewCard): string {
+  const parts = [
+    ...(card.labels.includes(WAITING_OWNER_LABEL) ? [WAITING_OWNER_LABEL] : []),
+    ...(card.parent !== null ? [`^${card.parent}`] : []),
+    ...(card.children.total > 0 ? [`${card.children.final}/${card.children.total}`] : []),
+  ];
+  return parts.map((part) => ` · ${part}`).join('');
 }
 
-// Lines of one card: id and title, then the time in status and who has it.
+// Columns a name keeps next to the marks in a narrow column (the line is then cut at its end, in the marks).
+const NAME_MIN = 8;
+
+// Who has the card and for how long it has been in this status, then its marks, in `room` columns; a long name gives way to the
+// marks down to NAME_MIN columns, and the time is never cut.
+function holder(card: ViewCard, now: Date, room: number): string {
+  const time = `${age(card.status_since, now)} · `;
+  const tail = marks(card);
+  return `${time}${card.assignee === null ? 'unassigned' : shortName(card.assignee, Math.max(NAME_MIN, room - width(time) - width(tail)))}${tail}`;
+}
+
+// The newest comment under a card, `> <line>` (finish's result: `= <line>`), cut to `room`; none without comments.
+function commentPieces(card: ViewCard, indent: string, room: number): Piece[][] {
+  if (card.last_comment === null) return [];
+  return [[{ text: fit(`${indent}${card.last_comment.result ? '=' : '>'} ${card.last_comment.text}`, room), style: 'dim' }]];
+}
+
+// Lines of one card: id and title, then the time in status, who has it and the marks, then the newest comment.
 function cardLines(card: ViewCard, room: number, now: Date): Piece[][] {
-  return [...titleLines(card, room), [{ text: fit(`  ${holder(card, now, room - 2)}`, room), style: 'dim' }]];
+  return [...titleLines(card, room), [{ text: fit(`  ${holder(card, now, room - 2)}`, room), style: 'dim' }], ...commentPieces(card, '  ', room)];
 }
 
 // Column title: status (count, the cards not listed too); a status no longer in config is marked with "?".
@@ -171,6 +192,7 @@ export function renderBoard(d: ViewResult, o: RenderOptions): string {
         // so a default name is shortened by its user part and its session part stays visible.
         const room = o.width - width(`  ${card.id}  `);
         lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now, room)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
+        lines.push(...commentPieces(card, '    ', o.width).map((pieces) => paint(pieces, o.color)));
       }
       // Wrapped at spaces like in a column: with filters and --dir the command may be wider than the terminal, and a cut one cannot be run.
       if (c.more > 0) lines.push(...wrapWords(moreText(c, o), o.width - 2, false).map((text) => paint([{ text: `  ${text}`, style: 'dim' }], o.color)));

@@ -1,8 +1,8 @@
 // Output for the CLI: JSON envelopes, human text and error blocks (the fixes themselves are built in argv.ts).
-import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject } from '../core/index.ts';
-import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
+import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject, WAITING_OWNER_LABEL } from '../core/index.ts';
+import type { DoctorResult, EventsResult, FieldInfo, LastComment, ListItem, ListResult, OverviewBoard, OverviewCard, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
-import { age } from './board-view.ts';
+import { age, fit as fitChars, shortName } from './board-view.ts';
 import type { SetupResult } from '../setup/index.ts';
 
 export { shellQuote };
@@ -137,17 +137,28 @@ export function taskText(t: TaskView & Partial<TaskDetail>): string {
   return lines.join('\n');
 }
 
-// Human view of a task list with the paging footer.
+// The newest comment of a task as people see it under a row or a card: `> <line>`, finish's result as `= <line>` (ADR §28).
+export function commentLine(c: LastComment): string {
+  return `${c.result ? '=' : '>'} ${c.text}`;
+}
+
+// Human view of a task list with the paging footer; a row with a comment gets its newest comment line under it.
 export function listText(r: ListResult): string {
   const lines: string[] = [];
   if (r.items.length) {
     const rows = [['ID', 'STATUS', 'ASSIGNEE', 'REV', 'UPDATED', 'TITLE']];
     for (const i of r.items) rows.push([i.id, i.status, i.assignee ?? '-', String(i.rev), i.updated_at, i.archived ? `${i.title} [archived]` : i.title]);
-    lines.push(...table(rows));
+    const [head, ...body] = table(rows);
+    lines.push(head ?? '');
+    r.items.forEach((item, n) => {
+      lines.push(body[n] ?? '');
+      if (item.last_comment) lines.push(`    ${commentLine(item.last_comment)}`);
+    });
   }
   const shown = r.items.length;
   const more = r.offset + shown < r.total ? `; next: --offset ${r.offset + shown}` : '';
-  lines.push(`${shown} of ${r.total} shown (scope ${r.scope})${more}`);
+  const boards = r.boards ? `, boards: ${r.boards.map((b) => (b.problem === null ? b.prefix : `${b.prefix} skipped`)).join(', ')}` : '';
+  lines.push(`${shown} of ${r.total} shown (scope ${r.scope}${boards})${more}`);
   return lines.join('\n');
 }
 
@@ -173,6 +184,12 @@ export function doctorText(r: DoctorResult): string {
 
 // `prime` output is capped so a SessionStart hook stays small (ADR-0001 section 9).
 export const PRIME_MAX_CHARS = 4000;
+
+// Budgets of the rules inside prime (ADR-0001 §29, review S5a MINOR 1): the full rules (agent-rules.md above the short forms) and the
+// rules with their short forms in place (what prime prints at its limit). The prime grids run with rules padded to these ceilings, so a
+// longer rule fails the budget test in test/cli/s5b.test.ts, not the prime tests: shorten the rule, or raise the budget in the ADR.
+export const RULES_MAX_CHARS = 3020;
+export const SHORT_RULES_MAX_CHARS = 2200;
 
 export interface PrimeData {
   rules: string;
@@ -205,6 +222,8 @@ export interface PrimeData {
   // The session default name without its session part (null for other names); its other sessions' unfinished tasks are `resumable`.
   session_base: string | null;
   resumable: ListItem[];
+  // Only with --all-boards: every board of the machine (ADR §29), the current one first.
+  boards?: OverviewBoard[];
 }
 
 // Always under the session default name: the parent session, its subagents and parallel workers share it (LB-8, review S2g),
@@ -317,7 +336,7 @@ const SQUEEZES: readonly Squeeze[] = [
 const SHORT_TITLE = 60;
 
 // The rules with their short forms (agent-rules.md, below the rules) in place of the full lines.
-function shortRules(rules: string): string {
+export function shortRules(rules: string): string {
   const short = new Map(shortRuleForms().map((r) => [r.n, `${r.n}. ${r.text}`]));
   return rules
     .split('\n')
@@ -422,6 +441,105 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeKeep, 1, resumeLine);
   if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0, PRIME_MIN_FREE, line);
   return { text, fits: required + board.length <= PRIME_MAX_CHARS };
+}
+
+// The all-boards section of prime is capped on its own (ADR §29): prime ≤ PRIME_MAX_CHARS, then a blank line and this section, together
+// at most PRIME_MAX_CHARS + OVERVIEW_MAX_CHARS (7000, under the 10 000 characters a SessionStart hook may add).
+export const OVERVIEW_MAX_CHARS = 3000;
+
+// Tags of an overview line, most urgent first: the order of the lines and the first one that fits is a card's tag.
+const OVERVIEW_TAGS = ['waiting-owner', 'handed in', 'stale', 'in work', 'open'] as const;
+type OverviewTag = (typeof OVERVIEW_TAGS)[number];
+
+// The tag of a card: the most urgent mark the core set on it.
+function overviewTag(c: OverviewCard): OverviewTag {
+  if (c.labels.includes(WAITING_OWNER_LABEL)) return 'waiting-owner';
+  if (c.handed_in) return 'handed in';
+  if (c.stale) return 'stale';
+  if (c.in_work) return 'in work';
+  return 'open';
+}
+
+// What the overview gives up, step by step, to stay under its budget (ADR §29); board headers are never dropped.
+interface OverviewSqueeze {
+  openComments: boolean;
+  openLines: boolean;
+  comments: boolean;
+  titleMax: number;
+  idsOnly: boolean;
+}
+const OVERVIEW_SQUEEZES: readonly OverviewSqueeze[] = [
+  { openComments: true, openLines: true, comments: true, titleMax: 50, idsOnly: false },
+  { openComments: false, openLines: true, comments: true, titleMax: 50, idsOnly: false },
+  { openComments: false, openLines: false, comments: true, titleMax: 50, idsOnly: false },
+  { openComments: false, openLines: false, comments: false, titleMax: 50, idsOnly: false },
+  { openComments: false, openLines: false, comments: false, titleMax: 30, idsOnly: false },
+  { openComments: false, openLines: false, comments: false, titleMax: 30, idsOnly: true },
+];
+
+// Longest comment and holder an overview line shows.
+const OVERVIEW_COMMENT_MAX = 60;
+const OVERVIEW_HOLDER_MAX = 24;
+
+// A board's header: prefix, name, whether it is the current board, then its active tasks per status and the final count (or why it
+// cannot be read).
+function overviewHeader(b: OverviewBoard): string {
+  const name = `${b.prefix}${b.name ? ` ${b.name}` : ''}${b.current ? ' (this board)' : ''}`;
+  if (b.problem !== null) return `${name}: ${b.problem.startsWith('missing') ? b.problem : `unreadable: ${b.problem}`}`;
+  const active = b.counts.filter((c) => c.status !== b.final_status).map((c) => `${c.status} ${c.count}`);
+  return `${name}: ${active.join(', ') || 'no statuses'}; ${b.final_status} ${b.final_total}`;
+}
+
+// One task line: tag, id, status, the parent when it is not the line above, holder, age of the last change, title, newest comment.
+function overviewLine(c: OverviewCard, tag: OverviewTag, depth: number, sq: OverviewSqueeze, now: Date): string {
+  const indent = `  ${'  '.repeat(depth)}`;
+  const parent = depth === 0 && c.parent !== null ? ` ^${c.parent}` : '';
+  const who = c.assignee === null ? '-' : shortName(c.assignee, OVERVIEW_HOLDER_MAX);
+  const showComment = c.last_comment !== null && sq.comments && (tag !== 'open' || sq.openComments);
+  const comment = showComment && c.last_comment ? ` | ${c.last_comment.result ? '= ' : ''}${fitChars(c.last_comment.text, OVERVIEW_COMMENT_MAX)}` : '';
+  return `${indent}${tag} ${c.id} [${c.status}]${parent} ${who} ${age(c.updated_at, now)}: ${fitChars(c.title, sq.titleMax)}${comment}`;
+}
+
+// Lines of one board: the header, then its cards by tag, a child right under its parent (two more spaces).
+function overviewBoardLines(b: OverviewBoard, sq: OverviewSqueeze, now: Date): string[] {
+  const head = overviewHeader(b);
+  if (b.problem !== null) return [head];
+  const rank = (t: OverviewTag): number => OVERVIEW_TAGS.indexOf(t);
+  const tagged = b.cards.map((c) => ({ c, tag: overviewTag(c) })).sort((x, y) => rank(x.tag) - rank(y.tag));
+  if (sq.idsOnly) {
+    const groups = (['waiting-owner', 'handed in', 'stale'] as const)
+      .map((tag) => ({ tag, ids: tagged.filter((t) => t.tag === tag).map((t) => t.c.id) }))
+      .filter((g) => g.ids.length > 0)
+      .map((g) => `${g.tag}: ${g.ids.join(', ')}`);
+    return groups.length ? [head, `  ${groups.join(' · ')}`] : [head];
+  }
+  const shown = sq.openLines ? tagged : tagged.filter((t) => t.tag !== 'open');
+  const ids = new Set(shown.map((t) => t.c.id));
+  const out = [head];
+  const done = new Set<string>();
+  // Depth-first from the top cards (no parent among the shown ones); `done` also stops a broken parent chain from looping.
+  const emit = (t: (typeof shown)[number], depth: number): void => {
+    if (done.has(t.c.id)) return;
+    done.add(t.c.id);
+    out.push(overviewLine(t.c, t.tag, depth, sq, now));
+    for (const child of shown.filter((x) => x.c.parent === t.c.id)) emit(child, depth + 1);
+  };
+  for (const t of shown) if (t.c.parent === null || !ids.has(t.c.parent)) emit(t, 0);
+  for (const t of shown) emit(t, 0);
+  const left = tagged.length - shown.length;
+  if (left > 0) out.push(`  ... ${left} more: laneboard view --board ${b.prefix}`);
+  return out;
+}
+
+// The all-boards section of prime: every board's header and its tasks not in the final status, the urgent ones first, at most
+// `budget` characters (OVERVIEW_SQUEEZES says what gives way; the last step cuts the tail).
+export function overviewText(boards: readonly OverviewBoard[], now = new Date(), budget = OVERVIEW_MAX_CHARS): string {
+  let text = '';
+  for (const sq of OVERVIEW_SQUEEZES) {
+    text = ['Boards (not final; all: laneboard list --all-boards --open --json):', ...boards.flatMap((b) => overviewBoardLines(b, sq, now))].join('\n');
+    if (text.length <= budget) return text;
+  }
+  return fit(text, budget);
 }
 
 // Human setup report: one line per file, diffs of replaced values, notes.

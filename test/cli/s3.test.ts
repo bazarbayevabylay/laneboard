@@ -309,10 +309,14 @@ describe('review S2g: the free-task footer command shows exactly the tasks it co
     await createTask(as(s, 'a'), { title: 'Done free', status: 'done' });
     const out = (await cli(['prime', '--as', 'dev-1'], { cwd: s.root })).stdout;
     const footer = /\n\.\.\. (\d+) more: laneboard (list .*)\n$/.exec(out);
-    expect(footer?.[1]).toBe('2');
+    // Rewritten in S5b (review S5a MINOR 1): at most 10 are shown, fewer when the rules or the tmpdir path take the room; the footer
+    // counts the rest either way (the cap of 10 itself: s2g).
+    const shown = out.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;
+    expect(shown).toBeLessThanOrEqual(10);
+    expect(shown + Number(footer?.[1])).toBe(12);
     const argv = (footer?.[2] ?? '').split(' ');
     const listed = JSON.parse((await cli(argv, { cwd: s.root })).stdout).data;
-    // The footer counts what prime did not show: 10 shown + 2 more = what the command lists.
+    // The footer counts what prime did not show: shown + more = what the command lists.
     expect(listed.total).toBe(12);
     expect(listed.items.map((t: { title: string }) => t.title)).not.toContain('Done free');
   });

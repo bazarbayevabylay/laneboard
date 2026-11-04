@@ -17,6 +17,7 @@ laneboard agent rules (task board & CLI for AI coding agents):
 <!-- short forms: not part of the rules above. When prime runs out of room it prints these instead of the rules of the same number
 (src/cli/format.ts). Line: `short <n> <first 8 hex of the sha256 of rule n>: <text>`. Changed rule n? Re-read its short form so it says
 the same, then put the new hash (the test in test/cli/s3c.test.ts prints it). -->
+short 1 7442ca5c: MANDATORY for every request, even with an empty board: claim or create your task before your first file change (commands below); comment each step; when done: commit, then `laneboard finish <ID> --result "<result>" --json`.
 short 3 2340b5f8: Always pass `--json`. Name: without `--as`, the session default (prime shows it); own name: `--as <name>` on every command (or LANEBOARD_AGENT; MCP: `actor`), one per subagent or worker.
 short 4 443714fe: New task, start: the create and claim commands below (`--status`, `--assignee`, `--json` set; subtask: `--parent <ID>`; `--as` only for your own name, rule 3).
 short 5 248cdc28: `--expected-rev` only for edits on top of what you read (`--description`, `--field`): your last rev. Not for status, comment, claim, finish, `--append-description`.

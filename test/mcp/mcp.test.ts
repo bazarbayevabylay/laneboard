@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterAll, describe, expect, it } from 'vitest';
-import { agentRules, archiveTasks, claimTask, createTask, ERRORS, OPS } from '../../src/core/index.ts';
+import { agentRules, archiveTasks, claimTask, createTask, ERRORS, OPS, registerStore } from '../../src/core/index.ts';
 import { TOOL_LIST, TOOLS } from '../../src/mcp/tools.ts';
 import { as, cleanupTemp, cli, CLI_SOURCE, newStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
@@ -181,6 +181,40 @@ describe('MCP server over stdio (SDK client)', () => {
       expect(got.structured).toMatchObject({ children: [{ id: 'LB-2', title: 'C' }] });
     } finally {
       await mcp.close();
+    }
+  });
+
+  it('K2/K3 (ADR §29): task_list takes all_boards and open by itself; the server passes HOME, so it lists the tasks of every board', async () => {
+    const home = tempDir();
+    const own = await newStore();
+    const web = await newStore({ prefix: 'WEB' });
+    await registerStore(home, own.dir);
+    await registerStore(home, web.dir);
+    await createTask(as(own, 'a'), { title: 'Own open', status: 'todo' });
+    await createTask(as(own, 'a'), { title: 'Own done', status: 'done' });
+    await createTask(as(web, 'a'), { title: 'Web open', status: 'in_progress', labels: ['waiting-owner'] });
+    const mcp = await startMcp(own.root, { HOME: home });
+    try {
+      const { tools } = await mcp.client.listTools();
+      expect(tools).toHaveLength(12);
+      expect(Object.keys(tools.find((t) => t.name === 'task_list')?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['all_boards', 'open', 'parent']));
+      const all = await mcp.call('task_list', { all_boards: true, open: true });
+      expect(all.isError).toBe(false);
+      expect((all.structured.items as Array<{ id: string }>).map((t) => t.id).sort()).toEqual(['LB-1', 'WEB-1']);
+      expect((all.structured.boards as Array<{ prefix: string }>).map((b) => b.prefix)).toEqual(['LB', 'WEB']);
+      const waiting = await mcp.call('task_list', { all_boards: true, labels: ['waiting-owner'] });
+      expect((waiting.structured.items as Array<{ id: string }>).map((t) => t.id)).toEqual(['WEB-1']);
+    } finally {
+      await mcp.close();
+    }
+    // HOME empty in the server environment (the SDK passes the parent's HOME otherwise): USAGE that names HOME.
+    const bare = await startMcp(own.root, { HOME: '' });
+    try {
+      const r = await bare.call('task_list', { all_boards: true });
+      expect(r.isError).toBe(true);
+      expect(r.structured).toMatchObject({ code: 'USAGE', fix: 'set HOME to your home directory and run the same command again' });
+    } finally {
+      await bare.close();
     }
   });
 
