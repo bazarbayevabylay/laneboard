@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { LaneboardError } from './errors.ts';
 
 // Tmp files look like `<target>.<pid>.<random>.tmp` and live directly in the store directory.
 const TMP_RE = /\.\d+\.[a-f0-9]+\.tmp$/;
@@ -23,19 +24,54 @@ function fsyncDir(dir: string): void {
   }
 }
 
-// Atomically replace `target`: write tmp -> fsync -> chmod -> rename -> fsync dir (W4).
+// Fix of a write the disk did not take in full (the cause is almost always a full disk or a file size limit).
+export const NOT_WRITTEN_FIX = 'free disk space, then run the same command again';
+
+// A write that did not reach the disk in full (no space, file size limit, short write): the file was not replaced (W4).
+// Not "the store is unchanged": in a two-file commit the first file may already be written (W6 order: a duplicate, never a loss).
+function notWritten(file: string, reason: string): LaneboardError {
+  return new LaneboardError('INTERNAL', `${file} was not written (${reason}); the file on disk was not replaced`, {
+    fix: NOT_WRITTEN_FIX,
+  });
+}
+
+// Write every byte of `buf`: one writeSync may write fewer bytes (a full disk, ulimit -f) and the next one fails with the cause.
+function writeAll(fd: number, buf: Buffer): void {
+  let offset = 0;
+  while (offset < buf.length) {
+    const n = fs.writeSync(fd, buf, offset, buf.length - offset);
+    if (n <= 0) throw Object.assign(new Error('write returned 0 bytes'), { code: 'SHORT_WRITE' });
+    offset += n;
+  }
+}
+
+// Atomically replace `target`: write tmp in full -> fsync -> size check -> chmod -> rename -> fsync dir (W4).
+// A short write removes the tmp and throws notWritten, so the target (and its .bak) keep their old bytes.
 export function writeFileAtomic(target: string, content: string | Buffer, mode: number, opts: AtomicWriteOptions = {}): void {
   const dir = path.dirname(target);
   const tmpDir = opts.tmpDir ?? dir;
   const tmp = path.join(tmpDir, `${path.basename(target)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
-    fs.writeSync(fd, typeof content === 'string' ? Buffer.from(content, 'utf8') : content);
+    writeAll(fd, buf);
     fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+    const size = fs.fstatSync(fd).size;
+    if (size !== buf.length) throw Object.assign(new Error(`${size} of ${buf.length} bytes on disk`), { code: 'SHORT_WRITE' });
+  } catch (err) {
+    // ENOSPC, EFBIG, EDQUOT, EIO or a short write: drop the partial tmp and name the cause; an error without a code is rethrown as is.
+    try {
+      fs.closeSync(fd);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+    const code = (err as NodeJS.ErrnoException).code;
+    if (typeof code === 'string') throw notWritten(target, code);
+    throw err;
   }
-  fs.chmodSync(tmp, mode);
+  fs.closeSync(fd);
+  // Permissions follow the user's umask, like any file they create (umask 077 keeps the board private).
+  fs.chmodSync(tmp, mode & ~process.umask());
   opts.beforeRename?.();
   fs.renameSync(tmp, target);
   fsyncDir(dir);

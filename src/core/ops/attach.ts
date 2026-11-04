@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { loadConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
-import { ensureDir, removeFile, writeFileAtomic } from '../fsio.ts';
+import { ensureDir, NOT_WRITTEN_FIX, removeFile, writeFileAtomic } from '../fsio.ts';
 import { ATTACHMENT_NAME_RE } from '../schema.ts';
 import type { ConfigT } from '../schema.ts';
 import { transact } from '../transact.ts';
@@ -123,6 +123,21 @@ function readSource(file: string, real: string, limit: number): Buffer {
   }
 }
 
+// SHA-256 hex of bytes (attachment metadata).
+function sha256Of(bytes: Buffer): string {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+// Read the stored attachment back: its size and sha256 must equal the metadata about to be recorded, else remove it and fail.
+function verifyStored(file: string, size: number, sha256: string): void {
+  const stored = fs.readFileSync(file);
+  if (stored.length === size && sha256Of(stored) === sha256) return;
+  // A broken copy must not stay behind under a name the metadata will never describe.
+  removeFile(file);
+  const reason = stored.length === size ? 'sha256 differs' : `${stored.length} of ${size} bytes`;
+  throw new LaneboardError('INTERNAL', `${file} was stored broken (${reason}) and was removed; the task is unchanged`, { fix: NOT_WRITTEN_FIX });
+}
+
 // Copy a file into attachments/<id>/<name>, then record metadata in the same transaction; or remove one.
 export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
@@ -195,12 +210,17 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
       const dir = attachmentDir(storeDir, id);
       s.assertLockHeld();
       ensureDir(dir);
+      const size = bytes.length;
+      const sha256 = sha256Of(bytes);
       // File first, metadata second: a crash leaves an orphan file, never metadata without a file.
-      writeFileAtomic(path.join(dir, name), bytes, 0o444, { tmpDir: storeDir });
+      const file = path.join(dir, name);
+      writeFileAtomic(file, bytes, 0o444, { tmpDir: storeDir });
+      // Metadata only for the bytes that are on disk (a short write on a full disk must not be recorded as the source file).
+      verifyStored(file, size, sha256);
       const meta = {
         name,
-        size: bytes.length,
-        sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+        size,
+        sha256,
         mime: mimeFor(name),
         added_by: actor,
         added_at: s.now,
