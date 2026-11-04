@@ -10,7 +10,8 @@ export const finish: CommandDef = {
   summary:
     'Close your task in one write: the result comment, a link to the current git commit (HEAD; --no-commit: none), then the final status ' +
     '(--status: any but the first one, e.g. review to hand in). Only the assignee (or anybody for an unassigned task); no --expected-rev. ' +
-    'Commit your changes first: uncommitted changes or a HEAD older than your claim give a warning. Again in the same status: unchanged, a new commit is linked.',
+    'Commit your changes first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). ' +
+    'Again in the same status: unchanged, a new commit is linked.',
   options: { result: { type: 'string' }, status: { type: 'string' }, 'no-commit': { type: 'boolean' }, ...FULL_OPTION },
   args: { min: 1, max: 1 },
   async run(c) {

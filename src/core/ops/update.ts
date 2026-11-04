@@ -1,13 +1,13 @@
 // Ops that change an active task: update, claim, comment, finish (task_update, task_claim, task_comment, task_finish).
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
-import { gitHead, hasUncommittedChanges, headMovedAt } from '../git.ts';
+import { readCheckout } from '../git.ts';
+import type { CheckoutState } from '../git.ts';
 import type { LinkT } from '../schema.ts';
 import { transact } from '../transact.ts';
 import {
   actorSourceOf,
   addEvent,
-  assignmentEvent,
   checkActor,
   checkExpectedRev,
   checkFields,
@@ -32,6 +32,7 @@ import {
   touch,
   txOptions,
   unique,
+  workStartedAt,
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 
@@ -268,22 +269,21 @@ function finishStatuses(statuses: readonly string[]): string[] {
   return statuses.filter((st, i) => i > 0 || finals.includes(st));
 }
 
-// What the git checkout says about the linked commit: whether HEAD moved since the claim (unix seconds of its last move) and whether
-// tracked files have uncommitted changes; read before the lock, undefined parts are unknown (the warning is then left out).
-interface CheckoutFacts {
-  movedAt?: number;
-  dirty?: boolean;
-}
-
-// Warnings that the linked commit may not hold the agent's work (owner's decision, S3b): uncommitted changes, or HEAD has not moved
-// since the actor claimed the task (`claimedAt`, unknown for a task it did not hold).
-function commitWarnings(id: string, commit: string, facts: CheckoutFacts, claimedAt: string | undefined): string[] {
-  const sha = commit.slice(0, 12);
+// Warnings that the linked commit may not hold the agent's work (owner's decision, S3b): uncommitted changes (staged or not), or
+// HEAD was committed before the actor's work on the task began (`workStart`, unknown for a task it did not hold); and that git could
+// not be asked (S3c: finish still works, unknown parts give no other warning).
+function checkoutWarnings(id: string, git: CheckoutState, workStart: string | undefined): string[] {
   const again = `commit your work and run laneboard finish ${id} again to link the new commit (work without a commit: --no-commit)`;
   const out: string[] = [];
-  if (facts.dirty === true) out.push(`the working tree has uncommitted changes to tracked files, so the linked commit ${sha} may not hold your work; ${again}`);
+  if (git.problem !== undefined) {
+    const skipped = git.head === undefined ? 'no commit linked' : `not checked whether the linked commit ${git.head.slice(0, 12)} holds your work`;
+    out.push(`could not check git (${git.problem}): ${skipped}`);
+  }
+  if (git.head === undefined) return out;
+  const sha = git.head.slice(0, 12);
+  if (git.dirty === true) out.push(`the working tree has uncommitted changes to tracked files, so the linked commit ${sha} may not hold your work; ${again}`);
   // Seconds: a commit in the same second as the claim counts as newer.
-  if (facts.movedAt !== undefined && claimedAt !== undefined && facts.movedAt < Math.floor(Date.parse(claimedAt) / 1000)) {
+  if (git.committedAt !== undefined && workStart !== undefined && git.committedAt < Math.floor(Date.parse(workStart) / 1000)) {
     out.push(`the linked commit ${sha} is from before your work: HEAD has not moved since you claimed ${id}; ${again}`);
   }
   return out;
@@ -296,13 +296,13 @@ function commitWarnings(id: string, commit: string, facts: CheckoutFacts, claime
 export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(FinishInput, input);
-  // Read before the lock: the checkout does not change because of this write.
-  const commit = p.no_commit === true || ctx.cwd === undefined ? undefined : gitHead(ctx.cwd);
-  const facts: CheckoutFacts = commit === undefined || ctx.cwd === undefined ? {} : { movedAt: headMovedAt(ctx.cwd, commit), dirty: hasUncommittedChanges(ctx.cwd, commit) };
+  // Asked before the lock: the checkout does not change because of this write.
+  const git: CheckoutState = p.no_commit === true || ctx.cwd === undefined ? {} : await readCheckout(ctx.cwd);
+  const commit = git.head;
   const warnings: string[] = [];
   let finished = false;
   let linked = false;
-  let claimedAt: string | undefined;
+  let workStart: string | undefined;
   let taskId = '';
   const data = await transact(
     ctx.store,
@@ -323,11 +323,13 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       const task = requireActiveTask(s, id);
       // The owner first: somebody else's task is ALREADY_CLAIMED even when it is closed (review S3 NIT).
       if (task.assignee !== null && task.assignee !== actor) throw claimedBy(ctx, id, task.assignee, actor, false);
-      // When the actor took the task: a commit older than that is not its work.
-      claimedAt = task.assignee === actor ? assignmentEvent(task)?.at : undefined;
+      // When the actor's work began (across claim --resume, its earlier sessions' too): a commit older than that is not its work.
+      workStart = task.assignee === actor ? workStartedAt(task) : undefined;
       const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
       const again = task.status === status || finals.includes(task.status);
-      if (again) warnings.push(`no changes: ${id} is already ${task.status}; the result was not recorded (add it with laneboard comment ${id} "<text>")`);
+      const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>")`;
+      if (again && newCommit === undefined) warnings.push(`no changes: ${id} is already ${task.status}; ${notRecorded}`);
+      if (again && newCommit !== undefined) warnings.push(`status and result unchanged: ${id} is already ${task.status}; ${notRecorded}; commit ${newCommit.slice(0, 12)} linked`);
       if (again && newCommit === undefined) return toTaskView(task, false);
       // One write, one rev, whatever events follow.
       touch(task, s.now, actor);
@@ -350,7 +352,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
     },
     txOptions(ctx, warnings),
   );
-  if (commit !== undefined) warnings.push(...commitWarnings(taskId, commit, facts, claimedAt));
+  warnings.push(...checkoutWarnings(taskId, git, workStart));
   if (finished) return { data, warnings, reply: { commit: commit ?? null } };
   return linked && commit !== undefined ? { data, warnings, reply: { commit }, unchanged: true } : { data, warnings };
 }

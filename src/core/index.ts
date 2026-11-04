@@ -7,7 +7,8 @@ export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MA
 export { isLiveBoard, listBoards, readRegistry, registerStore, registryFile, resolveBoard } from './boards.ts';
 export type { BoardEntry, BoardInfo, BoardsResult } from './boards.ts';
 export { actorPart, agentUser, defaultAgentBase, defaultAgentName, isEarlierSessionName, resolveActor } from './agent-name.ts';
-export { gitHead, hasUncommittedChanges, headMovedAt } from './git.ts';
+export { GIT_TIMEOUT_MS, readCheckout } from './git.ts';
+export type { CheckoutState } from './git.ts';
 export type { ActorSource, ResolvedActor } from './agent-name.ts';
 export type { DiscoveryInput, ForeignStore, StoreRef, StoreSource } from './store.ts';
 export { derivePrefix, storePrefix } from './config.ts';
@@ -31,6 +32,7 @@ export { ConfigureInput, DoctorInput, InitInput, configureStore, doctor, initSto
 export type { ConfigureInputT, ConfigureResult, DoctorCheck, DoctorInputT, DoctorResult, InitInputT, InitOptions, InitResult, MigrateResult } from './ops/admin.ts';
 export { ImportEvent, ImportInput, ImportTask, importTasks } from './ops/import.ts';
 export type { ImportInputT, ImportResult, ImportTaskT } from './ops/import.ts';
-export { agentRules, skillMarkdown } from './rules.ts';
+export { agentRules, shortRuleForms, skillMarkdown } from './rules.ts';
+export type { ShortRule } from './rules.ts';
 export { OPS } from './ops/registry.ts';
 export type { OpName } from './ops/registry.ts';

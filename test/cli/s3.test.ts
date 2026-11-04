@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { archiveTasks, claimTask, createTask, finishTask, gitHead, isEarlierSessionName } from '../../src/core/index.ts';
+import { archiveTasks, claimTask, createTask, finishTask, isEarlierSessionName, readCheckout } from '../../src/core/index.ts';
 import { primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import { callTool } from '../../src/mcp/tools.ts';
@@ -38,39 +38,26 @@ function stored(s: TestStore, id: string): { rev: number; status: string; assign
   return task as never;
 }
 
-describe('git HEAD read from the repository files (git is not run)', () => {
-  const sha = 'a'.repeat(40);
-  const other = 'b'.repeat(40);
-
-  it('loose ref, packed ref, detached HEAD, a worktree (.git file + commondir); none outside a repository or before the first commit', () => {
-    const root = tempDir();
-    const gitDir = path.join(root, '.git');
-    fs.mkdirSync(path.join(gitDir, 'refs', 'heads'), { recursive: true });
-    fs.writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
-    // Before the first commit the branch has no ref.
-    expect(gitHead(root)).toBeUndefined();
-    fs.writeFileSync(path.join(gitDir, 'packed-refs'), `# pack-refs with: peeled fully-peeled sorted\n${other} refs/heads/other\n${sha} refs/heads/main\n`);
-    expect(gitHead(path.join(root, 'sub', 'dir'))).toBe(sha);
-    // A loose ref wins over the packed one.
-    fs.writeFileSync(path.join(gitDir, 'refs', 'heads', 'main'), `${other}\n`);
-    expect(gitHead(root)).toBe(other);
-    fs.writeFileSync(path.join(gitDir, 'HEAD'), `${sha}\n`);
-    expect(gitHead(root)).toBe(sha);
-    // A worktree: HEAD in .git/worktrees/<name>, branches in the main repository.
-    const wt = path.join(root, 'wt');
-    fs.mkdirSync(path.join(gitDir, 'worktrees', 'wt'), { recursive: true });
-    fs.mkdirSync(wt);
-    fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(gitDir, 'worktrees', 'wt')}\n`);
-    fs.writeFileSync(path.join(gitDir, 'worktrees', 'wt', 'HEAD'), 'ref: refs/heads/main\n');
-    fs.writeFileSync(path.join(gitDir, 'worktrees', 'wt', 'commondir'), '../..\n');
-    expect(gitHead(wt)).toBe(other);
-    expect(gitHead(tempDir())).toBeUndefined();
-  });
-
-  it('matches git rev-parse HEAD in a real repository', () => {
+// Rewritten in S3c: git itself is asked (review S3b MAJOR), so the cases are real repositories instead of hand-made .git files.
+describe('git HEAD as git rev-parse gives it', () => {
+  it('a subfolder, a detached HEAD, a worktree; nothing outside a repository or before the first commit', async () => {
     const root = tempDir();
     const head = gitRepo(root);
-    expect(gitHead(root)).toBe(head);
+    fs.mkdirSync(path.join(root, 'sub', 'dir'), { recursive: true });
+    expect((await readCheckout(path.join(root, 'sub', 'dir'))).head).toBe(head);
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...args: string[]): string => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: root, env, encoding: 'utf8' }).trim();
+    git('commit', '-q', '--allow-empty', '-m', 'second');
+    const second = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '--detach', head);
+    expect((await readCheckout(root)).head).toBe(head);
+    const wt = path.join(tempDir(), 'wt');
+    git('worktree', 'add', '-q', '--detach', wt, second);
+    expect((await readCheckout(wt)).head).toBe(second);
+    expect(await readCheckout(tempDir())).toEqual({});
+    const empty = tempDir();
+    execFileSync('git', ['init', '-q'], { cwd: empty, env });
+    expect(await readCheckout(empty)).toEqual({});
   });
 });
 

@@ -13,3 +13,16 @@ laneboard agent rules (task board & CLI for AI coding agents):
 12. Not sure which board is yours (store not found, or a warning that it is another project's): `laneboard boards --json`, pick yours by `description` and `path`, then pass `--dir <path>` on every command. None for this project: in its root `laneboard init --dir .laneboard --name <name> --description "<whose project, what work>"` (`--dir`: LANEBOARD_DIR may name another board), then the `next` command it prints.
 13. Every error has `fix`: run it or adapt it. Exit codes: 2 input, 3 not found, 4 conflict, 5 busy (retry once), 6 store.
 14. Text starting with "-" or "--" (list items, "--- section"): options first, then `--`, then the text (`laneboard comment <ID> --json -- "- item"`); option values as `--description="- item"`.
+
+<!-- short forms: not part of the rules above. When prime runs out of room it prints these instead of the rules of the same number
+(src/cli/format.ts). Line: `short <n> <first 8 hex of the sha256 of rule n>: <text>`. Changed rule n? Re-read its short form so it says
+the same, then put the new hash (the test in test/cli/s3c.test.ts prints it). -->
+short 3 2340b5f8: Always pass `--json`. Name: without `--as`, the session default (prime shows it); own name: `--as <name>` on every command (or LANEBOARD_AGENT; MCP: `actor`), one per subagent or worker.
+short 4 2fa51bc5: New task, start of work: the create and claim commands below (`--status`, `--assignee`, `--json` set; `--as` only for your own name, rule 3).
+short 5 b24282c8: `--expected-rev` only for edits on top of what you read (`--description`, `--field`): the rev of your last read or write. Not for status, comment, claim, finish.
+short 6 9b270eed: REV_CONFLICT: re-apply your change on `error.details.task` with its rev (keep others' edits); never retry blindly.
+short 8 49f53a24: Statuses (in order; last is final), typed fields: the lines below the store. On UNKNOWN_* copy a value from `allowed`.
+short 9 a805d684: Notes: `laneboard comment <ID> "<text>"`; files: `laneboard attach <ID> <path>`; links: `--add-link commit=<sha>` (branch=, pr=; finish links HEAD).
+short 11 cdb10d5f: Ids are exact, with the board prefix (WEB-12). Every `--json` reply names `store` and `prefix`: write only to your project's board.
+short 12 f0af9afb: Which board is yours? `laneboard boards --json`, pick by `description` and `path`, then `--dir <path>` on every command. None: in the project root `laneboard init --dir .laneboard --name <name> --description "<whose project, what work>"` (LANEBOARD_DIR may name another).
+short 14 1985a2fe: Text starting with "-": options, then `--`, then the text (`laneboard comment <ID> --json -- "- item"`; values `--description="- item"`).

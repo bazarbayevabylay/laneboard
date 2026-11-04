@@ -177,6 +177,22 @@ export function assignmentEvent(task: TaskT): TaskEventT | undefined {
   return undefined;
 }
 
+// When the current assignee's work on the task began: the time of the event that gave it the task; across `claim --resume`
+// (an `assigned` event with `resumed: true`) that of the session it resumed from, back to the first one, since an earlier session's
+// commit is this work too (review S3b MINOR). Undefined for an unassigned task or when that event was dropped by the events limit.
+export function workStartedAt(task: TaskT): string | undefined {
+  let holder = task.assignee;
+  for (let i = task.events.length - 1; i >= 0 && holder !== null; i--) {
+    const e = task.events[i];
+    if (e?.type === 'created') return e.data.assignee === holder ? e.at : undefined;
+    if (e?.type !== 'assigned') continue;
+    if (e.data.to !== holder) return undefined;
+    if (e.data.resumed !== true) return e.at;
+    holder = typeof e.data.from === 'string' ? e.data.from : null;
+  }
+  return undefined;
+}
+
 // Is the task the work of another session of the actor's default name (claim --resume)? Its holder looks like `<base>:<session>`
 // and took it itself under its session default name: that event says actor_source `default`. By the data, not the form of the name:
 // an explicit name of the same form (`<base>:reviewer`) and a task handed to such a name by someone else never qualify (review S3).

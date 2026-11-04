@@ -123,9 +123,9 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
 the final one. A second `finish` into the same status (or of a closed task) keeps the status and the result and warns; only a commit not
-linked yet is added. A warning, not an error, when tracked files have uncommitted changes or HEAD has not moved since your claim (the link
-would point at a commit from before your work): commit and run `finish` again, or use `--no-commit`. laneboard reads `.git` itself and
-never runs git, so changes that are staged but not committed are not seen.
+linked yet is added. A warning, not an error, when tracked files have uncommitted changes (staged ones too) or the HEAD commit is older
+than your claim (the link would point at a commit without your work): commit and run `finish` again, or use `--no-commit`. finish asks
+git (`rev-parse`, `log`, `status`, 2 s each); no git, no answer or an error: the task is still finished, with a `could not check git` warning.
 
 ```sh
 export LANEBOARD_AGENT=dev-1

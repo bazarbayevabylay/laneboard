@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { agentRules, claimTask, createTask } from '../../src/core/index.ts';
-import { PRIME_MAX_CHARS, primeText, SHORT_RULES } from '../../src/cli/format.ts';
+import { agentRules, claimTask, createTask, shortRuleForms } from '../../src/core/index.ts';
+import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import { as, cleanupTemp, cli, newStore, tempDir, writeRaw } from '../helpers.ts';
 
@@ -261,16 +261,18 @@ describe('prime', () => {
   it('150 long status names: every form stays within the cap and still names the final status', async () => {
     const statuses = Array.from({ length: 150 }, (_, i) => `status_with_a_long_name_${i}`);
     const forms = [data(30, 60, statuses), { ...data(0, 1, statuses), agent: null }, data(0, 1, statuses)];
-    // Rewritten in S3b: at the limit the rules of SHORT_RULES are short; every rule stays, the others word for word, and the create
-    // command stays whole.
+    // Rewritten in S3b: at the limit the rules with a short form are short; every rule stays, the others word for word, and the create
+    // command stays whole. S3c: the short forms come from agent-rules.md and are checked word for word too.
     const ruleLines = agentRules().split('\n');
+    const short = new Map(shortRuleForms().map((r) => [r.n, `${r.n}. ${r.text}`]));
     for (const d of forms) {
       const text = primeText(d);
       expect(text.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
       expect(text.startsWith(`${ruleLines[0]}\n1. `)).toBe(true);
       for (const rule of ruleLines.slice(1)) {
         const n = /^(\d+)\. /.exec(rule)?.[1];
-        expect(text).toContain(SHORT_RULES.has(n ?? '') ? `\n${n}. ` : `\n${rule}\n`);
+        const shortForm = short.get(n ?? '');
+        expect(text.includes(`\n${rule}\n`) || (shortForm !== undefined && text.includes(`\n${shortForm}\n`)), rule).toBe(true);
       }
       expect(text).toContain('Statuses in order (final: status_with_a_long_name_149)');
       if (d.in_progress === 0) expect(text).toMatch(/\n {2}laneboard create "<short title of your work>" --status status_with_a_long_name_0 --assignee (dev-1 --as dev-1|<your-name> --as <your-name>) --json\n/);

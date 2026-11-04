@@ -1,5 +1,5 @@
 // Output for the CLI: JSON envelopes, human text, and error fixes rebuilt from argv.
-import { ERRORS, fieldsLine, LaneboardError, shellQuote, toErrorObject } from '../core/index.ts';
+import { ERRORS, fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject } from '../core/index.ts';
 import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import { age } from './board-view.ts';
@@ -331,10 +331,11 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
 // Free tasks prime always lists (when there are that many), with the footer command for the rest.
 export const PRIME_MIN_FREE = 3;
 
-// What prime gives up, step by step, to stay under PRIME_MAX_CHARS: short forms of the rules (SHORT_RULES), the board's name and
+// What prime gives up, step by step, to stay under PRIME_MAX_CHARS: short forms of the rules (agent-rules.md), the board's name and
 // description, long task titles, then the --dir of each printed command (one line names it instead). Never a command,
-// the session line, the first own task, the newest earlier-session task or the first PRIME_MIN_FREE free tasks (review S3). Only a
-// config with very many statuses or fields gets its status and field lines cut (the last step).
+// the session line, the first own task, the newest earlier-session task or the first PRIME_MIN_FREE free tasks (review S3). The status and field
+// lines are cut last: for a config with very many statuses or fields, or a very long store path named by --dir (the --dir line
+// then takes their room; review S3b MINOR).
 interface Squeeze {
   shortRules: boolean;
   cutBoard: boolean;
@@ -354,29 +355,12 @@ const SQUEEZES: readonly Squeeze[] = [
 // Characters of a task title in prime once long titles give way (the id is what the commands need).
 const SHORT_TITLE = 60;
 
-// Short forms of the rules that repeat what prime prints after them (3, 4, 8) and of the longer ones (the full text stays in the skill,
-// the setup block's harness files and the agent guide). A test checks that each number still exists in agent-rules.md.
-export const SHORT_RULES = new Map<string, string>([
-  ['3', '3. Always pass `--json`. Your name: without `--as`, the session default (prime names it); your own: `--as <name>` on every command (or LANEBOARD_AGENT; MCP: `actor`), one per subagent or parallel worker.'],
-  ['4', '4. New task and start of work: the create and claim commands in this output (with your name; `--as` only for a name of your own, rule 3).'],
-  ['5', '5. `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`); none for status, comment, claim, finish.'],
-  ['6', '6. REV_CONFLICT: re-apply your change on `error.details.task` with its rev (keep others\' edits). Never retry blindly.'],
-  ['8', '8. Statuses (in order; the last one is final) and typed fields: the lines below the store. On UNKNOWN_* copy a value from `allowed`.'],
-  ['9', '9. Notes: `laneboard comment <ID> "<text>"`. Files: `laneboard attach <ID> <path>`. Links: `--add-link commit=<sha>` (or branch=, pr=; finish links HEAD).'],
-  ['11', '11. Ids are exact and carry the board prefix (WEB-12). Every reply names `store` and `prefix`: write only to your project\'s board.'],
-  [
-    '12',
-    '12. Not sure which board is yours: `laneboard boards --json`, pick it by `description` and `path`, then `--dir <path>` on every command. ' +
-      'None for this project: in its root `laneboard init --dir .laneboard --name <name> --description "<whose project, what work>"`.',
-  ],
-  ['14', '14. Text starting with "-": options first, then `--`, then the text (`laneboard comment <ID> --json -- "- item"`; values: `--description="- item"`).'],
-]);
-
-// The rules with SHORT_RULES in place of their full lines.
+// The rules with their short forms (agent-rules.md, below the rules) in place of the full lines.
 function shortRules(rules: string): string {
+  const short = new Map(shortRuleForms().map((r) => [r.n, `${r.n}. ${r.text}`]));
   return rules
     .split('\n')
-    .map((line) => SHORT_RULES.get(/^(\d+)\. /.exec(line)?.[1] ?? '') ?? line)
+    .map((line) => short.get(/^(\d+)\. /.exec(line)?.[1] ?? '') ?? line)
     .join('\n');
 }
 

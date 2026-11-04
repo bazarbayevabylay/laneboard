@@ -2,12 +2,11 @@
 // finish checks the owner first) and the owner's decisions (finish --status <any but the first>, warnings when the linked commit
 // may not hold the work, no --resume offer in ALREADY_CLAIMED, the resume section of prime --hook only after /clear).
 import { execFileSync } from 'node:child_process';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { claimTask, createTask, hasUncommittedChanges, headMovedAt, shellQuote } from '../../src/core/index.ts';
-import { PRIME_MAX_CHARS, PRIME_MIN_FREE, primeText, SHORT_RULES } from '../../src/cli/format.ts';
+import { agentRules, claimTask, createTask, readCheckout, shellQuote } from '../../src/core/index.ts';
+import { PRIME_MAX_CHARS, PRIME_MIN_FREE, primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import type { ListItem } from '../../src/core/index.ts';
 import { runCli } from '../../src/cli/run.ts';
@@ -42,15 +41,9 @@ function repoWithFile(dir: string, at: number, extra: string[] = []): string {
   return git(dir, ['rev-parse', 'HEAD']);
 }
 
-// Does git see changes of tracked files against the index (`git diff --quiet` exits 1)? The oracle for hasUncommittedChanges.
-function gitSeesUnstaged(dir: string): boolean {
-  try {
-    git(dir, ['diff', '--quiet']);
-    return false;
-  } catch {
-    // Exit 1: differences.
-    return true;
-  }
+// Does git see changes of tracked files, staged or not (`git status --porcelain -uno` prints a line)? The oracle for readCheckout.
+function gitSeesChanges(dir: string): boolean {
+  return git(dir, ['status', '--porcelain', '-uno']) !== '';
 }
 
 // The task as stored.
@@ -103,14 +96,6 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
       for (const i of [1, 2, 3]) expect(lines, where).toContain(`  SHOP-${i + 1}  [todo]  rev 1  Free task ${i}`);
       // Only the board line may be cut.
       expect(lines.filter((l) => l.includes('…') && !l.startsWith('Store: ')), where).toEqual([]);
-    }
-  });
-
-  it('each short rule replaces an existing rule of the same number and is shorter', () => {
-    const rules = new Map(readRules().split('\n').map((l) => [/^(\d+)\. /.exec(l)?.[1] ?? '', l] as const));
-    for (const [n, short] of SHORT_RULES) {
-      expect(short.startsWith(`${n}. `), n).toBe(true);
-      expect(short.length, n).toBeLessThan(rules.get(n)?.length ?? 0);
     }
   });
 
@@ -187,11 +172,9 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
   });
 });
 
-// The rules as prime prints them (read once).
-let rulesText: string | undefined;
+// The rules as prime prints them (S3c: agent-rules.md also holds the short forms, so through agentRules).
 function readRules(): string {
-  rulesText ??= fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'src', 'core', 'agent-rules.md'), 'utf8').trimEnd();
-  return rulesText;
+  return agentRules();
 }
 
 describe('review S3 MAJOR 2: claim --resume decides by the events, not by the form of the name', () => {
@@ -310,7 +293,8 @@ describe('finish warns when the linked commit may not hold the work (owner, S3b)
     const second = git(s.root, ['rev-parse', 'HEAD']);
     const again = await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1'], { cwd: s.root });
     expect(again.stdout).toBe(`LB-1 unchanged (rev 3, done, dev-1); commit ${second.slice(0, 12)} linked\n`);
-    expect(again.stderr).toContain('no changes: LB-1 is already done; the result was not recorded');
+    // Rewritten in S3c (review S3b MINOR): a new link is a change, so the warning no longer says "no changes".
+    expect(again.stderr).toContain(`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>"); commit ${second.slice(0, 12)} linked`);
     expect(again.stderr).not.toContain('uncommitted');
     const t = stored(s, 'LB-1');
     expect(t.links).toEqual([{ kind: 'commit', ref: first }, { kind: 'commit', ref: second }]);
@@ -331,73 +315,56 @@ describe('finish warns when the linked commit may not hold the work (owner, S3b)
   });
 });
 
-describe('git checkout facts read from the files (no git run), checked against git itself', () => {
-  it('hasUncommittedChanges: changed, deleted, mode change, intent-to-add, touched only, untracked, staged; index v4; SHA-256', () => {
+// Rewritten in S3c: git itself is asked (review S3b MAJOR); the same cases, now with staged changes seen.
+describe('git checkout facts as git gives them, checked against git status', () => {
+  it('dirty: changed, deleted, mode change, intent-to-add, touched only, untracked, staged; index v4; SHA-256', async () => {
     for (const extra of [[], ['--object-format=sha256']]) {
       const dir = tempDir();
       repoWithFile(dir, nowSec(), extra);
       fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n');
-      // Two paths with a common prefix: index v4 stores the second one as "strip N, add the rest".
       fs.mkdirSync(path.join(dir, 'src'));
       fs.writeFileSync(path.join(dir, 'src', 'one.txt'), '1\n');
-      fs.writeFileSync(path.join(dir, 'src', 'two.txt'), '2\n');
       git(dir, ['add', 'b.txt', 'src']);
       git(dir, ['commit', '-q', '-m', 'b']);
-      // Both laneboard and git itself (worktree against the index) give the expected answer.
-      const check = (want: boolean, what: string) => {
+      // Both laneboard and git status give the expected answer.
+      const check = async (want: boolean, what: string) => {
         const sha = git(dir, ['rev-parse', 'HEAD']);
-        expect(hasUncommittedChanges(dir, sha), `${extra.join('')} ${what}`).toBe(want);
-        expect(gitSeesUnstaged(dir), `git: ${extra.join('')} ${what}`).toBe(want);
+        expect(await readCheckout(dir), `${extra.join('')} ${what}`).toMatchObject({ head: sha, dirty: want });
+        expect(gitSeesChanges(dir), `git: ${extra.join('')} ${what}`).toBe(want);
       };
-      check(false, 'clean');
-      if (extra.length === 0) {
-        // Size 0 is git's mark of a racily clean entry: the content decides (here it is the committed one). The index checksum is
-        // recomputed so git reads the patched file too.
-        const indexFile = path.join(dir, '.git', 'index');
-        const buf = fs.readFileSync(indexFile);
-        expect(buf.toString('utf8', 12 + 62, 12 + 62 + 'app.txt'.length)).toBe('app.txt');
-        buf.writeUInt32BE(0, 12 + 36);
-        crypto.createHash('sha1').update(buf.subarray(0, buf.length - 20)).digest().copy(buf, buf.length - 20);
-        fs.writeFileSync(indexFile, buf);
-        check(false, 'size 0 in the index, same content');
-      }
-      // Same content, new modification time: the content decides.
+      await check(false, 'clean');
       const later = new Date(Date.now() + 60_000);
       fs.utimesSync(path.join(dir, 'app.txt'), later, later);
-      check(false, 'touched');
+      await check(false, 'touched');
       fs.writeFileSync(path.join(dir, 'new.txt'), 'untracked\n');
-      check(false, 'untracked file');
+      await check(false, 'untracked file');
       fs.writeFileSync(path.join(dir, 'app.txt'), 'oNe\n');
-      check(true, 'same size, other content');
+      await check(true, 'same size, other content');
       git(dir, ['add', 'app.txt']);
-      // Staged but not committed is not seen (documented: it needs the commit's tree).
-      check(false, 'staged');
+      await check(true, 'staged');
       git(dir, ['commit', '-q', '-m', 'c']);
       fs.rmSync(path.join(dir, 'b.txt'));
-      check(true, 'deleted');
+      await check(true, 'deleted');
       git(dir, ['checkout', '--', 'b.txt']);
-      check(false, 'restored');
+      await check(false, 'restored');
       fs.chmodSync(path.join(dir, 'b.txt'), 0o755);
-      check(true, 'mode');
+      await check(true, 'mode');
       fs.chmodSync(path.join(dir, 'b.txt'), 0o644);
       git(dir, ['add', '-N', 'new.txt']);
-      check(true, 'intent to add');
+      await check(true, 'intent to add');
       git(dir, ['reset', '-q', 'new.txt']);
       git(dir, ['update-index', '--index-version', '4']);
-      check(false, 'index v4 clean');
+      await check(false, 'index v4 clean');
       fs.writeFileSync(path.join(dir, 'b.txt'), 'changed\n');
-      check(true, 'index v4 changed');
+      await check(true, 'index v4 changed');
     }
-    expect(hasUncommittedChanges(tempDir(), 'a'.repeat(40))).toBeUndefined();
+    expect(await readCheckout(tempDir())).toEqual({});
   });
 
-  it('headMovedAt: the time of the newest HEAD reflog line when it names HEAD, else undefined', () => {
+  it('committedAt: the commit time of HEAD (unix seconds)', async () => {
     const dir = tempDir();
     const head = repoWithFile(dir, 1_000_000_000);
-    expect(headMovedAt(dir, head)).toBe(1_000_000_000);
-    expect(headMovedAt(dir, 'b'.repeat(40))).toBeUndefined();
-    fs.rmSync(path.join(dir, '.git', 'logs'), { recursive: true });
-    expect(headMovedAt(dir, head)).toBeUndefined();
+    expect(await readCheckout(dir)).toEqual({ head, committedAt: 1_000_000_000, dirty: false });
   });
 });
 
