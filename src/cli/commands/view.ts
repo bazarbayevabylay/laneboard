@@ -101,6 +101,7 @@ export const view: CommandDef = {
   readOnly: true,
   async run(c) {
     const watch = flag(c.values, 'watch');
+    // With --json the fix keeps --json and drops --watch (ADR-0001 §23).
     if (watch && c.values.json === true) throw new LaneboardError('USAGE', '--watch redraws the board for people; it cannot be combined with --json', { edit: { drop: [{ name: 'watch' }] } });
     const input: ViewInputT = { assignee: str(c.values, 'assignee'), labels: many(c.values, 'label'), text: str(c.values, 'text') };
     const filters = [

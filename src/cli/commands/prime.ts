@@ -88,12 +88,11 @@ export const prime: CommandDef = {
   async run(c) {
     const hook = flag(c.values, 'hook');
     const edit = flag(c.values, 'edit-hook');
-    // One fix for both mistakes: it keeps --hook and drops --edit-hook and --json.
-    const drop = [...(hook && edit ? [{ name: 'edit-hook' }] : []), ...((hook || edit) && c.values.json === true ? [{ name: 'json' }] : [])];
+    // With --json the fix keeps --json and drops the hook modes (ADR-0001 §23); two hooks without it keep --hook.
     if ((hook || edit) && c.values.json === true) {
-      throw new LaneboardError('USAGE', `--${hook ? 'hook' : 'edit-hook'} prints output for a hook; it cannot be combined with --json`, { edit: { drop } });
+      throw new LaneboardError('USAGE', `--${hook ? 'hook' : 'edit-hook'} prints output for a hook; it cannot be combined with --json`, { edit: { drop: [{ name: 'hook' }, { name: 'edit-hook' }] } });
     }
-    if (hook && edit) throw new LaneboardError('USAGE', '--hook and --edit-hook are two different hooks; pass one of them', { edit: { drop } });
+    if (hook && edit) throw new LaneboardError('USAGE', '--hook and --edit-hook are two different hooks; pass one of them', { edit: { drop: [{ name: 'edit-hook' }] } });
     // The same name a write would use: --as, LANEBOARD_AGENT, else the session's default name.
     const named = resolveActor(typeof c.values.as === 'string' ? c.values.as : undefined, c.io.env);
     const agent = named.actor;

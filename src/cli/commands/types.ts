@@ -59,6 +59,8 @@ export interface CommandDef {
   args: { min: number; max: number };
   // Op parameter name -> CLI flag, for messages like "status is required".
   flags?: Record<string, string>;
+  // Options the command cannot run without, with the value a wrong-number-of-arguments fix adds when one is absent (create: --status <first>).
+  required?(discovery: DiscoveryInput): Array<{ name: string; value: string }>;
   // Only reads a store, so it may open another board with --board (read-only).
   readOnly?: boolean;
   run(c: CommandContext): Promise<CommandOutput>;

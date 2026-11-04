@@ -1,8 +1,19 @@
-// Argv checks around node:util.parseArgs: `--` handling, text that starts with "-", repeated options, and fixes rebuilt from argv.
-import { LaneboardError, suggestClosest } from '../core/index.ts';
+// Argv checks around node:util.parseArgs (`--` handling, text that starts with "-", repeated options) and every CLI fix: the one
+// place where a fix is built from the user's argv (ADR-0001 §23).
+import { ERRORS, LaneboardError, shellQuote, suggestClosest } from '../core/index.ts';
 import type { FixEdit } from '../core/index.ts';
 import type { OptionSpec } from './commands/types.ts';
-import { commandLine } from './format.ts';
+
+// `laneboard <argv...>` with each token quoted, except placeholder tokens like `<name>`.
+export function commandLine(argv: readonly string[], placeholders: ReadonlySet<number> = new Set()): string {
+  return ['laneboard', ...argv.map((t, i) => (placeholders.has(i) ? t : shellQuote(t)))].join(' ');
+}
+
+// argv with extra option tokens inserted before `--` (after it they would be read as text).
+function withOptions(argv: readonly string[], extra: readonly string[]): string[] {
+  const end = argv.indexOf('--');
+  return end < 0 ? [...argv, ...extra] : [...argv.slice(0, end), ...extra, ...argv.slice(end)];
+}
 
 // Is `--json` among the options (tokens after `--` are text, not options)?
 export function jsonRequested(argv: readonly string[]): boolean {
@@ -113,9 +124,9 @@ function optionName(name: string, flags: Readonly<Record<string, string>> | unde
   return (flags?.[name] ?? `--${name.replace(/_/g, '-')}`).replace(/^--/, '');
 }
 
-// Is this token a `<placeholder>` the user fills in (printed unquoted)?
+// Is this token a `<placeholder>` the user fills in (printed unquoted; `"<one line: ...>"` keeps its quotes)?
 function isPlaceholder(token: string): boolean {
-  return /^<[^<>]+>$/.test(token) || /^--[^=]+=<[^<>]+>$/.test(token);
+  return /^"?<[^<>]+>"?$/.test(token) || /^--[^=]+=<[^<>]+>$/.test(token);
 }
 
 // The user's own command changed by a FixEdit: options dropped, options and arguments added; a runnable fix, or one with `<placeholders>`.
@@ -141,9 +152,7 @@ export function editedCommand(argv: readonly string[], edit: FixEdit, options: O
     if (hasNext) kept.push(args[++i] ?? '');
   }
   const extra = (edit.add ?? []).flatMap((a) => [`--${optionName(a.name, flags)}`, a.value]);
-  const at = kept.indexOf('--');
-  const withAdded = at < 0 ? [...kept, ...extra] : [...kept.slice(0, at), ...extra, ...kept.slice(at)];
-  const out = [command, ...withAdded, ...(edit.args ?? [])];
+  const out = [command, ...withOptions(kept, extra), ...(edit.args ?? [])];
   const line = commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !argv.includes(t) ? [i] : []))));
   return edit.env === undefined ? line : `${edit.env} ${line}`;
 }
@@ -158,29 +167,39 @@ function usageArgs(usage: string): string[] {
     .filter((t) => /^<[^<>]+>$/.test(t));
 }
 
-interface PositionalToken {
+interface ArgvToken {
   kind: string;
+  name?: string;
   index: number;
 }
 
-// A wrong number of arguments: the missing ones as placeholders at the end, or the extra words joined into the text (title, text) or dropped.
-export function argumentsFix(command: string, args: readonly string[], tokens: readonly PositionalToken[], usage: string, count: { min: number; max: number }): string {
+// A wrong number of arguments: the missing ones as placeholders at the end, or the extra words joined into the text (title, text) or dropped;
+// options the command cannot run without (`required`, like create's `--status <first status>`) are added when absent, so one fix runs.
+export function argumentsFix(
+  command: string,
+  args: readonly string[],
+  tokens: readonly ArgvToken[],
+  usage: string,
+  count: { min: number; max: number },
+  required: ReadonlyArray<{ name: string; value: string }> = [],
+): string {
   const names = usageArgs(usage);
   const at = tokens.filter((t) => t.kind === 'positional').map((t) => t.index);
+  const added = required.filter((r) => !tokens.some((t) => t.kind === 'option' && t.name === r.name)).flatMap((r) => [`--${r.name}`, r.value]);
+  let out: string[];
   if (at.length < count.min) {
-    const missing = names.slice(at.length, count.min);
-    const out = [command, ...args, ...missing];
-    return commandLine(out, new Set(missing.map((_, i) => args.length + 1 + i)));
+    out = [command, ...withOptions(args, added), ...names.slice(at.length, count.min)];
+  } else {
+    // Extra words: an unquoted title or text (`create Fix login --status todo`) becomes one argument; anything else is dropped.
+    const extra = at.slice(count.max);
+    const joined = [...args];
+    if (['<title>', '<text>'].includes(names[count.max - 1] ?? '')) {
+      const first = at[count.max - 1] ?? 0;
+      joined[first] = [first, ...extra].map((i) => args[i]).join(' ');
+    }
+    out = [command, ...withOptions(joined.filter((_, i) => !extra.includes(i)), added)];
   }
-  // Extra words: an unquoted title or text (`create Fix login --status todo`) becomes one argument; anything else is dropped.
-  const extra = at.slice(count.max);
-  const joinsText = ['<title>', '<text>'].includes(names[count.max - 1] ?? '');
-  const out = [...args];
-  if (joinsText) {
-    const first = at[count.max - 1] ?? 0;
-    out[first] = [first, ...extra].map((i) => args[i]).join(' ');
-  }
-  return commandLine([command, ...out.filter((_, i) => !extra.includes(i))]);
+  return commandLine(out, new Set(out.flatMap((t, i) => (isPlaceholder(t) && !args.includes(t) ? [i] : []))));
 }
 
 interface OptionToken {
@@ -216,4 +235,71 @@ export function rejectRepeated(tokens: readonly OptionToken[], command: string, 
     const shown = values.length ? ` (${values.map((v) => JSON.stringify(v)).join(', ')})` : '';
     throw new LaneboardError('USAGE', `--${name} is given ${list.length} times${shown}; pass it once`, { fix: commandLine([command, ...kept], placeholders) });
   }
+}
+
+// Replace the offending value in argv with the suggestion, else a format or `allowed` placeholder.
+function replaceValue(argv: readonly string[], err: LaneboardError): string | undefined {
+  const input = err.input;
+  if (!input) return undefined;
+  const replacement = input.suggestion ?? input.format ?? (err.allowed?.length ? `<${input.field} from allowed>` : undefined);
+  if (replacement === undefined) return undefined;
+  const value = input.value;
+  // The value is a whole token, the tail of `--flag=value`, or the key of `key=value` (`--field priorty=1`).
+  const rewrite = (token: string): string | undefined => {
+    if (token === value) return replacement;
+    if (token.endsWith(`=${value}`)) return `${token.slice(0, token.length - value.length)}${replacement}`;
+    if (token.startsWith(`${value}=`)) return `${replacement}${token.slice(value.length)}`;
+    const inner = new RegExp(`^(--[^=]+=)${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(=.*)$`, 's').exec(token);
+    return inner ? `${inner[1] ?? ''}${replacement}${inner[2] ?? ''}` : undefined;
+  };
+  const flag = `--${input.field.replace(/_/g, '-')}`;
+  const hits: number[] = [];
+  argv.forEach((token, i) => {
+    if (rewrite(token) !== undefined) hits.push(i);
+  });
+  const index = hits.length === 1 ? hits[0] : hits.find((i) => argv[i - 1] === flag || argv[i]?.startsWith(`${flag}=`));
+  if (index === undefined) return undefined;
+  const out = [...argv];
+  out[index] = rewrite(out[index] ?? '') ?? replacement;
+  const placeholders = input.suggestion === undefined ? new Set([index]) : new Set<number>();
+  return commandLine(out, placeholders);
+}
+
+// Options that init derives or requires: when the value came from elsewhere (a derived prefix, a missing description), the fix adds the option.
+const ADDABLE_OPTIONS = new Set(['prefix', 'description']);
+
+// The edit a fix applies when the error has none of its own: add an init option that is not in argv yet, or `--as <your-name>`.
+function derivedEdit(argv: readonly string[], err: LaneboardError): FixEdit | undefined {
+  const input = err.input;
+  if (input && ADDABLE_OPTIONS.has(input.field) && !argv.some((t) => t === `--${input.field}` || t.startsWith(`--${input.field}=`))) {
+    const value = input.suggestion ?? input.format;
+    return value === undefined ? undefined : { add: [{ name: input.field, value }] };
+  }
+  // Only the command, so it can be run as given; the LANEBOARD_AGENT alternative is in the CLI message (format.ts cliMessage).
+  return err.code === 'ACTOR_REQUIRED' ? { add: [{ name: 'as', value: '<your-name>' }] } : undefined;
+}
+
+// The command a fix starts from when the command name is missing or not first: that name moved first, else `prime` (the agent's start).
+export function commandFirst(argv: readonly string[], isCommand: (token: string) => boolean): string {
+  const at = argv.findIndex(isCommand);
+  return commandLine(at < 0 ? ['prime', ...argv] : [argv[at] ?? '', ...argv.filter((_, i) => i !== at)]);
+}
+
+// The fix shown to a CLI user: the user's command changed by the error's edit, with the bad value replaced, or with a derived option
+// added; else the usage line (a USAGE without an edit), else the core fix.
+export function cliFix(
+  err: LaneboardError,
+  argv: readonly string[],
+  command: { name: string; usage: string; flags?: Readonly<Record<string, string>> } | undefined,
+  options: OptionSpec,
+): string {
+  if (err.edit && command) return editedCommand(argv, err.edit, options, command.flags);
+  const replaced = replaceValue(argv, err);
+  if (replaced) return replaced;
+  const edit = derivedEdit(argv, err);
+  if (edit) return editedCommand(argv, edit, options, command?.flags);
+  if ((err.code === 'USAGE' || err.code === 'UNKNOWN_OPTION') && err.fix === ERRORS[err.code].fix) {
+    return command ? `laneboard ${command.usage}` : 'laneboard <command from allowed> [options]';
+  }
+  return command ? err.fix.replace('<command>', command.name) : err.fix;
 }

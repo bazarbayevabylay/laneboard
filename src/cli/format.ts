@@ -1,5 +1,5 @@
-// Output for the CLI: JSON envelopes, human text, and error fixes rebuilt from argv.
-import { ERRORS, fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject } from '../core/index.ts';
+// Output for the CLI: JSON envelopes, human text and error blocks (the fixes themselves are built in argv.ts).
+import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject } from '../core/index.ts';
 import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import { age } from './board-view.ts';
@@ -7,75 +7,6 @@ import type { SetupResult } from '../setup/index.ts';
 
 export { shellQuote };
 
-
-// `laneboard <argv...>` with each token quoted, except placeholder tokens like `<name>`.
-export function commandLine(argv: readonly string[], placeholders: ReadonlySet<number> = new Set()): string {
-  return ['laneboard', ...argv.map((t, i) => (placeholders.has(i) ? t : shellQuote(t)))].join(' ');
-}
-
-// Replace the offending value in argv with the suggestion, else a format or `allowed` placeholder.
-function replaceValue(argv: readonly string[], err: LaneboardError): string | undefined {
-  const input = err.input;
-  if (!input) return undefined;
-  const replacement = input.suggestion ?? input.format ?? (err.allowed?.length ? `<${input.field} from allowed>` : undefined);
-  if (replacement === undefined) return undefined;
-  const value = input.value;
-  // The value is a whole token, the tail of `--flag=value`, or the key of `key=value` (`--field priorty=1`).
-  const rewrite = (token: string): string | undefined => {
-    if (token === value) return replacement;
-    if (token.endsWith(`=${value}`)) return `${token.slice(0, token.length - value.length)}${replacement}`;
-    if (token.startsWith(`${value}=`)) return `${replacement}${token.slice(value.length)}`;
-    const inner = new RegExp(`^(--[^=]+=)${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(=.*)$`, 's').exec(token);
-    return inner ? `${inner[1] ?? ''}${replacement}${inner[2] ?? ''}` : undefined;
-  };
-  const flag = `--${input.field.replace(/_/g, '-')}`;
-  const hits: number[] = [];
-  argv.forEach((token, i) => {
-    if (rewrite(token) !== undefined) hits.push(i);
-  });
-  const index = hits.length === 1 ? hits[0] : hits.find((i) => argv[i - 1] === flag || argv[i]?.startsWith(`${flag}=`));
-  if (index === undefined) return undefined;
-  const out = [...argv];
-  out[index] = rewrite(out[index] ?? '') ?? replacement;
-  const placeholders = input.suggestion === undefined ? new Set([index]) : new Set<number>();
-  return commandLine(out, placeholders);
-}
-
-// Options that init derives or requires: when the value came from elsewhere (a derived prefix, a missing description), the fix adds the option.
-const ADDABLE_OPTIONS = new Set(['prefix', 'description']);
-
-// The user's command plus `--<field> <suggestion or placeholder>` when that option is not in argv yet.
-function addMissingOption(argv: readonly string[], err: LaneboardError): string | undefined {
-  const input = err.input;
-  if (!input || !ADDABLE_OPTIONS.has(input.field)) return undefined;
-  const flag = `--${input.field}`;
-  if (argv.some((t) => t === flag || t.startsWith(`${flag}=`))) return undefined;
-  const value = input.suggestion ?? input.format;
-  if (value === undefined) return undefined;
-  const out = withOptions(argv, [flag, value]);
-  return commandLine(out, input.suggestion === undefined ? new Set([out.indexOf(value)]) : new Set());
-}
-
-// argv with extra option tokens inserted before `--` (after it they would be read as text).
-function withOptions(argv: readonly string[], extra: readonly string[]): string[] {
-  const end = argv.indexOf('--');
-  return end < 0 ? [...argv, ...extra] : [...argv.slice(0, end), ...extra, ...argv.slice(end)];
-}
-
-// The fix shown to a CLI user: a corrected command when one can be built, else the usage line, else the core fix.
-export function cliFix(err: LaneboardError, argv: readonly string[], command: { name: string; usage: string } | undefined): string {
-  const rebuilt = replaceValue(argv, err) ?? addMissingOption(argv, err);
-  if (rebuilt) return rebuilt;
-  if (err.code === 'ACTOR_REQUIRED') {
-    // Only the command, so it can be run as given; the LANEBOARD_AGENT alternative is in the CLI message (cliMessage).
-    const out = withOptions(argv, ['--as', '<your-name>']);
-    return commandLine(out, new Set([out.indexOf('<your-name>')]));
-  }
-  if ((err.code === 'USAGE' || err.code === 'UNKNOWN_OPTION') && err.fix === ERRORS[err.code].fix) {
-    return command ? `laneboard ${command.usage}` : 'laneboard <command from allowed> [options]';
-  }
-  return command ? err.fix.replace('<command>', command.name) : err.fix;
-}
 
 // The message a CLI user sees: ACTOR_REQUIRED also names the environment variable (the fix holds only the command).
 export function cliMessage(err: LaneboardError): LaneboardError {

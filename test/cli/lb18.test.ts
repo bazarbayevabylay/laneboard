@@ -62,6 +62,15 @@ describe('LB-18: create without --status', () => {
     expect((await cli(shellArgv(err.fix), { cwd: s.root })).code).toBe(0);
   });
 
+  it('CLI: extra words without --status: one fix joins the title and adds the first status, and it runs', async () => {
+    const s = await seeded(['backlog', 'doing', 'done']);
+    const err = await errorOf(s, ['create', 'Fix', 'login', '--as', 'a']);
+    expect(err.fix).toBe("laneboard create 'Fix login' --as a --json --status backlog");
+    const r = await cli(shellArgv(err.fix), { cwd: s.root });
+    expect(r.code, r.stdout).toBe(0);
+    expect(JSON.parse(r.stdout).data).toMatchObject({ id: 'LB-3', status: 'backlog' });
+  });
+
   it('MCP: the same USAGE with the first status in fix and allowed; calling with it creates the task', async () => {
     const s = await seeded(['backlog', 'doing', 'done']);
     const env = { cwd: s.root, env: {} };
@@ -82,8 +91,10 @@ describe('LB-18: create without --status', () => {
 // [argv, fix]: every USAGE error the CLI raises (src/cli and the core ops it calls) and its one-command fix.
 const USAGE_CASES: Array<[string[], string]> = [
   [['create', 'T', '--as', 'a'], 'laneboard create T --as a --json --status todo'],
-  [['create', '--as', 'a'], 'laneboard create --as a --json <title>'],
+  [['create', '--as', 'a'], 'laneboard create --as a --json --status todo <title>'],
   [['create', 'Fix', 'login', '--status', 'todo', '--as', 'a'], "laneboard create 'Fix login' --status todo --as a --json"],
+  [['create', 'Fix', 'login', '--as', 'a'], "laneboard create 'Fix login' --as a --json --status todo"],
+  [['create', 'Fix', 'login', '--status=todo', '--as', 'a'], "laneboard create 'Fix login' --status=todo --as a --json"],
   [['create', 'x', '--description', 'a', '--description-file', 'b', '--status', 'todo', '--as', 'a'], 'laneboard create x --description a --status todo --as a --json'],
   [['create', 'x', '--status'], 'laneboard create x --status <value> --json'],
   [['update', 'LB-1', '--as', 'a'], 'laneboard update LB-1 --as a --json --status <status>'],
@@ -111,7 +122,10 @@ const USAGE_CASES: Array<[string[], string]> = [
   [['list', '--json=1'], 'laneboard list --json'],
   [['list', '--dir', '.laneboard', '--board', '.laneboard'], 'laneboard list --board .laneboard --json'],
   [['view', '--watch'], 'laneboard view --json'],
-  [['prime', '--hook', '--edit-hook'], 'laneboard prime --hook'],
+  // A mode for people or a hook with --json (ADR §23): the fix keeps --json and drops the mode.
+  [['prime', '--hook'], 'laneboard prime --json'],
+  [['prime', '--edit-hook'], 'laneboard prime --json'],
+  [['prime', '--hook', '--edit-hook'], 'laneboard prime --json'],
   [['import', 'json', 'src'], 'laneboard import json src --json --status-key <source key of the status>'],
   [['import', 'json', 'src', '--status-key', 'state', '--status-map', 'a=todo', '--status-map', 'a=done', '--dry-run'], 'laneboard import json src --status-key state --status-map a=todo --dry-run --json'],
   [['import', 'markdown', 'src', '--status-key', 'state', '--history-key', 'h', '--dry-run'], 'laneboard import markdown src --status-key state --dry-run --json'],

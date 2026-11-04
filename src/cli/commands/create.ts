@@ -1,8 +1,20 @@
 // laneboard create
-import { createTask, parseLinkArg } from '../../core/index.ts';
+import { createTask, LaneboardError, loadConfig, parseLinkArg, resolveStore } from '../../core/index.ts';
+import type { DiscoveryInput } from '../../core/index.ts';
 import { description, list, str } from './args.ts';
 import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
+
+// The first status of the store create would write to (where new work starts); `<status>` while no store is readable.
+function firstStatus(discovery: DiscoveryInput): string {
+  try {
+    return loadConfig(resolveStore(discovery).dir).statuses[0] ?? '<status>';
+  } catch (err) {
+    // No store or a broken one: the fix keeps the placeholder, and running it reports the store problem itself.
+    if (err instanceof LaneboardError) return '<status>';
+    throw err;
+  }
+}
 
 export const create: CommandDef = {
   name: 'create',
@@ -20,6 +32,7 @@ export const create: CommandDef = {
   },
   args: { min: 1, max: 1 },
   flags: { status: '--status' },
+  required: (discovery) => [{ name: 'status', value: firstStatus(discovery) }],
   async run(c) {
     const r = await createTask(c.op(), {
       title: c.positionals[0] ?? '',

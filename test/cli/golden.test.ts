@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { ERROR_CODES, ERRORS } from '../../src/core/index.ts';
 import type { ErrorCode } from '../../src/core/index.ts';
-import { commandLine } from '../../src/cli/format.ts';
+import { commandLine } from '../../src/cli/argv.ts';
 import { acquireLock } from '../../src/core/lock.ts';
 import { cleanupTemp, cli, readStore, tempDir, writeRaw } from '../helpers.ts';
 import type { CliRun } from '../helpers.ts';
