@@ -26,14 +26,15 @@
     "url": "git+https://github.com/bazarbayevabylay/laneboard.git"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && vue-tsc --noEmit -p src/board/ui/tsconfig.json",
     "check:boundaries": "bash scripts/check-boundaries.sh",
     "gen:schema": "node scripts/gen-schema.ts",
     "check:schema": "node scripts/gen-schema.ts --check",
     "gen:skill": "node scripts/gen-skill.ts",
     "check:skill": "node scripts/gen-skill.ts --check",
     "test": "vitest run",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/core/agent-rules.md dist/core/agent-rules.md",
+    "build": "rm -rf dist && vite build --config src/board/ui/vite.config.ts --logLevel warn && tsc -p tsconfig.build.json && cp src/core/agent-rules.md dist/core/agent-rules.md",
+    "test:e2e": "playwright test",
     "prepack": "npm run build"
   },
   "dependencies": {
@@ -44,9 +45,14 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "22.20.5",
     "@types/proper-lockfile": "4.1.4",
+    "@vitejs/plugin-vue": "6.0.10",
     "typescript": "6.0.3",
-    "vitest": "5.0.5"
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "vue": "3.5.44",
+    "vue-tsc": "3.3.13"
   }
 }
