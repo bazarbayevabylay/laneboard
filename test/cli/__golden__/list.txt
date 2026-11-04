@@ -12,6 +12,6 @@ LB-1  todo    -         1    YYYY-MM-DDTHH:MM:SS.mmmZ  Fix login
 $ laneboard list --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"items":[{"id":"LB-2","title":"Add dark mode","status":"review","assignee":"dev-2","labels":[],"parent":null,"last_comment":null,"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false},{"id":"LB-1","title":"Fix login","status":"todo","assignee":null,"labels":[],"parent":null,"last_comment":null,"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false}],"scope":"active","limit":20,"offset":0,"total":2},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"items":[{"id":"LB-2","title":"Add dark mode","status":"review","assignee":"dev-2","labels":[],"parent":null,"last_comment":null,"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false,"handed_in":false,"in_work":true,"stale":false},{"id":"LB-1","title":"Fix login","status":"todo","assignee":null,"labels":[],"parent":null,"last_comment":null,"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false,"handed_in":false,"in_work":false,"stale":false}],"scope":"active","limit":20,"offset":0,"total":2},"warnings":[]}
 --- stderr
 

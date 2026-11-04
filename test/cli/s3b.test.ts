@@ -60,20 +60,22 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
   const STATUS_LINE = (todo: number, inProgress: number) => `Statuses in order (final: done), active tasks: todo ${todo}, in_progress ${inProgress}, review 0; done 0`;
   const FIELDS_LINE = 'Fields (--field key=value): priority (number, 0 = highest)';
 
-  // A store whose path is exactly `len` characters, like the real Projects/laneboard/.laneboard (85).
-  async function storeAt(len: number): Promise<{ root: string; dir: string }> {
+  // A store whose path is exactly `len` characters, like the real Projects/laneboard/.laneboard (85), registered under `home` (S6i: the
+  // hook shows a board's texts only when it is in the machine registry).
+  async function storeAt(len: number, home: string): Promise<{ root: string; dir: string }> {
     const base = tempDir();
     const root = path.join(base, 'p'.repeat(len - base.length - '/'.length - '/.laneboard'.length));
     fs.mkdirSync(root);
-    const r = await cli(['init', '--dir', '.laneboard', '--name', 'shop', '--description', 'Shop backend and admin panel: orders, payments, refunds', '--json'], { cwd: root, env: { HOME: tempDir(), ...SESSION_A } });
+    const r = await cli(['init', '--dir', '.laneboard', '--name', 'shop', '--description', 'Shop backend and admin panel: orders, payments, refunds', '--json'], { cwd: root, env: { HOME: home, ...SESSION_A } });
     expect(r.code, r.stdout).toBe(0);
     return { root, dir: path.join(root, '.laneboard') };
   }
 
   it('the review input: 85-character store path, one task of an earlier session, three free tasks; prime, prime --dir, prime --hook after /clear', async () => {
-    const { root, dir } = await storeAt(85);
+    const home = tempDir();
+    const { root, dir } = await storeAt(85, home);
     expect(dir.length).toBe(85);
-    const env = (s: Record<string, string>) => ({ HOME: tempDir(), ...s });
+    const env = (s: Record<string, string>) => ({ HOME: home, ...s });
     await cli(['create', 'Add discount to total()', '--status', 'in_progress', '--assignee', NAME_A, '--json'], { cwd: root, env: env(SESSION_A) });
     for (const i of [1, 2, 3]) await cli(['create', `Free task ${i}`, '--status', 'todo', '--as', 'x', '--json'], { cwd: root, env: env({}) });
     const runs = [
