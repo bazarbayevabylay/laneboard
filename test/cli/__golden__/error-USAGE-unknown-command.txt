@@ -5,12 +5,12 @@ exit 2
 
 --- stderr
 error USAGE: unknown command "craete"
-  allowed: create, get, list, update, claim, comment, finish, attach, archive, restore, delete, events, init, config, setup, import, prime, view, boards, mcp, migrate, doctor
+  allowed: create, get, list, update, claim, comment, finish, attach, archive, restore, delete, events, init, config, setup, import, prime, view, board, boards, mcp, migrate, doctor
   fix: laneboard create x
 
 $ laneboard craete x --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"unknown command \"craete\"","fix":"laneboard create x --json","allowed":["create","get","list","update","claim","comment","finish","attach","archive","restore","delete","events","init","config","setup","import","prime","view","boards","mcp","migrate","doctor"]}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"unknown command \"craete\"","fix":"laneboard create x --json","allowed":["create","get","list","update","claim","comment","finish","attach","archive","restore","delete","events","init","config","setup","import","prime","view","board","boards","mcp","migrate","doctor"]}}
 --- stderr
 

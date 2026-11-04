@@ -36,3 +36,5 @@ export { agentRules, shortRuleForms, skillMarkdown } from './rules.ts';
 export type { ShortRule } from './rules.ts';
 export { OPS } from './ops/registry.ts';
 export type { OpName } from './ops/registry.ts';
+export { watchStore } from './watch.ts';
+export type { StoreChange, WatchOptions } from './watch.ts';
