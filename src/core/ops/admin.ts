@@ -6,9 +6,9 @@ import { buildConfig, configPath, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES
 import { LaneboardError } from '../errors.ts';
 import { shellQuote } from '../shell.ts';
 import { ensureDir, listOrphanTmp, removeDir, removeFile, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
-import { freePrefix, registerStore, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
+import { checkPrefixFree, prefixTaken, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
-import type { ConfigT, FileKind } from '../schema.ts';
+import type { ConfigT, FileKind, TaskT } from '../schema.ts';
 import { backupPath, contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, samePath, serializeStoreFile, STORE_DIR_NAME, storeFilePath, validateStoreJson } from '../store.ts';
 import type { HeldLock, LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
@@ -76,16 +76,6 @@ function enclosingStore(target: string): string | undefined {
   return undefined;
 }
 
-// INVALID_VALUE for a prefix another live board uses, with a free one as the suggestion.
-function prefixTaken(prefix: string, owner: string, taken: ReadonlyMap<string, string>): LaneboardError {
-  const free = freePrefix(prefix, taken);
-  return new LaneboardError('INVALID_VALUE', `prefix ${prefix} is already used by the board at ${owner}; two boards with one prefix have look-alike ids`, {
-    input: { field: 'prefix', value: prefix, suggestion: free },
-    details: { taken: [...taken.keys()].sort() },
-    fix: `pick a free prefix: --prefix ${free}`,
-  });
-}
-
 // A prefix in the id format (1-10 uppercase letters and digits, starting with a letter); INVALID_VALUE otherwise.
 function checkPrefix(prefix: string): string {
   if (!PREFIX_RE.test(prefix)) {
@@ -95,6 +85,22 @@ function checkPrefix(prefix: string): string {
     });
   }
   return prefix;
+}
+
+// A status list (init, config --statuses): each status in the status format and listed once; the order is the board's, the last is final.
+function checkStatuses(statuses: readonly string[]): string[] {
+  for (const status of statuses) {
+    if (!STATUS_RE.test(status)) {
+      throw new LaneboardError('INVALID_VALUE', `status "${status}" must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, {
+        input: { field: 'statuses', value: status },
+        fix: 'use letters, digits, dot, dash or underscore in each status, comma-separated: --statuses todo,doing,done',
+      });
+    }
+  }
+  if (unique(statuses).length !== statuses.length) {
+    throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`, { fix: `list each status once: --statuses ${unique(statuses).join(',')}` });
+  }
+  return [...statuses];
 }
 
 // Folder whose name gives the default prefix: the project of `<project>/.laneboard`, else the store directory itself.
@@ -121,18 +127,7 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
     warnings.push(`no prefix could be derived from the name "${name}", so ids use ${DEFAULT_PREFIX}; pick one with laneboard init --prefix <PREFIX>`);
   }
   const prefix = checkPrefix(p.prefix ?? derived ?? DEFAULT_PREFIX);
-  const statuses = p.statuses ?? DEFAULT_STATUSES;
-  for (const status of statuses) {
-    if (!STATUS_RE.test(status)) {
-      throw new LaneboardError('INVALID_VALUE', `status "${status}" must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`, {
-        input: { field: 'statuses', value: status },
-        fix: 'use letters, digits, dot, dash or underscore in each status, comma-separated: --statuses todo,doing,done',
-      });
-    }
-  }
-  if (unique(statuses).length !== statuses.length) {
-    throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`, { fix: `list each status once: --statuses ${unique(statuses).join(',')}` });
-  }
+  const statuses = checkStatuses(p.statuses ?? DEFAULT_STATUSES);
   // `<home>/.laneboard` is the machine's board registry (with its own lock): a board there would lock itself out and hide the registry.
   if (opts.home !== undefined && samePath(target, registryDir(opts.home))) {
     throw new LaneboardError('STORE_EXISTS', `${target} is this machine's board registry (laneboard boards), so no board can be created there`, {
@@ -183,6 +178,9 @@ export const ConfigureInput = z.strictObject({
   description: z.string().optional(),
   // New id prefix: only while the board has no task at all (active or archived), since ids carry it.
   prefix: z.string().optional(),
+  // The whole new status list in order, the last one final (`config --statuses a,b,c`): add and reorder freely; a status dropped from
+  // the list must hold no active task (ADR-0001 §33).
+  statuses: z.array(z.string()).min(1).optional(),
 });
 export type ConfigureInputT = z.infer<typeof ConfigureInput>;
 
@@ -190,6 +188,8 @@ export interface ConfigureResult {
   name: string | null;
   description: string | null;
   prefix: string;
+  // Statuses in order; the last one is final.
+  statuses: string[];
   // Whether config.json was rewritten.
   changed: boolean;
 }
@@ -205,49 +205,116 @@ function checkNoTasks(storeDir: string, from: string, to: string): void {
   });
 }
 
-// Show or change the board name, description and prefix (`laneboard config`); the prefix changes only while the board has no
-// task (ids keep it) and must be free on this machine. Refreshes the registry.
+// Ids shown in a message before "+N more".
+const IDS_SHOWN = 5;
+
+// INVALID_VALUE for dropping statuses that active tasks are still in: nothing is written, the tasks move first (one update each), so
+// no task is left in a status the board no longer has. The fix lists exactly those tasks.
+function statusInUse(storeDir: string, inUse: ReadonlyArray<{ status: string; tasks: string[] }>): LaneboardError {
+  const total = inUse.reduce((n, u) => n + u.tasks.length, 0);
+  const named = inUse.map((u) => {
+    const more = u.tasks.length > IDS_SHOWN ? `, +${u.tasks.length - IDS_SHOWN} more` : '';
+    return `${u.status} (${u.tasks.length}: ${u.tasks.slice(0, IDS_SHOWN).join(', ')}${more})`;
+  });
+  return new LaneboardError(
+    'INVALID_VALUE',
+    `cannot remove ${inUse.length === 1 ? 'a status' : 'statuses'} that ${total} active task(s) are in: ${named.join('; ')}; ` +
+      'move each of them to a status you keep (laneboard update <ID> --status <status>), then run this command again ' +
+      '(a new name for a status: add the new name, move the tasks, then drop the old name)',
+    {
+      details: { in_use: inUse.map((u) => ({ status: u.status, tasks: u.tasks })) },
+      fix: `laneboard list ${inUse.map((u) => `--status ${u.status}`).join(' ')} --dir ${shellQuote(storeDir)} --json`,
+    },
+  );
+}
+
+// The warning of a new final status (the last of the list): which active tasks stop or start counting as closed, and what follows it.
+function finalChanged(before: readonly string[], after: readonly string[], active: readonly TaskT[]): string | undefined {
+  const from = before.at(-1);
+  const to = after.at(-1);
+  if (from === undefined || to === undefined || from === to) return undefined;
+  const count = (status: string): number => active.filter((t) => t.status === status).length;
+  return (
+    `the final status changes from ${from} to ${to}: active tasks in ${from} (${count(from)}) no longer count as closed, those in ${to} (${count(to)}) do; ` +
+    `finish, accepting handed-in tasks and the in-work and stale marks now use ${to}`
+  );
+}
+
+// Show or change the board name, description, prefix and statuses (`laneboard config`); the prefix changes only while the board has
+// no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it. Name,
+// description and prefix refresh the registry, whose check keeps the prefix unique among live boards (also for an unchanged one).
 export async function configureStore(ctx: OpContext, input: ConfigureInputT): Promise<OpResult<ConfigureResult>> {
   const p = parseInput(ConfigureInput, input);
   const warnings: string[] = [];
-  const change = p.name !== undefined || p.description !== undefined || p.prefix !== undefined;
+  const registers = p.name !== undefined || p.description !== undefined || p.prefix !== undefined;
+  const change = registers || p.statuses !== undefined;
   if (change && ctx.store.readOnly) {
     throw new LaneboardError('STORE_READ_ONLY', `${ctx.store.dir} was opened with --board, which is read-only`, { fix: 'change your own board without --board' });
   }
   const name = p.name === undefined ? undefined : checkBoardText(BoardName, p.name, 'name');
   const description = p.description === undefined ? undefined : checkBoardText(BoardDescription, p.description, 'description');
   const prefix = p.prefix === undefined ? undefined : checkPrefix(p.prefix);
+  const statuses = p.statuses === undefined ? undefined : checkStatuses(p.statuses);
   const read = (): ConfigT => loadConfig(ctx.store.dir);
-  const result = (config: ConfigT, changed: boolean): ConfigureResult => ({ name: config.name ?? null, description: config.description ?? null, prefix: config.prefix, changed });
+  const result = (config: ConfigT, changed: boolean): ConfigureResult => ({
+    name: config.name ?? null,
+    description: config.description ?? null,
+    prefix: config.prefix,
+    statuses: [...config.statuses],
+    changed,
+  });
   if (!change) return { data: result(read(), false), warnings };
+  // Under the store lock, the lock of every task write (transact): no task can enter a dropped status between the check and the write.
   const write = (): Promise<ConfigureResult> =>
     withLock(ctx.store, ctx, (lock) => {
       const before = read();
       if (prefix !== undefined && prefix !== before.prefix) checkNoTasks(ctx.store.dir, before.prefix, prefix);
+      let active: TaskT[] = [];
+      if (statuses !== undefined) {
+        active = readStoreFile(ctx.store.dir, 'active', warnings).data.tasks;
+        const archived = readStoreFile(ctx.store.dir, 'archive', warnings).data.tasks;
+        const removed = before.statuses.filter((st) => !statuses.includes(st));
+        const inUse = removed.map((status) => ({ status, tasks: active.filter((t) => t.status === status).map((t) => t.id) })).filter((u) => u.tasks.length > 0);
+        if (inUse.length) throw statusInUse(ctx.store.dir, inUse);
+        // Archived tasks are read-only: they keep a dropped status and are read as an unknown one (§2), so they do not block.
+        for (const status of removed) {
+          const n = archived.filter((t) => t.status === status).length;
+          if (n) warnings.push(`${n} archived task(s) keep the removed status ${status}: they stay readable as an unknown status, and restore brings them back in it (then laneboard update <ID> --status <status>)`);
+        }
+      }
       const next = validateConfig(
-        { ...before, ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}), ...(prefix !== undefined ? { prefix } : {}) },
+        {
+          ...before,
+          ...(name !== undefined ? { name } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(prefix !== undefined ? { prefix } : {}),
+          ...(statuses !== undefined ? { statuses } : {}),
+        },
         'config.json',
       );
       if (serializeConfig(next) === serializeConfig(before)) return result(before, false);
       lock.assertHeld();
       writeFileAtomic(configPath(ctx.store.dir), serializeConfig(next), 0o644);
+      const final = finalChanged(before.statuses, next.statuses, active);
+      if (final !== undefined) warnings.push(final);
       return result(next, true);
     });
+  // The registry holds no statuses: a status change alone leaves it alone.
+  if (!registers) return { data: await write(), warnings };
   if (ctx.home === undefined) {
     const data = await write();
     warnings.push(`HOME is not set, so the machine registry (laneboard boards) was not updated${prefix !== undefined ? ' and the prefix was not checked against other boards' : ''}`);
     return { data, warnings };
   }
-  if (prefix === undefined) {
-    const data = await write();
-    await registerStore(ctx.home, ctx.store.dir, ctx);
-    return { data, warnings };
-  }
-  // A new prefix: like init, the registry lock is held around the check and the write, so two boards cannot take one prefix.
+  // Like init, the registry lock is held around the prefix check and the write, so two boards cannot take one prefix. An unchanged
+  // prefix is checked too: a copied project folder must not register a second board with the same ids (review S5c MINOR).
   const data = await updateRegistry(ctx.home, ctx, async (entries) => {
-    const taken = takenPrefixes(entries, ctx.store.dir);
-    const owner = taken.get(prefix);
-    if (owner !== undefined) throw prefixTaken(prefix, owner, taken);
+    if (prefix === undefined) checkPrefixFree(entries, ctx.store.dir, read().prefix);
+    else {
+      const taken = takenPrefixes(entries, ctx.store.dir);
+      const owner = taken.get(prefix);
+      if (owner !== undefined) throw prefixTaken(prefix, owner, taken);
+    }
     const written = await write();
     const entry = { path: ctx.store.dir, prefix: written.prefix, name: written.name, description: written.description, registered_at: new Date().toISOString() };
     return { entries: upsertEntry(entries, entry), result: written };

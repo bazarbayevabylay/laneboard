@@ -1,7 +1,7 @@
 // laneboard init
 import { initStore, initTarget } from '../../core/index.ts';
 import { shellQuote } from '../format.ts';
-import { flag, str } from './args.ts';
+import { commaList, flag, str } from './args.ts';
 import type { CommandDef } from './types.ts';
 
 // What follows init: prime prints the agent rules, the board and the command that creates the agent's task. A board made by --dir
@@ -33,7 +33,6 @@ export const init: CommandDef = {
   async run(c) {
     const target = initTarget(c.discovery);
     c.setStore(target);
-    const statuses = str(c.values, 'statuses');
     // A target from LANEBOARD_DIR may be another project's pin: STORE_EXISTS then offers this folder's own board.
     const envCwd = c.discovery.dir === undefined && c.discovery.envDir ? c.io.cwd : undefined;
     const next = nextStep(target, c.discovery.dir !== undefined);
@@ -43,7 +42,7 @@ export const init: CommandDef = {
         name: str(c.values, 'name'),
         description: str(c.values, 'description'),
         prefix: str(c.values, 'prefix'),
-        statuses: statuses === undefined ? undefined : statuses.split(',').map((s) => s.trim()),
+        statuses: commaList(c.values, 'statuses'),
         gitignore: !flag(c.values, 'no-gitignore'),
       },
       { lockWaitMs: c.io.lockWaitMs, home: c.io.env.HOME || undefined, envCwd },

@@ -51,7 +51,8 @@ Run both in the project root. `init` creates the board `./.laneboard` and adds i
 and adds a 3-line instruction block, pinned to that store. A board has a name and a one-line description (whose project, what work);
 the id prefix is derived from the name, at most 4 characters: the initials of its words (`my-web-app` -> `MWA`) or the start of one word
 (`demo` -> `DEMO`), a trailing number kept. `--prefix` sets your own; `laneboard config --prefix` changes it while the board has no task.
-It must be free on this machine (a taken one fails with a free one in `fix`).
+It must be free on this machine (a taken one fails with a free one in `fix`); `init`, `config` and `setup` check it, so a copied project folder
+with its `.laneboard` stays out of the registry until it has a prefix of its own.
 
 ```sh
 laneboard init --name demo --description "Demo project: the examples of this guide"
@@ -269,11 +270,22 @@ So under the default name `prime` starts by saying that a subagent or parallel w
 }
 ```
 
-`init --statuses` sets the statuses at the start; `prime` shows the current ones.
+`init --statuses` sets the statuses at the start; `prime` shows the current ones. The owner or the orchestrator changes them later with
+`laneboard config --statuses a,b,c`: the whole list in order, the last one final; adding and reordering are free. Agents never change statuses.
+A status that active tasks are in cannot be dropped: the error names their count and ids, and its `fix` lists them (`list --status <s> --dir <store>`);
+move each with `update <ID> --status <status>`, then run `config` again. Archived tasks keep a dropped status and read as an unknown one.
+A new name for a status: add it, move the tasks, drop the old one. A new final status gives a warning: tasks in the old final one count as open again,
+and acceptance, in-work and stale marks follow the new list.
 
 ```sh
 laneboard prime --as dev-1
 laneboard create "Pick a CSV library" --status blocked --field project=reports --field acceptance=streaming,utf-8 --json
+```
+
+```sh
+laneboard config --statuses todo,in_progress,review,blocked,qa,done --json
+laneboard config --statuses todo,in_progress,review,done --json  # exit 2
+laneboard config --statuses todo,in_progress,review,blocked,done --json
 ```
 
 ### 3.2 Which store a command uses

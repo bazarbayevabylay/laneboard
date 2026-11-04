@@ -4,12 +4,13 @@ exit 0
 --- stdout
 updated config.json: Web shop (prefix LB)
   ACME web shop: checkout and cart
+  statuses: todo, in_progress, review, done (final: done)
 --- stderr
 
 
 $ laneboard config --name 'Web shop' --description 'ACME web shop: checkout and cart' --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"name":"Web shop","description":"ACME web shop: checkout and cart","prefix":"LB","changed":true},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"name":"Web shop","description":"ACME web shop: checkout and cart","prefix":"LB","statuses":["todo","in_progress","review","done"],"changed":true},"warnings":[]}
 --- stderr
 

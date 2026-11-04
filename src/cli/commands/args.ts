@@ -16,6 +16,11 @@ export function list(values: Values, name: string): string[] | undefined {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
 }
 
+// Comma-separated option value as a list (`--statuses todo,doing,done`), each item trimmed.
+export function commaList(values: Values, name: string): string[] | undefined {
+  return str(values, name)?.split(',').map((item) => item.trim());
+}
+
 // Boolean flag.
 export function flag(values: Values, name: string): boolean {
   return values[name] === true;
