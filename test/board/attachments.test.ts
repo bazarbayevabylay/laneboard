@@ -1,12 +1,14 @@
 // Attachment files of the web board (ADR-0001 §31, S5w2): GET /api/tasks/:id/attachments/:name under the same Host and token rules,
 // the token as ?token=; inline only for png/jpeg/gif/webp, everything else a sandboxed, never-sniffed octet-stream download;
 // the file is picked by the task's metadata and read only from attachments/<id>/ (no traversal, no planted links).
+import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { archiveTasks, attachFile, createTask, STALE_AFTER_MS, WAITING_OWNER_LABEL } from '../../src/core/index.ts';
-import { attachmentHeaders, attachmentPath } from '../../src/board/server/attachments.ts';
+import { attachmentHeaders, attachmentPath, attachmentReply, openAttachment } from '../../src/board/server/attachments.ts';
 import { inlineImageType } from '../../src/board/server/attachment-types.ts';
 import { notBuiltText, startBoardServer } from '../../src/board/server/http.ts';
 import { hasDotSegment } from '../../src/board/server/security.ts';
@@ -171,7 +173,25 @@ describe('attachment files: access and paths', () => {
 
   it('a raw path with a . or .. segment (also %2e-escaped) is refused before routing', () => {
     for (const p of ['/api/tasks/LB-1/attachments/..', '/a/../b', '/a/./b', '/a/%2e%2e/b', '/a/%2E./b', '/a/.%2e?x=1', '/..']) expect(hasDotSegment(p), p).toBe(true);
-    for (const p of ['/', '/api/tasks/LB-1/attachments/a..b', '/api/x?q=/../', '/a/...', '/a/%2e%2e%2fb', '/assets/app-1.js']) expect(hasDotSegment(p), p).toBe(false);
+    // A backslash (and its escape) ends a segment too: the URL parser reads `\` as `/` in http URLs.
+    for (const p of ['/api/tasks/x\\..\\..\\board', '/a\\.\\b', '/a/b\\..', '/a%5C..%5Cb', '/a%5c%2e%2e%5cb', '/a\\%2E%2e/b']) expect(hasDotSegment(p), p).toBe(true);
+    for (const p of ['/', '/api/tasks/LB-1/attachments/a..b', '/api/x?q=/../', '/a/...', '/a/%2e%2e%2fb', '/assets/app-1.js', '/a\\..b', '/a%5C...']) expect(hasDotSegment(p), p).toBe(false);
+  });
+
+  it('dot segments behind a backslash never resolve into another route: 404, not the board', async () => {
+    const { server } = await served();
+    const header = { 'X-Laneboard-Token': server.token };
+    // The control: the URL parser does turn the backslashes into this route.
+    expect(new URL('http://127.0.0.1/api/tasks/x\\..\\..\\board').pathname).toBe('/api/board');
+    for (const p of ['/api/tasks/x\\..\\..\\board', '/api/tasks/x\\%2e%2e\\%2e%2e\\board', '/api/tasks/x%5C..%5C..%5Cboard']) {
+      const r = await get(server, p, header);
+      expect(r.status, p).toBe(404);
+      expect(r.body.toString(), p).not.toContain('"columns"');
+    }
+    const q = `?token=${server.token}`;
+    const r = await get(server, `/api/tasks/LB-1/attachments/gate.log\\..\\..\\..\\boards${q}`);
+    expect(r.status).toBe(404);
+    expect(r.body.toString()).not.toContain('"ok":true');
   });
 
   it('a file replaced by a link (planted by hand) is not followed: 404', async () => {
@@ -182,6 +202,99 @@ describe('attachment files: access and paths', () => {
     const r = await get(server, fileUrl(server, 'LB-1', 'gate.log'));
     expect(r.status).toBe(404);
     expect(r.body.toString()).not.toContain('"prefix"');
+  });
+
+  it('the task folder replaced by a link out of the store: 404, the outside file is never sent', async () => {
+    const { s, server } = await served();
+    const outside = tempDir();
+    fs.writeFileSync(path.join(outside, 'gate.log'), 'SECRET-VIA-DIR-LINK');
+    const dir = path.join(s.dir, 'attachments', 'LB-1');
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.symlinkSync(outside, dir);
+    const r = await get(server, fileUrl(server, 'LB-1', 'gate.log'));
+    expect(r.status).toBe(404);
+    expect(r.body.toString()).not.toContain('SECRET');
+  });
+
+  it('the whole attachments/ folder replaced by a link out of the store: 404, the outside file is never sent', async () => {
+    const { s, server } = await served();
+    const outside = tempDir();
+    fs.mkdirSync(path.join(outside, 'LB-1'));
+    fs.writeFileSync(path.join(outside, 'LB-1', 'gate.log'), 'SECRET-VIA-ROOT-LINK');
+    const root = path.join(s.dir, 'attachments');
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.symlinkSync(outside, root);
+    const r = await get(server, fileUrl(server, 'LB-1', 'gate.log'));
+    expect(r.status).toBe(404);
+    expect(r.body.toString()).not.toContain('SECRET');
+  });
+
+  it('a store reached through a linked path of its own still serves (only links inside the store are refused)', async () => {
+    const { s } = await served();
+    const via = path.join(tempDir(), 'store-link');
+    fs.symlinkSync(s.dir, via);
+    const server = await startBoardServer({ port: 0, current: { dir: via }, uiDir: tempDir() });
+    running.push(server);
+    const r = await get(server, fileUrl(server, 'LB-1', 'gate.log'));
+    expect(r.status).toBe(200);
+    expect(r.body.toString()).toBe('gate 0\n');
+  });
+
+  it('a FIFO in place of the file (planted by hand) does not hang the server: 404', async () => {
+    const { s, server } = await served();
+    const file = path.join(s.dir, 'attachments', 'LB-1', 'gate.log');
+    fs.rmSync(file, { force: true });
+    execFileSync('mkfifo', [file]);
+    const r = await get(server, fileUrl(server, 'LB-1', 'gate.log'));
+    expect(r.status).toBe(404);
+    expect((await get(server, fileUrl(server, 'LB-1', 'shot.png'))).status).toBe(200);
+  });
+
+  it('a file is streamed: every byte of a 3 MiB file, Content-Length from the open descriptor', async () => {
+    const { s, server } = await served();
+    const big = crypto.randomBytes(3 * 1024 * 1024 + 7);
+    const file = path.join(s.dir, 'attachments', 'LB-1', 'gate.log');
+    // Stored files are read-only: replace, not overwrite.
+    fs.rmSync(file);
+    fs.writeFileSync(file, big);
+    const r = await get(server, fileUrl(server, 'LB-1', 'gate.log'));
+    expect(r.status).toBe(200);
+    expect(r.headers['content-length']).toBe(String(big.length));
+    expect(r.body.equals(big)).toBe(true);
+  });
+
+  it('the bytes come from the descriptor opened at the check: a file swapped after the open is not what is read', async () => {
+    const { s } = await served();
+    const file = path.join(s.dir, 'attachments', 'LB-1', 'gate.log');
+    const opened = await openAttachment({ dir: s.dir }, 'LB-1', 'gate.log');
+    if (typeof opened === 'string') throw new Error(opened);
+    try {
+      fs.rmSync(file);
+      fs.symlinkSync(path.join(s.dir, 'config.json'), file);
+      expect(opened.size).toBe(7);
+      expect((await opened.handle.readFile()).toString()).toBe('gate 0\n');
+    } finally {
+      await opened.handle.close();
+    }
+  });
+
+  it('a file over 2 GiB is served (no whole-file read, no false 404): 200 with its size', async () => {
+    const { s } = await served();
+    const size = 3 * 1024 * 1024 * 1024;
+    // Sparse: no disk space is used, and the body is never read here (stored files are read-only: replace, not overwrite).
+    const file = path.join(s.dir, 'attachments', 'LB-1', 'gate.log');
+    fs.rmSync(file);
+    fs.writeFileSync(file, '');
+    fs.truncateSync(file, size);
+    const reply = await attachmentReply({ current: { dir: s.dir, readOnly: true } }, new URL('http://127.0.0.1/api/tasks/LB-1/attachments/gate.log'));
+    expect(reply.status).toBe(200);
+    if (!('file' in reply)) throw new Error(JSON.stringify(reply));
+    try {
+      expect(reply.size).toBe(size);
+      expect(reply.headers['Content-Length']).toBe(String(size));
+    } finally {
+      await reply.file.close();
+    }
   });
 
   it('an unknown task is TASK_NOT_FOUND 404, a malformed %-escape in the name is 400', async () => {

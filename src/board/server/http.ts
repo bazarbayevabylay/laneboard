@@ -3,12 +3,14 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { LaneboardError } from '../../core/index.ts';
 import type { StoreRef } from '../../core/index.ts';
 import { apiRoute, errorReply, eventStore } from './api.ts';
 import type { ApiReply } from './api.ts';
 import { ATTACHMENT_ROUTE_RE, attachmentReply } from './attachments.ts';
+import type { FileReply } from './attachments.ts';
 import { streamChanges } from './sse.ts';
 import type { StreamOptions } from './sse.ts';
 import { hasDotSegment, hostAllowed, LOOPBACK, newToken, presentedToken, SECURITY_HEADERS, tokenMatches } from './security.ts';
@@ -92,6 +94,26 @@ function sendJson(res: http.ServerResponse, reply: ApiReply): void {
   res.end(JSON.stringify(reply.body));
 }
 
+// Send an attachment file as a stream from the descriptor attachments.ts opened and checked (no second open by name, no whole
+// file in memory, the event loop stays free for the other tabs), never past the size its headers announce. Own headers only:
+// the page's CSP would not sandbox a stored file opened in a tab of its own.
+async function sendFile(res: http.ServerResponse, reply: FileReply): Promise<void> {
+  res.writeHead(reply.status, reply.headers);
+  if (reply.size === 0) {
+    await reply.file.close();
+    res.end();
+    return;
+  }
+  // autoClose: the stream closes the descriptor at its end, on an error and when the browser goes away.
+  const stream = reply.file.createReadStream({ start: 0, end: reply.size - 1 });
+  try {
+    await pipeline(stream, res);
+  } catch {
+    // The browser left or the read failed mid-file: the headers are out, so the only honest answer is a cut connection.
+    res.destroy();
+  }
+}
+
 // Listen on the loopback address; a taken port is PORT_IN_USE whose fix lets the OS pick one.
 function listen(server: http.Server, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -155,12 +177,7 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
     if (ATTACHMENT_ROUTE_RE.test(url.pathname)) {
       const reply = await attachmentReply(ctx, url);
       if ('text' in reply) return sendText(res, reply.status, `Not found: ${reply.text}`);
-      if ('headers' in reply) {
-        // Own headers only: the page's CSP would not sandbox a stored file opened in a tab of its own.
-        res.writeHead(reply.status, reply.headers);
-        res.end(reply.body);
-        return;
-      }
+      if ('headers' in reply) return sendFile(res, reply);
       return sendJson(res, reply);
     }
     const reply = await apiRoute(ctx, url);

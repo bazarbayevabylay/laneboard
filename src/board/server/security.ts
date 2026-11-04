@@ -46,8 +46,9 @@ export function presentedToken(req: http.IncomingMessage, url: URL): string | un
 }
 
 // A raw request path with a `.` or `..` segment (also %2e-escaped): URL parsing would quietly resolve it into another route, so the
-// server answers 404 instead of guessing (no traversal, ever).
+// server answers 404 instead of guessing (no traversal, ever). Segments end at `/` and at `\` (the WHATWG URL parser treats a
+// backslash as a slash in http URLs), and at its escape %5C too, so `x\..\..\board` cannot reach another route either.
 export function hasDotSegment(rawUrl: string): boolean {
   const pathPart = rawUrl.split('?')[0] ?? '';
-  return pathPart.split('/').some((seg) => /^(\.|%2e){1,2}$/i.test(seg));
+  return pathPart.split(/\/|\\|%5c/i).some((seg) => /^(\.|%2e){1,2}$/i.test(seg));
 }

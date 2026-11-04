@@ -113,7 +113,6 @@ export const TEXT = {
   previewFailed: 'The preview could not be loaded; the download link still works while the board runs.',
   parent: 'Parent',
   subtasks: 'Subtasks',
-  subtasksDone: (final: number, total: number) => `${final}/${total} final`,
   archivedMark: 'archived',
   history: 'History',
   olderDropped: (n: number) => `${count(n, 'older event', 'older events')} dropped by the store limit.`,
