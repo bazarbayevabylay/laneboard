@@ -4,12 +4,12 @@ exit 6
 --- stdout
 
 --- stderr
-error STORE_READ_ONLY: --board opens another board read-only; create is not a read command (get, list, events, view)
+error STORE_READ_ONLY: --board opens another board read-only; create is not a read command (get, list, events, view, board)
   fix: drop --board: laneboard create works on your own board (--dir / LANEBOARD_DIR; laneboard boards --json shows which one is yours)
 
 $ laneboard create x --status todo --board . --as a --json
 exit 6
 --- stdout
-{"ok":false,"store":null,"prefix":null,"error":{"code":"STORE_READ_ONLY","message":"--board opens another board read-only; create is not a read command (get, list, events, view)","fix":"drop --board: laneboard create works on your own board (--dir / LANEBOARD_DIR; laneboard boards --json shows which one is yours)"}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"STORE_READ_ONLY","message":"--board opens another board read-only; create is not a read command (get, list, events, view, board)","fix":"drop --board: laneboard create works on your own board (--dir / LANEBOARD_DIR; laneboard boards --json shows which one is yours)"}}
 --- stderr
 

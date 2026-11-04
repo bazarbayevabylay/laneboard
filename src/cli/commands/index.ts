@@ -1,6 +1,7 @@
 // Registry of CLI commands, in help order.
 import { archive } from './archive.ts';
 import { attach } from './attach.ts';
+import { board } from './board.ts';
 import { boards } from './boards.ts';
 import { claim } from './claim.ts';
 import { comment } from './comment.ts';
@@ -23,7 +24,7 @@ import type { CommandDef } from './types.ts';
 import { update } from './update.ts';
 import { view } from './view.ts';
 
-export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim, comment, finish, attach, archive, restore, remove, events, init, config, setup, importCommand, prime, view, boards, mcp, migrate, doctor];
+export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim, comment, finish, attach, archive, restore, remove, events, init, config, setup, importCommand, prime, view, board, boards, mcp, migrate, doctor];
 
 // Find a command by name.
 export function findCommand(name: string): CommandDef | undefined {

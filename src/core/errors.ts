@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'ATTACHMENT_EXISTS'
   | 'LOCK_TIMEOUT'
   | 'LOCK_LOST'
+  | 'PORT_IN_USE'
   | 'STORE_NOT_FOUND'
   | 'STORE_INVALID'
   | 'STORE_TOO_NEW'
@@ -47,6 +48,8 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   ATTACHMENT_EXISTS: { exit: 4, http: 409, fix: 'pick another --name, or remove the old one first: laneboard attach <id> --remove <name>' },
   LOCK_TIMEOUT: { exit: 5, http: 503, fix: 'the store is busy: retry the same command once' },
   LOCK_LOST: { exit: 5, http: 503, fix: 'retry the same command once' },
+  // laneboard board: the port is taken (another board or program); the OS picks a free one with --port 0.
+  PORT_IN_USE: { exit: 5, http: 503, fix: 'laneboard board --port 0 (the system picks a free port)' },
   STORE_NOT_FOUND: {
     exit: 6,
     http: 500,

@@ -1,5 +1,6 @@
 // CLI golden outputs: every command and every error code, human and --json (ADR-0001 S1 DoD).
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { ERROR_CODES, ERRORS } from '../../src/core/index.ts';
@@ -10,6 +11,20 @@ import { cleanupTemp, cli, readStore, tempDir, writeRaw } from '../helpers.ts';
 import type { CliRun } from '../helpers.ts';
 
 afterAll(cleanupTemp);
+
+// A port held for the PORT_IN_USE case (one taken by another program is just as good: the case needs it busy, not ours).
+const BUSY_PORT = 47420;
+let busyServer: net.Server | undefined;
+const holdPort = async (): Promise<void> => {
+  if (busyServer) return;
+  const server = net.createServer();
+  busyServer = server;
+  await new Promise<void>((resolve) => {
+    server.once('error', () => resolve());
+    server.listen(BUSY_PORT, '127.0.0.1', () => resolve());
+  });
+};
+afterAll(() => busyServer?.close());
 
 interface Env {
   root: string;
@@ -196,6 +211,7 @@ const CASES: Case[] = [
   { name: 'error-TASK_ARCHIVED', argv: ['comment', 'LB-1', 'more', '--as', 'a'], error: 'TASK_ARCHIVED', setup: seedArchived },
   { name: 'error-ATTACHMENT_EXISTS', argv: ['attach', 'LB-1', 'notes.txt', '--as', 'a'], error: 'ATTACHMENT_EXISTS', setup: seedAttached },
   { name: 'error-LOCK_TIMEOUT', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'LOCK_TIMEOUT', holdLock: true },
+  { name: 'error-PORT_IN_USE', argv: ['board', '--port', String(BUSY_PORT)], error: 'PORT_IN_USE', setup: holdPort },
   { name: 'error-LOCK_LOST', argv: ['create', 'x', '--status', 'todo', '--as', 'a'], error: 'LOCK_LOST', lockMaxHoldMs: 0 },
   { name: 'error-STORE_NOT_FOUND', argv: ['list'], error: 'STORE_NOT_FOUND', store: false },
   {
