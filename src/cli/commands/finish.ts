@@ -18,7 +18,7 @@ export const finish: CommandDef = {
   args: { min: 1, max: 1 },
   async run(c) {
     const r = await finishTask(c.op(), { id: c.positionals[0] ?? '', result: str(c.values, 'result') as string, status: str(c.values, 'status'), no_commit: flag(c.values, 'no-commit') || undefined });
-    const what = r.reply === undefined || r.unchanged === true ? 'unchanged' : r.reply.accepted === true ? 'accepted' : 'finished';
+    const what = r.reply === undefined || r.unchanged === true ? 'unchanged' : r.reply.accepted === true ? 'accepted' : r.handed_in === true ? 'handed in' : 'finished';
     return taskReply(c, r, what);
   },
 };

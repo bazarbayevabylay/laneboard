@@ -43,7 +43,10 @@ async function inReview(): Promise<TestStore> {
 // The refusal of somebody else's finish of a task its assignee did not hand in with finish (S4b, by the data), and its fix.
 const NOT_HANDED_IN = (id: string, holder: string, status: string, actor = 'orch') =>
   `task ${id} is claimed by ${holder} and is ${status}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status <status>); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status done --as ${actor}`;
-const HAND_IN_FIX = (id: string, status: string, actor = 'orch') => `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${status} --result <result>" --as ${actor}`;
+// Rewritten in LB-11: the hand-in statuses are the non-final finish statuses (a, not the current one), and a second way out closes it (d).
+const OPEN = '<one of: in_progress, review>';
+const HAND_IN_FIX = (id: string, handIn = OPEN, actor = 'orch') =>
+  `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}, or as the orchestrator: laneboard update ${id} --status done --as ${actor}`;
 // The refusal of somebody else's finish into a status that is not final.
 const NOT_FINAL = (id: string, holder: string, status: string) =>
   `task ${id} is claimed by ${holder} and is ${status}; somebody else's finish only accepts a task its assignee handed in, into done; do not take it over: comment or ask the orchestrator`;
@@ -61,11 +64,11 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     const b = await newStore({ statuses: ['backlog', 'todo', 'in_progress', 'review', 'done'] });
     await createTask(as(b, 'a'), { title: 'T', status: 'backlog', assignee: 'dev-1' });
     await claimTask(as(b, 'dev-1'), { id: 'LB-1', status: 'in_progress' });
-    for (const [s, status] of [[a, 'blocked'], [b, 'in_progress']] as const) {
+    for (const [s, status, handIn] of [[a, 'blocked', '<one of: in_progress, review, blocked>'], [b, 'in_progress', '<one of: todo, in_progress, review>']] as const) {
       const before = activeText(s);
       const r = await cli(['finish', 'LB-1', '--result', 'x', '--as', 'orch', '--json'], { cwd: s.root });
       expect(r.code, status).toBe(4);
-      expect(JSON.parse(r.stdout).error).toEqual({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-1', 'dev-1', status), details: { assignee: 'dev-1' }, fix: HAND_IN_FIX('LB-1', status) });
+      expect(JSON.parse(r.stdout).error).toEqual({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-1', 'dev-1', status), details: { assignee: 'dev-1' }, fix: HAND_IN_FIX('LB-1', handIn) });
       expect(activeText(s)).toBe(before);
     }
   });
@@ -142,7 +145,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     for (const [id, holder] of [['LB-1', 'dev-1'], ['LB-2', 'dev-1'], ['LB-3', 'dev-1'], ['LB-4', 'dev-2']] as const) {
       const err = await rejectsWith(finishTask(as(s, 'orch'), { id, result: 'x', no_commit: true }), 'ALREADY_CLAIMED');
       expect(err.message, id).toBe(NOT_HANDED_IN(id, holder, 'review'));
-      expect(err.fix, id).toBe(HAND_IN_FIX(id, 'review'));
+      expect(err.fix, id).toBe(HAND_IN_FIX(id));
     }
     expect(activeText(s)).toBe(before);
   });
@@ -173,12 +176,12 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     expect((await finishTask(as(s, 'orch'), { id: 'LB-1', result: 'ok', no_commit: true })).data.status).toBe('shipped');
   });
 
-  it('from todo or in_progress: ALREADY_CLAIMED (exit 4) with the hand-in fix (a placeholder for the first status), nothing written', async () => {
+  it('from todo or in_progress: ALREADY_CLAIMED (exit 4) with the hand-in fix (the hand-in statuses, not the current one), nothing written', async () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'Todo', status: 'todo', assignee: 'dev-1' });
     await createTask(as(s, 'a'), { title: 'Working', status: 'in_progress', assignee: 'dev-1' });
     const before = activeText(s);
-    for (const [id, status, handIn] of [['LB-1', 'todo', '<status>'], ['LB-2', 'in_progress', 'in_progress']] as const) {
+    for (const [id, status, handIn] of [['LB-1', 'todo', OPEN], ['LB-2', 'in_progress', OPEN]] as const) {
       const r = await cli(['finish', id, '--result', 'x', '--as', 'orch', '--json'], { cwd: s.root });
       expect(r.code).toBe(4);
       expect(JSON.parse(r.stdout).error).toMatchObject({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN(id, 'dev-1', status), details: { assignee: 'dev-1' }, fix: HAND_IN_FIX(id, handIn) });
@@ -206,7 +209,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     expect(stored(s, 'LB-1').events.at(-1)).toMatchObject({ actor: 'orch', type: 'status', data: { from: 'review', to: 'done', accepted: true } });
     const no = await callTool('task_finish', { id: 'LB-2', result: 'x', no_commit: true, actor: 'orch' }, env);
     expect(no.isError).toBe(true);
-    expect(no.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-2', 'dev-1', 'in_progress'), fix: HAND_IN_FIX('LB-2', 'in_progress') });
+    expect(no.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-2', 'dev-1', 'in_progress'), fix: HAND_IN_FIX('LB-2') });
   });
 
   it('claim keeps its ALREADY_CLAIMED text (only finish accepts)', async () => {

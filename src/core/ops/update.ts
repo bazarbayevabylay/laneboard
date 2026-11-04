@@ -290,14 +290,25 @@ function notFinalTarget(id: string, holder: string, current: string, actor: stri
   );
 }
 
-// ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix asks the
-// holder to hand it in (a comment, safe to run blindly); the message names the orchestrator's way to close it anyway.
+// Statuses the holder can hand a task in to with finish (LB-11 a): every finish status that is not final, with no meaning read
+// from positions; the only one by name, several as `<one of: a, b>` (the current status alone would leave the task in work).
+function handInStatuses(statuses: readonly string[]): string {
+  const finals = finalStatuses(statuses);
+  const open = finishStatuses(statuses).filter((st) => !finals.includes(st));
+  return open.length === 1 ? (open[0] ?? '<status>') : open.length === 0 ? '<status>' : `<one of: ${open.join(', ')}>`;
+}
+
+// ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix gives
+// two ways out (LB-11 d): ask the holder to hand it in (a comment), or close it as the orchestrator with update.
 function notHandedIn(id: string, holder: string, current: string, actor: string, final: string, statuses: readonly string[]): LaneboardError {
-  const handIn = finishStatuses(statuses).includes(current) ? current : '<status>';
+  const handIn = handInStatuses(statuses);
   return new LaneboardError(
     'ALREADY_CLAIMED',
     `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status <status>); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
-    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}` },
+    {
+      details: { assignee: holder },
+      fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}, or as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
+    },
   );
 }
 
@@ -337,6 +348,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   const commit = git.head;
   const warnings: string[] = [];
   let finished = false;
+  // The assignee's finish into a status that is not final (hands the task in).
+  let handedInNow = false;
   let byOther = false;
   let linked = false;
   let workStart: string | undefined;
@@ -403,12 +416,14 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status, ...(handIn ? { handed_in: true } : {}) }, actorSourceOf(ctx));
       task.status = status;
       finished = true;
+      handedInNow = handIn;
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),
   );
   // An acceptance links no commit, so the checkout of who accepts says nothing about the work.
   if (!byOther) warnings.push(...checkoutWarnings(taskId, git, workStart));
-  if (finished) return { data, warnings, reply: byOther ? { commit: null, accepted: true } : { commit: commit ?? null } };
+  if (finished && byOther) return { data, warnings, reply: { commit: null, accepted: true } };
+  if (finished) return { data, warnings, reply: { commit: commit ?? null }, ...(handedInNow ? { handed_in: true } : {}) };
   return linked && commit !== undefined ? { data, warnings, reply: { commit }, unchanged: true } : { data, warnings };
 }

@@ -105,7 +105,8 @@ describe('review S4 MINOR: the "Your active tasks" footer of prime counts what i
     const statuses = Array.from({ length: 40 }, (_, i) => `status_with_a_long_name_${i}`);
     const d = primeData(85, 300, 0, 0, 'd', 'dev-base', statuses);
     const text = primeText(d);
-    expect(text).toMatch(/\n\.\.\. \d+ more: laneboard list --assignee dev-base:bbbb2222 --json \(lists status_with_a_long_name_39 tasks too\)$/);
+    // Rewritten in LB-11 (b): the note goes before the command, so the copied line ends with --json.
+    expect(text).toMatch(/\n\.\.\. \d+ more: \(lists status_with_a_long_name_39 tasks too\) laneboard list --assignee dev-base:bbbb2222 --json$/);
   });
 });
 

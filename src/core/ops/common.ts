@@ -40,6 +40,8 @@ export interface OpResult<T> {
   reply?: WriteFacts;
   // The op wrote less than it was asked for (finish of a task already in that status that only linked a new commit).
   unchanged?: boolean;
+  // finish by the assignee handed the task in (a status that is not final); the CLI line says "handed in" (LB-11 c), not in the JSON reply.
+  handed_in?: boolean;
 }
 
 export const MAX_COMMENT_CHARS = 10000;
