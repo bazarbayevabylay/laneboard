@@ -114,8 +114,8 @@ describe('board registry', () => {
     const m = machine();
     const p = m.project('web');
     await data(m.run(p, ['init', '--description', 'old text', '--json']));
-    expect(await data(m.run(p, ['config', '--json']))).toEqual({ name: 'web', description: 'old text', prefix: 'WEB', statuses: ['todo', 'in_progress', 'review', 'done'], changed: false });
-    expect(await data(m.run(p, ['config', '--name', 'Web shop', '--description', 'ACME web shop: checkout', '--json']))).toEqual({ name: 'Web shop', description: 'ACME web shop: checkout', prefix: 'WEB', statuses: ['todo', 'in_progress', 'review', 'done'], changed: true });
+    expect(await data(m.run(p, ['config', '--json']))).toEqual({ name: 'web', description: 'old text', prefix: 'WEB', statuses: ['todo', 'in_progress', 'review', 'done'], fields: { priority: { type: 'number', description: '0 = highest' } }, changed: false });
+    expect(await data(m.run(p, ['config', '--name', 'Web shop', '--description', 'ACME web shop: checkout', '--json']))).toEqual({ name: 'Web shop', description: 'ACME web shop: checkout', prefix: 'WEB', statuses: ['todo', 'in_progress', 'review', 'done'], fields: { priority: { type: 'number', description: '0 = highest' } }, changed: true });
     expect((await data(m.run(p, ['boards', '--json']))).boards).toMatchObject([{ name: 'Web shop', description: 'ACME web shop: checkout', prefix: 'WEB' }]);
     expect((await m.run(p, ['prime', '--as', 'dev'])).stdout).toContain('(prefix WEB) - Web shop: ACME web shop: checkout');
   });

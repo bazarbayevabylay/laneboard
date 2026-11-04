@@ -30,7 +30,7 @@ function problemsFix(details: Record<string, unknown>): string {
   const has = (key: string): boolean => Array.isArray(details[key]) && (details[key] as unknown[]).length > 0;
   const steps: string[] = [];
   if (has('unknown_fields')) {
-    steps.push('for each key in details.unknown_fields: declare it in .laneboard/config.json "fields", or pass --field-map <key>=<declared field>, or --ignore-key <key> (drops it)');
+    steps.push('for each key in details.unknown_fields: ask the board owner to declare it (laneboard config --field <key>:<type>), or pass --field-map <key>=<declared field>, or --ignore-key <key> (drops it)');
   }
   if (has('unknown_statuses')) steps.push('for each value in details.unknown_statuses: pass --status-map <value>=<status from details.statuses>');
   if (has('invalid')) steps.push('correct each value in details.invalid in its source file');

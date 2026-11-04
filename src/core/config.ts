@@ -10,6 +10,26 @@ import type { ConfigT } from './schema.ts';
 export const DEFAULT_PREFIX = 'LB';
 export const DEFAULT_STATUSES = ['todo', 'in_progress', 'review', 'done'];
 
+// File names that init's config never lets attach (secrets and keys); case-insensitive `*` / `?` globs (attach.ts globMatch). The ssh
+// key patterns name each key type (rsa, dsa, ecdsa, ed25519, xmss, with their _sk variants): a glob cannot leave out `.pub`, and
+// `id_*` would also refuse files like id_mapping.csv. `*credentials*` covers .git-credentials and the AWS credentials file.
+export const DEFAULT_DENY_NAMES: readonly string[] = [
+  '.env*',
+  '*.pem',
+  '*.key',
+  'id_rsa*',
+  'id_dsa*',
+  'id_ecdsa*',
+  'id_ed25519*',
+  'id_xmss*',
+  '*credentials*',
+  '.netrc',
+  '.npmrc',
+  '*.p12',
+  '*.pfx',
+  '*.kdbx',
+];
+
 // Longest prefix init derives: short ids (LANE-12) are easier to type and read than the whole name (LANEBOARD-12).
 export const DERIVED_PREFIX_MAX = 4;
 
@@ -56,7 +76,7 @@ export function buildConfig(prefix: string, statuses: string[], board: { name?: 
     statuses,
     fields: { priority: { type: 'number', description: '0 = highest' } },
     limits: { events_per_task: 500, attachment_bytes: 26214400, list_limit_max: 200 },
-    attachments: { deny_names: ['.env*', '*.pem', '*.key', 'id_rsa*', 'id_ed25519*'] },
+    attachments: { deny_names: [...DEFAULT_DENY_NAMES] },
     board: { port: 7420 },
   };
 }

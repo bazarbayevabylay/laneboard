@@ -109,7 +109,7 @@ const CASES: ParityCase[] = [
   { name: 'ALREADY_CLAIMED', cli: ['claim', 'LB-2', '--as', 'dev-2'], tool: 'task_claim', args: { id: 'LB-2', actor: 'dev-2' }, error: 'ALREADY_CLAIMED' },
   { name: 'TASK_ARCHIVED', cli: ['comment', 'LB-3', 'more', '--as', 'a'], tool: 'task_comment', args: { id: 'LB-3', text: 'more', actor: 'a' }, error: 'TASK_ARCHIVED' },
   { name: 'INVALID_VALUE id', cli: ['get', 'lb-1'], tool: 'task_get', args: { id: 'lb-1' }, error: 'INVALID_VALUE', mcpFix: 'use LB-1' },
-  { name: 'UNKNOWN_FIELD', cli: ['update', 'LB-1', '--unset-field', 'prio', '--as', 'a'], tool: 'task_update', args: { id: 'LB-1', unset_fields: ['prio'], actor: 'a' }, error: 'UNKNOWN_FIELD', mcpFix: 'use a field from `allowed` or declare it in .laneboard/config.json `fields`' },
+  { name: 'UNKNOWN_FIELD', cli: ['update', 'LB-1', '--unset-field', 'prio', '--as', 'a'], tool: 'task_update', args: { id: 'LB-1', unset_fields: ['prio'], actor: 'a' }, error: 'UNKNOWN_FIELD', mcpFix: 'use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type>' },
   {
     name: 'ACTOR_REQUIRED',
     cli: ['create', 'x', '--status', 'todo'],

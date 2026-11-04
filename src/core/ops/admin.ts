@@ -7,14 +7,14 @@ import { ERRORS, LaneboardError } from '../errors.ts';
 import { shellQuote } from '../shell.ts';
 import { ensureDir, listOrphanTmp, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { checkPrefixFree, prefixTaken, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
-import { BoardDescription, BoardName, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
-import type { ConfigT, FileKind, TaskT } from '../schema.ts';
+import { BoardDescription, BoardName, FIELD_KEY_RE, FIELD_TYPES, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
+import type { ConfigT, FieldDefT, FieldType, FileKind, TaskT } from '../schema.ts';
 import { contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, samePath, serializeStoreFile, STORE_DIR_NAME, storeFilePath } from '../store.ts';
 import type { LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { actorSourceOf, parseInput, unique } from './common.ts';
+import { actorSourceOf, fieldInfo, fieldsLine, matchesType, parseInput, suggestClosest, unique } from './common.ts';
 import {
   attachmentContent,
   copyAttachments,
@@ -105,7 +105,11 @@ function checkPrefix(prefix: string): string {
   return prefix;
 }
 
-// A status list (init, config --statuses): each status in the status format and listed once; the order is the board's, the last is final.
+// Fewest statuses of a board: one to start a task in and a final one (with a single status every task is closed when created).
+export const MIN_STATUSES = 2;
+
+// A status list (init, config --statuses): each status in the status format and listed once, at least MIN_STATUSES of them; the order
+// is the board's, the last is final.
 function checkStatuses(statuses: readonly string[]): string[] {
   for (const status of statuses) {
     if (!STATUS_RE.test(status)) {
@@ -114,6 +118,12 @@ function checkStatuses(statuses: readonly string[]): string[] {
         fix: 'use letters, digits, dot, dash or underscore in each status, comma-separated: --statuses todo,doing,done',
       });
     }
+  }
+  // Checked before the duplicates: `done,done` would otherwise get the fix `--statuses done`, which this check refuses next.
+  if (unique(statuses).length < MIN_STATUSES) {
+    throw new LaneboardError('INVALID_VALUE', `a board needs at least ${MIN_STATUSES} different statuses, got ${statuses.join(',')}: the first for new tasks, the last one final`, {
+      fix: `list a status to start in before the final one: --statuses todo,${statuses.at(-1) === 'todo' ? 'done' : (statuses.at(-1) ?? 'done')}`,
+    });
   }
   if (unique(statuses).length !== statuses.length) {
     throw new LaneboardError('INVALID_VALUE', `statuses contain duplicates: ${statuses.join(',')}`, { fix: `list each status once: --statuses ${unique(statuses).join(',')}` });
@@ -199,6 +209,10 @@ export const ConfigureInput = z.strictObject({
   // The whole new status list in order, the last one final (`config --statuses a,b,c`): add and reorder freely; a status dropped from
   // the list must hold no active task (ADR-0001 §33).
   statuses: z.array(z.string()).min(1).optional(),
+  // Fields to declare or change, each `<key>:<type>[:<description>]` (`config --field`); a new type must fit every value active tasks hold.
+  fields: z.array(z.string()).optional(),
+  // Declared fields to remove (`config --drop-field`); no active task may hold a value of one.
+  drop_fields: z.array(z.string()).optional(),
 });
 export type ConfigureInputT = z.infer<typeof ConfigureInput>;
 
@@ -208,6 +222,8 @@ export interface ConfigureResult {
   prefix: string;
   // Statuses in order; the last one is final.
   statuses: string[];
+  // Declared task fields (config.fields): type and optional description per key.
+  fields: Record<string, FieldDefT>;
   // Whether config.json was rewritten.
   changed: boolean;
 }
@@ -258,14 +274,157 @@ function finalChanged(before: readonly string[], after: readonly string[], activ
   );
 }
 
-// Show or change the board name, description, prefix and statuses (`laneboard config`); the prefix changes only while the board has
-// no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it. Name,
+// One `config --field` value: the key, its type and the description (undefined: keep the current one; blank: none).
+interface FieldSpec {
+  key: string;
+  type: FieldType;
+  description?: string;
+}
+
+// The format of a `config --field` value, for messages and fix placeholders (never with the user's text inside: printed unquoted).
+const FIELD_SPEC_FORMAT = '<key>:<type>[:<description>]';
+// Longest field description (schema FieldDef, UTF-16 units like zod's max).
+const FIELD_DESCRIPTION_MAX = 500;
+// A field description is shown on one line (prime, config): no control characters.
+const CONTROL_RE = /[\u0000-\u001F\u007F]/;
+
+// INVALID_VALUE for a bad `--field` value; the CLI replaces the value in the caller's command with the suggestion or the format.
+function badFieldSpec(spec: string, message: string, extra: { suggestion?: string; allowed?: string[] } = {}): LaneboardError {
+  return new LaneboardError('INVALID_VALUE', `--field "${spec}": ${message}`, {
+    input: { field: 'field', value: spec, ...(extra.suggestion !== undefined ? { suggestion: extra.suggestion } : { format: FIELD_SPEC_FORMAT }) },
+    ...(extra.allowed ? { allowed: extra.allowed } : {}),
+    fix: `pass --field ${FIELD_SPEC_FORMAT}, the type one of ${FIELD_TYPES.join(', ')}, e.g. --field priority:number:'0 = highest'`,
+  });
+}
+
+// Parse one `--field <key>:<type>[:<description>]`: the key in the field key format, a known type, a one-line description; the
+// description is everything after the second colon, so it may hold colons.
+function parseFieldSpec(spec: string): FieldSpec {
+  const [key = '', type, ...rest] = spec.split(':');
+  const description = rest.length ? rest.join(':') : undefined;
+  if (!FIELD_KEY_RE.test(key)) throw badFieldSpec(spec, `the key "${key}" must match ^[a-z][a-z0-9_]{0,39}$`);
+  const known = FIELD_TYPES.find((t) => t === type);
+  if (known === undefined) {
+    const close = type === undefined ? undefined : suggestClosest(type, FIELD_TYPES);
+    throw badFieldSpec(spec, `the type must be one of ${FIELD_TYPES.join(', ')}, got ${type === undefined ? 'none' : `"${type}"`}`, {
+      allowed: [...FIELD_TYPES],
+      ...(close !== undefined ? { suggestion: [key, close, ...rest].join(':') } : {}),
+    });
+  }
+  if (description !== undefined && (CONTROL_RE.test(description) || description.length > FIELD_DESCRIPTION_MAX)) {
+    throw badFieldSpec(spec, `the description must be one line of at most ${FIELD_DESCRIPTION_MAX} characters`);
+  }
+  return { key, type: known, ...(description !== undefined ? { description } : {}) };
+}
+
+// The `--field` and `--drop-field` values checked against each other: each key once, none both declared and dropped.
+function checkFieldOptions(specs: readonly FieldSpec[], drops: readonly string[]): void {
+  const twice = specs.find((s, i) => specs.findIndex((o) => o.key === s.key) !== i);
+  if (twice) throw new LaneboardError('USAGE', `--field ${twice.key} is given more than once`, { fix: `pass one --field ${twice.key}:<type>[:<description>]` });
+  const both = specs.find((s) => drops.includes(s.key));
+  if (both) throw new LaneboardError('USAGE', `field "${both.key}" is both declared (--field) and dropped (--drop-field)`, { edit: { drop: [{ name: 'drop_fields', value: both.key }] } });
+}
+
+// A dropped field must be declared; UNKNOWN_FIELD names the declared ones (and an obvious typo).
+function checkDeclared(config: ConfigT, key: string): void {
+  if (Object.hasOwn(config.fields, key)) return;
+  const allowed = Object.keys(config.fields);
+  const suggestion = suggestClosest(key, allowed);
+  const declared = allowed.length ? `declared: ${fieldsLine(fieldInfo(config))}` : 'no fields are declared';
+  throw new LaneboardError('UNKNOWN_FIELD', `--drop-field ${key}: the field is not declared in config.fields (${declared})`, {
+    allowed,
+    input: { field: 'drop_field', value: key, ...(suggestion ? { suggestion } : { format: '<field from allowed>' }) },
+    fix: allowed.length ? `drop a field from \`allowed\`: laneboard config --drop-field <field from allowed>` : 'nothing to drop: laneboard config shows the declared fields',
+  });
+}
+
+// config.fields after the change: a declared key is replaced in place (a missing description keeps the current one, a blank one
+// removes it), a new key goes last, a dropped key is removed; the order of the rest stays, so the same declaration changes nothing.
+function nextFields(current: ConfigT['fields'], specs: readonly FieldSpec[], drops: readonly string[]): ConfigT['fields'] {
+  const def = (s: FieldSpec): FieldDefT => {
+    const description = s.description ?? (Object.hasOwn(current, s.key) ? current[s.key]?.description : undefined);
+    return { type: s.type, ...(description?.trim() ? { description } : {}) };
+  };
+  const out: ConfigT['fields'] = {};
+  for (const [key, old] of Object.entries(current)) {
+    if (drops.includes(key)) continue;
+    const spec = specs.find((s) => s.key === key);
+    out[key] = spec ? def(spec) : old;
+  }
+  for (const s of specs) if (!Object.hasOwn(current, s.key)) out[s.key] = def(s);
+  return out;
+}
+
+// A field change that tasks block: a dropped field they hold, or a new type their values do not have.
+interface FieldUse {
+  field: string;
+  change: 'drop' | 'type';
+  // The new type (change "type").
+  type?: FieldType;
+  tasks: string[];
+}
+
+// Tasks that hold a value the change would leave undeclared or of the wrong type. A key whose type stays is not checked again: a
+// description-only change never blocks on old hand-edited values (doctor reports those).
+function fieldUses(before: ConfigT['fields'], specs: readonly FieldSpec[], drops: readonly string[], tasks: readonly TaskT[]): FieldUse[] {
+  const holders = (key: string, fits: (value: unknown) => boolean): string[] => tasks.filter((t) => Object.hasOwn(t.fields, key) && !fits(t.fields[key])).map((t) => t.id);
+  const uses: FieldUse[] = drops.map((field) => ({ field, change: 'drop' as const, tasks: holders(field, () => false) }));
+  for (const s of specs) {
+    if (Object.hasOwn(before, s.key) && before[s.key]?.type === s.type) continue;
+    uses.push({ field: s.key, change: 'type', type: s.type, tasks: holders(s.key, (v) => matchesType(s.type, v)) });
+  }
+  return uses.filter((u) => u.tasks.length > 0);
+}
+
+// `A, B, C, +N more` for a message.
+function idList(ids: readonly string[]): string {
+  return `${ids.slice(0, IDS_SHOWN).join(', ')}${ids.length > IDS_SHOWN ? `, +${ids.length - IDS_SHOWN} more` : ''}`;
+}
+
+// One line of the in-use message per field.
+function fieldUseLine(u: FieldUse): string {
+  return u.change === 'drop' ? `drop ${u.field}: ${u.tasks.length} hold a value (${idList(u.tasks)})` : `${u.field} to ${u.type ?? ''}: ${u.tasks.length} hold a value of another type (${idList(u.tasks)})`;
+}
+
+// INVALID_VALUE for a field change that active tasks block; nothing is written. The fix removes exactly those values, one update per
+// task (a field value lives in a task, which config does not write), and runs from any folder: it names the store and, when config
+// knows the caller's name, the same --as.
+function fieldInUse(storeDir: string, actor: string | undefined, uses: readonly FieldUse[]): LaneboardError {
+  const total = new Set(uses.flatMap((u) => u.tasks)).size;
+  const typed = uses.filter((u) => u.change === 'type');
+  const keep = typed.length ? ` (to keep a value, set it in the new type instead: laneboard update <ID> --field ${typed[0]?.field ?? '<key>'}=<${typed[0]?.type ?? 'value'}>)` : '';
+  const as = `--as ${actor === undefined ? '<your-name>' : shellQuote(actor)}`;
+  const loops = uses.map((u) => `for id in ${u.tasks.join(' ')}; do laneboard update "$id" --unset-field ${u.field} --dir ${shellQuote(storeDir)} ${as}; done`);
+  return new LaneboardError(
+    'INVALID_VALUE',
+    `cannot change fields that ${total} active task(s) hold: ${uses.map(fieldUseLine).join('; ')}; ` +
+      `remove each of those values (laneboard update <ID> --unset-field <key>)${keep}, then run this command again`,
+    {
+      details: { in_use: uses.map((u) => ({ field: u.field, change: u.change, ...(u.type ? { type: u.type } : {}), tasks: u.tasks })) },
+      fix: loops.join('; '),
+    },
+  );
+}
+
+// Warnings for archived tasks that keep a dropped field or a value of another type: they are read-only and do not block, as for statuses.
+function archivedFieldWarnings(uses: readonly FieldUse[]): string[] {
+  return uses.map((u) =>
+    u.change === 'drop'
+      ? `${u.tasks.length} archived task(s) keep a value of the removed field ${u.field} (${idList(u.tasks)}): restore brings it back, then laneboard update <ID> --unset-field ${u.field}`
+      : `${u.tasks.length} archived task(s) hold ${u.field} values that are not ${u.type ?? ''} (${idList(u.tasks)}): restore brings them back as they are, then laneboard update <ID> --field ${u.field}=<${u.type ?? 'value'}>`,
+  );
+}
+
+// Show or change the board name, description, prefix, statuses and fields (`laneboard config`); the prefix changes only while the board
+// has no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it; a field is
+// dropped, or gets a new type, only when no active task holds a value it would leave undeclared or of another type. Name,
 // description and prefix refresh the registry, whose check keeps the prefix unique among live boards (also for an unchanged one).
 export async function configureStore(ctx: OpContext, input: ConfigureInputT): Promise<OpResult<ConfigureResult>> {
   const p = parseInput(ConfigureInput, input);
   const warnings: string[] = [];
   const registers = p.name !== undefined || p.description !== undefined || p.prefix !== undefined;
-  const change = registers || p.statuses !== undefined;
+  const fieldsChange = p.fields !== undefined || p.drop_fields !== undefined;
+  const change = registers || p.statuses !== undefined || fieldsChange;
   if (change && ctx.store.readOnly) {
     throw new LaneboardError('STORE_READ_ONLY', `${ctx.store.dir} was opened with --board, which is read-only`, { fix: 'change your own board without --board' });
   }
@@ -273,24 +432,32 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
   const description = p.description === undefined ? undefined : checkBoardText(BoardDescription, p.description, 'description');
   const prefix = p.prefix === undefined ? undefined : checkPrefix(p.prefix);
   const statuses = p.statuses === undefined ? undefined : checkStatuses(p.statuses);
+  const specs = (p.fields ?? []).map(parseFieldSpec);
+  const drops = unique(p.drop_fields ?? []);
+  checkFieldOptions(specs, drops);
   const read = (): ConfigT => loadConfig(ctx.store.dir);
   const result = (config: ConfigT, changed: boolean): ConfigureResult => ({
     name: config.name ?? null,
     description: config.description ?? null,
     prefix: config.prefix,
     statuses: [...config.statuses],
+    fields: { ...config.fields },
     changed,
   });
   if (!change) return { data: result(read(), false), warnings };
-  // Under the store lock, the lock of every task write (transact): no task can enter a dropped status between the check and the write.
+  // Under the store lock, the lock of every task write (transact): no task can enter a dropped status or take a value of a dropped or
+  // retyped field between the check and the write.
   const write = (): Promise<ConfigureResult> =>
     withLock(ctx.store, ctx, (lock) => {
       const before = read();
       if (prefix !== undefined && prefix !== before.prefix) checkNoTasks(ctx.store.dir, before.prefix, prefix);
       let active: TaskT[] = [];
-      if (statuses !== undefined) {
+      let archived: TaskT[] = [];
+      if (statuses !== undefined || fieldsChange) {
         active = readStoreFile(ctx.store.dir, 'active', warnings).data.tasks;
-        const archived = readStoreFile(ctx.store.dir, 'archive', warnings).data.tasks;
+        archived = readStoreFile(ctx.store.dir, 'archive', warnings).data.tasks;
+      }
+      if (statuses !== undefined) {
         const removed = before.statuses.filter((st) => !statuses.includes(st));
         const inUse = removed.map((status) => ({ status, tasks: active.filter((t) => t.status === status).map((t) => t.id) })).filter((u) => u.tasks.length > 0);
         if (inUse.length) throw statusInUse(ctx.store.dir, inUse);
@@ -300,6 +467,13 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
           if (n) warnings.push(`${n} archived task(s) keep the removed status ${status}: they stay readable as an unknown status, and restore brings them back in it (then laneboard update <ID> --status <status>)`);
         }
       }
+      if (fieldsChange) {
+        for (const key of drops) checkDeclared(before, key);
+        const inUse = fieldUses(before.fields, specs, drops, active);
+        if (inUse.length) throw fieldInUse(ctx.store.dir, ctx.actor, inUse);
+        // Archived tasks are read-only and do not block, as for a dropped status; doctor checks the fields of active tasks only.
+        warnings.push(...archivedFieldWarnings(fieldUses(before.fields, specs, drops, archived)));
+      }
       const next = validateConfig(
         {
           ...before,
@@ -307,6 +481,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
           ...(description !== undefined ? { description } : {}),
           ...(prefix !== undefined ? { prefix } : {}),
           ...(statuses !== undefined ? { statuses } : {}),
+          ...(fieldsChange ? { fields: nextFields(before.fields, specs, drops) } : {}),
         },
         'config.json',
       );
@@ -553,7 +728,9 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     add('attachment content', attachmentContent(dir, tasks));
     add('statuses', statusCheck(config, active.data.tasks));
     add('parents', parentCheck(active.data.tasks, archive.data.tasks));
-    add('fields', fieldCheck(config, tasks));
+    // Active tasks only, like statuses: an archived task is read-only, so a field dropped or retyped after it was archived (config
+    // --drop-field / --field warn about it) is no problem to fix.
+    add('fields', fieldCheck(config, active.data.tasks));
   });
   return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings };
 }

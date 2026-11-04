@@ -38,7 +38,7 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   UNKNOWN_OPTION: { exit: 2, http: 400, fix: 'check the options: laneboard <command> --help' },
   INVALID_VALUE: { exit: 2, http: 400, fix: 'pass the value in the format the message states' },
   UNKNOWN_STATUS: { exit: 2, http: 400, fix: 'use a status from `allowed` (config.statuses)' },
-  UNKNOWN_FIELD: { exit: 2, http: 400, fix: 'use a field from `allowed` or declare it in .laneboard/config.json `fields`' },
+  UNKNOWN_FIELD: { exit: 2, http: 400, fix: 'use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type>' },
   ACTOR_REQUIRED: { exit: 2, http: 400, fix: 'pass --as <your-name> or export LANEBOARD_AGENT=<your-name>' },
   TASK_NOT_FOUND: { exit: 3, http: 404, fix: 'find the task: laneboard list --scope all --text "<words from the title>"' },
   ATTACHMENT_NOT_FOUND: { exit: 3, http: 404, fix: 'see attachment names: laneboard get <id>' },
