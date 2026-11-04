@@ -5,7 +5,7 @@ laneboard agent rules (task board & CLI for AI coding agents):
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json`. Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name; add `--as <name>` only for a name of your own (rule 3).
 5. `--expected-rev` is optional: only for edits on top of what you read (`--description` replaces the whole text; `--field`), pass the rev from your last read or write (every write returns it). Status, comment, claim, finish: without it, and no `get` for it.
 6. REV_CONFLICT: re-apply your change on `error.details.task` (the current task: keep others' edits, merge the description) with its rev. Never retry blindly.
-7. ALREADY_CLAIMED: do not take over; comment or ask the orchestrator.
+7. ALREADY_CLAIMED: do not take over; comment or ask the orchestrator. A reviewer accepts a task in review with `finish`.
 8. Statuses (in order; the last one is final) and typed fields come from config; `laneboard prime` lists them. On UNKNOWN_* copy a value from `allowed`.
 9. Notes: `laneboard comment <ID> "<text>"` (`get` shows type `commented`). Files: `laneboard attach <ID> <path>`. Links: `--add-link branch=<name>` / `pr=<url>` / `commit=<sha>` (finish links HEAD itself).
 10. Finished tasks: `laneboard archive <ID>`. Old ones: `laneboard list --scope all --text <q>`.
@@ -21,6 +21,7 @@ short 3 2340b5f8: Always pass `--json`. Name: without `--as`, the session defaul
 short 4 2fa51bc5: New task, start of work: the create and claim commands below (`--status`, `--assignee`, `--json` set; `--as` only for your own name, rule 3).
 short 5 b24282c8: `--expected-rev` only for edits on top of what you read (`--description`, `--field`): the rev of your last read or write. Not for status, comment, claim, finish.
 short 6 9b270eed: REV_CONFLICT: re-apply your change on `error.details.task` with its rev (keep others' edits); never retry blindly.
+short 7 5321cf09: ALREADY_CLAIMED: do not take over; comment or ask the orchestrator.
 short 8 49f53a24: Statuses (in order; last is final), typed fields: the lines below the store. On UNKNOWN_* copy a value from `allowed`.
 short 9 a805d684: Notes: `laneboard comment <ID> "<text>"`; files: `laneboard attach <ID> <path>`; links: `--add-link commit=<sha>` (branch=, pr=; finish links HEAD).
 short 11 cdb10d5f: Ids are exact, with the board prefix (WEB-12). Every `--json` reply names `store` and `prefix`: write only to your project's board.

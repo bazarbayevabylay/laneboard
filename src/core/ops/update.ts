@@ -269,6 +269,29 @@ function finishStatuses(statuses: readonly string[]): string[] {
   return statuses.filter((st, i) => i > 0 || finals.includes(st));
 }
 
+// Statuses a task is handed in to for review: after the first two (new tasks start in the first, work goes on in the second, e.g.
+// in_progress) and before the final one; with the default statuses only review (LB-9).
+export function reviewStatuses(statuses: readonly string[]): string[] {
+  return statuses.slice(2).filter((st) => !finalStatuses(statuses).includes(st));
+}
+
+// May somebody else finish this task? Only to accept it: from a review status into the final one (LB-9, S4).
+function canAccept(statuses: readonly string[], from: string, to: string): boolean {
+  return reviewStatuses(statuses).includes(from) && finalStatuses(statuses).includes(to);
+}
+
+// ALREADY_CLAIMED of a finish by somebody else that is not an acceptance (the task is not in review, or the target is not final).
+// The fix stays the comment to the holder: it may be run blindly.
+function notAcceptable(id: string, holder: string, current: string, actor: string, statuses: readonly string[]): LaneboardError {
+  const review = reviewStatuses(statuses);
+  const from = review.length ? review.join(' or ') : 'review (this board has no such status)';
+  return new LaneboardError(
+    'ALREADY_CLAIMED',
+    `task ${id} is claimed by ${holder} and is ${current}; somebody else's finish only accepts a task from ${from} into ${finalStatuses(statuses).join('')}; do not take it over: comment or ask the orchestrator`,
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+  );
+}
+
 // Warnings that the linked commit may not hold the agent's work (owner's decision, S3b): uncommitted changes (staged or not), or
 // HEAD was committed before the actor's work on the task began (`workStart`, unknown for a task it did not hold); and that git could
 // not be asked (S3c: finish still works, unknown parts give no other warning).
@@ -291,8 +314,10 @@ function checkoutWarnings(id: string, git: CheckoutState, workStart: string | un
 
 // Close a task in one write: the result comment, the commit of the git checkout (kind=commit; not with no_commit, outside git
 // or before the first commit), the actor as assignee of an unassigned task, then the status (default: the final one), in this event order.
-// Only the assignee (or anybody for an unassigned task) finishes. A task already in that status or in a final status keeps its status
-// and gets no second result (a warning); only a commit that is not linked yet is added, so "commit, then finish again" links it.
+// The assignee (or anybody for an unassigned task) finishes; somebody else only accepts: a task in review into the final status, the
+// assignee stays, the status event says `accepted: true` and its actor is who accepted (LB-9). A task already in that status or in a
+// final status keeps its status and gets no second result (a warning); only a commit that is not linked yet is added, so "commit, then
+// finish again" links it.
 export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(FinishInput, input);
@@ -301,6 +326,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   const commit = git.head;
   const warnings: string[] = [];
   let finished = false;
+  let accepted = false;
   let linked = false;
   let workStart: string | undefined;
   let taskId = '';
@@ -321,8 +347,9 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         });
       }
       const task = requireActiveTask(s, id);
-      // The owner first: somebody else's task is ALREADY_CLAIMED even when it is closed (review S3 NIT).
-      if (task.assignee !== null && task.assignee !== actor) throw claimedBy(ctx, id, task.assignee, actor, false);
+      // The owner first: somebody else's task is ALREADY_CLAIMED even when it is closed (review S3 NIT), unless this is an acceptance.
+      accepted = task.assignee !== null && task.assignee !== actor;
+      if (accepted && !canAccept(s.config.statuses, task.status, status)) throw notAcceptable(id, task.assignee ?? '', task.status, actor, s.config.statuses);
       // When the actor's work began (across claim --resume, its earlier sessions' too): a commit older than that is not its work.
       workStart = task.assignee === actor ? workStartedAt(task) : undefined;
       const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
@@ -345,7 +372,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         task.assignee = actor;
         addEvent(task, s.config, s.now, actor, 'assigned', { from: null, to: actor }, actorSourceOf(ctx));
       }
-      addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status }, actorSourceOf(ctx));
+      addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status, ...(accepted ? { accepted: true } : {}) }, actorSourceOf(ctx));
       task.status = status;
       finished = true;
       return toTaskView(task, false);
@@ -353,6 +380,6 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
     txOptions(ctx, warnings),
   );
   warnings.push(...checkoutWarnings(taskId, git, workStart));
-  if (finished) return { data, warnings, reply: { commit: commit ?? null } };
+  if (finished) return { data, warnings, reply: accepted ? { commit: commit ?? null, accepted: true } : { commit: commit ?? null } };
   return linked && commit !== undefined ? { data, warnings, reply: { commit }, unchanged: true } : { data, warnings };
 }

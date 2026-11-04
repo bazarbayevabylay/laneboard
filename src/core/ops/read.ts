@@ -221,7 +221,8 @@ export interface SummaryResult {
   // Declared fields with type, description and an example.
   fields: Record<string, FieldInfo>;
   assignee: string | null;
-  // Active tasks of `assignee`, newest update first (empty without an assignee).
+  // Active tasks of `assignee` not in the final status, newest update first (empty without an assignee); finished ones stay on the
+  // board until archived, but they are no work of the agent (LB-10).
   assigned: ListItem[];
   // Active tasks not in the final status that are assigned to `assignee` (without one: to anybody) - work in progress.
   in_progress: number;
@@ -247,9 +248,9 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   const { config, tasks } = await scopedTasks(ctx, 'active', warnings);
   const counts = new Map<string, number>(config.statuses.map((st) => [st, 0]));
   for (const { task } of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
-  const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee);
-  assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const finalStatus = config.statuses.at(-1) ?? '';
+  const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee && task.status !== finalStatus);
+  assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
   // Free and resumable work is in a configured status that is not final, so `list --unassigned --status <open>...` finds the same tasks.
   const open = config.statuses.filter((st) => !finalStatuses(config.statuses).includes(st));
@@ -302,12 +303,20 @@ export interface ViewResult {
   name: string | null;
   description: string | null;
   prefix: string;
-  // Columns in config order, then statuses no longer in config (`known: false`); cards newest update first.
-  columns: Array<{ status: string; known: boolean; cards: ViewCard[] }>;
-  // Cards shown after the filters / active tasks in total.
+  // Columns in config order, then statuses no longer in config (`known: false`); cards by priority, then newest update first (the final
+  // column: the newest VIEW_FINAL_MAX updates only, `more` counts the rest; other columns: `more` 0).
+  columns: Array<{ status: string; known: boolean; cards: ViewCard[]; more: number }>;
+  // Active tasks (not in the final status) after the filters / in total (LB-10: finished ones wait for archive, they are not active).
   shown: number;
   total: number;
+  // The final status and its tasks after the filters / in total.
+  final_status: string;
+  final_shown: number;
+  final_total: number;
 }
+
+// How many tasks of the final status the view lists (newest update first); the rest: list --status <final> (LB-10).
+export const VIEW_FINAL_MAX = 5;
 
 // When a task entered its current status: the newest `status` event that set it, else created_at (also when older events were dropped).
 function statusSince(task: TaskT): string {
@@ -335,14 +344,32 @@ export async function viewBoard(ctx: OpContext, input: ViewInputT): Promise<OpRe
   (p.labels ?? []).forEach(checkLabel);
   const warnings: string[] = [];
   const { config, tasks } = await scopedTasks(ctx, 'active', warnings);
+  const finalStatus = finalStatuses(config.statuses).join('');
   const shown = tasks.filter(({ task }) => taskMatches(task, p)).map(({ task }) => task);
   shown.sort((a, b) => byPriority(config, a, b) || byUpdatedDesc(a, b));
   const unknown = unique(shown.map((t) => t.status).filter((st) => !config.statuses.includes(st)));
-  const columns = [...config.statuses.map((status) => ({ status, known: true })), ...unknown.map((status) => ({ status, known: false }))].map((c) => ({
-    ...c,
-    cards: shown
-      .filter((t) => t.status === c.status)
-      .map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, labels: [...t.labels], status_since: statusSince(t), rev: t.rev })),
-  }));
-  return { data: { name: config.name ?? null, description: config.description ?? null, prefix: config.prefix, columns, shown: shown.length, total: tasks.length }, warnings };
+  const columns = [...config.statuses.map((status) => ({ status, known: true })), ...unknown.map((status) => ({ status, known: false }))].map((c) => {
+    const inColumn = shown.filter((t) => t.status === c.status);
+    // Finished work: the newest updates, by time only (priority means nothing there); the same order as list --status <final>.
+    if (c.status === finalStatus) inColumn.sort(byUpdatedDesc);
+    const listed = c.status === finalStatus ? inColumn.slice(0, VIEW_FINAL_MAX) : inColumn;
+    const cards = listed.map((t) => ({ id: t.id, title: t.title, assignee: t.assignee, labels: [...t.labels], status_since: statusSince(t), rev: t.rev }));
+    return { ...c, cards, more: inColumn.length - listed.length };
+  });
+  const finalShown = shown.filter((t) => t.status === finalStatus).length;
+  const finalTotal = tasks.filter(({ task }) => task.status === finalStatus).length;
+  return {
+    data: {
+      name: config.name ?? null,
+      description: config.description ?? null,
+      prefix: config.prefix,
+      columns,
+      shown: shown.length - finalShown,
+      total: tasks.length - finalTotal,
+      final_status: finalStatus,
+      final_shown: finalShown,
+      final_total: finalTotal,
+    },
+    warnings,
+  };
 }

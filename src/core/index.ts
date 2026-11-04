@@ -20,9 +20,9 @@ export { DEFAULT_LIST_LIMIT, fieldsLine, finalStatuses, MAX_COMMENT_CHARS, parse
 export type { FieldInfo, OpContext, OpResult, TaskView, WriteFacts, WriteReply } from './ops/common.ts';
 export { CreateInput, createTask } from './ops/create.ts';
 export type { CreateInputT } from './ops/create.ts';
-export { EventsInput, GetInput, ListInput, SummaryInput, ViewInput, getTask, listEvents, listTasks, taskSummary, viewBoard } from './ops/read.ts';
+export { EventsInput, GetInput, ListInput, SummaryInput, ViewInput, VIEW_FINAL_MAX, getTask, listEvents, listTasks, taskSummary, viewBoard } from './ops/read.ts';
 export type { EventItem, EventsInputT, EventsResult, GetInputT, ListInputT, ListItem, ListResult, SummaryInputT, SummaryResult, ViewCard, ViewInputT, ViewResult } from './ops/read.ts';
-export { ClaimInput, CommentInput, FinishInput, UpdateInput, claimTask, commentTask, finishTask, updateTask } from './ops/update.ts';
+export { ClaimInput, CommentInput, FinishInput, UpdateInput, claimTask, commentTask, finishTask, reviewStatuses, updateTask } from './ops/update.ts';
 export type { ClaimInputT, CommentInputT, FinishInputT, UpdateInputT } from './ops/update.ts';
 export { AttachInput, attachFile } from './ops/attach.ts';
 export type { AttachInputT } from './ops/attach.ts';

@@ -112,8 +112,8 @@ laneboard setup gemini --remove
 - `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`). Status changes, comments, `claim` and `finish` need none, so no `get` for a rev.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
 - Always pass `--json`. Your name: `--as <name>` or `export LANEBOARD_AGENT=<name>` (MCP: `actor`); without them Claude Code sessions write under their default name (2.5).
-- `laneboard prime` prints the full rules, the statuses in order (the last one is final), the declared fields, your tasks and the free
-  ones (no assignee, not final) with the claim command.
+- `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
+  not in the final status and the free ones (no assignee, not final) with the claim command.
 
 ### 2.2 A task from start to end
 
@@ -122,7 +122,9 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 `finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
-the final one. A second `finish` into the same status (or of a closed task) keeps the status and the result and warns; only a commit not
+the final one. Somebody else's task `finish` only accepts: from review (the statuses after the first two, before the final one) into the
+final status; the assignee stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`.
+From todo or in_progress: `ALREADY_CLAIMED`. A second `finish` into the same status (or of a closed task) keeps the status and the result and warns; only a commit not
 linked yet is added. A warning, not an error, when tracked files have uncommitted changes (staged ones too) or the HEAD commit is older
 than your claim (the link would point at a commit without your work): commit and run `finish` again, or use `--no-commit`. finish asks
 git (`rev-parse`, `log`, `status`, 2 s each); no git, no answer or an error: the task is still finished, with a `could not check git` warning.
@@ -181,7 +183,7 @@ laneboard update DEMO-2 --title "Release notes" --expected-rev 3 --json
 | 1 | internal | `INTERNAL` | retry once, then report |
 | 2 | input | `USAGE`, `UNKNOWN_OPTION`, `INVALID_VALUE`, `UNKNOWN_STATUS`, `UNKNOWN_FIELD`, `ACTOR_REQUIRED` | correct the command (`fix`, `allowed`) |
 | 3 | not found | `TASK_NOT_FOUND`, `ATTACHMENT_NOT_FOUND` | `laneboard list --scope all --text <words>` |
-| 4 | conflict | `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` | `REV_CONFLICT`: re-apply your change on `error.details.task` with its rev; `ALREADY_CLAIMED`: do not take over, comment |
+| 4 | conflict | `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` | `REV_CONFLICT`: re-apply your change on `error.details.task` with its rev; `ALREADY_CLAIMED`: do not take over, comment (a task in review: `finish` accepts it) |
 | 5 | busy | `LOCK_TIMEOUT`, `LOCK_LOST` | retry the same command once |
 | 6 | store | `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS`, `STORE_READ_ONLY`, `SETUP_*` | `STORE_NOT_FOUND`: find your board with `laneboard boards --json` and pass `--dir <its path>` on every command; none for this project: `init --name <name> --description "<…>"`, then `laneboard prime` (3.4) |
 
@@ -321,7 +323,8 @@ laneboard create "Not here" --status todo --board BILL --json  # exit 6
 `laneboard view` draws the board in the terminal: one column per configured status, each card with id, title, assignee and time in status
 (cards by `priority`, 0 first and none last, then the latest update; a default name drops its harness and keeps the session part);
 a narrow terminal gets a list grouped by status, and colors appear only on a terminal without `NO_COLOR`. Filters: `--assignee`, `--label`,
-`--text`. `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
+`--text`. Active tasks are those not in the final status (footer `3 active tasks, 12 done`); the final column lists the newest 5 updates and
+`+7 more: laneboard list --status done` (no auto-archive: `laneboard archive`). `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
 
 ```sh
 laneboard view --board BILL

@@ -125,7 +125,8 @@ describe('laneboard finish', () => {
     const mine = JSON.parse((await cli(['finish', 'LB-2', '--result', 'x', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(mine.error.code).toBe('ALREADY_CLAIMED');
     // Rewritten in S3b (owner's decision): ALREADY_CLAIMED never offers --resume, only prime's resume section does.
-    expect(mine.error.message).toBe(`task LB-2 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision`);
+    // Rewritten in S4 (LB-9): finish by somebody else says it only accepts a task from review.
+    expect(mine.error.message).toBe(`task LB-2 is claimed by ${NAME_A} and is in_progress; somebody else's finish only accepts a task from review into done; do not take it over: comment or ask the orchestrator`);
     expect(mine.error.fix).toBe(`laneboard comment LB-2 "<note for ${NAME_A}>" --as ${NAME_B}`);
   });
 

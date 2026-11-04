@@ -503,10 +503,11 @@ export interface WriteReply extends WriteFacts {
 }
 
 // What a write did that the task alone does not show: the earlier session a claim --resume took the task from,
-// the commit finish linked (null: none, outside git or --no-commit).
+// the commit finish linked (null: none, outside git or --no-commit), and that finish accepted somebody else's task from review.
 export interface WriteFacts {
   resumed_from?: string;
   commit?: string | null;
+  accepted?: true;
 }
 
 // Explicit mapping of a task view to the short write reply; `attached`: the write added an attachment (attach appends it last).
@@ -516,6 +517,7 @@ export function writeReply(task: TaskView, attached = false, facts: WriteFacts =
   if (added) reply.attachment = { name: added.name, size: added.size, sha256: added.sha256 };
   if (facts.resumed_from !== undefined) reply.resumed_from = facts.resumed_from;
   if (facts.commit !== undefined) reply.commit = facts.commit;
+  if (facts.accepted === true) reply.accepted = true;
   return reply;
 }
 

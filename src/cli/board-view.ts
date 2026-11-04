@@ -116,9 +116,25 @@ function cardLines(card: ViewCard, room: number, now: Date): Piece[][] {
   return [...titleLines(card, room), [{ text: fit(`  ${holder(card, now, room - 2)}`, room), style: 'dim' }]];
 }
 
-// Column title: status (count); a status no longer in config is marked with "?".
+// Column title: status (count, the cards not listed too); a status no longer in config is marked with "?".
 function columnTitle(c: ViewResult['columns'][number]): string {
-  return `${c.status}${c.known ? '' : '?'} (${c.cards.length})`;
+  return `${c.status}${c.known ? '' : '?'} (${c.cards.length + c.more})`;
+}
+
+// Under the newest cards of the final column: how many more and the command that lists them (LB-10).
+function moreText(c: ViewResult['columns'][number]): string {
+  return `+${c.more} more: laneboard list --status ${c.status}`;
+}
+
+// `text` split at spaces into lines of at most `room` columns, so a command is never cut (a single longer word is).
+function wrapWords(text: string, room: number): string[] {
+  const lines: string[] = [];
+  for (const word of text.split(' ')) {
+    const last = lines.at(-1);
+    if (last !== undefined && width(last) + 1 + width(word) <= room) lines[lines.length - 1] = `${last} ${word}`;
+    else lines.push(fit(word, room));
+  }
+  return lines;
 }
 
 // Header: board name, prefix and description, then where it is.
@@ -129,9 +145,11 @@ function header(d: ViewResult, o: RenderOptions): string[] {
   return [paint(fitPieces(title, o.width), o.color), paint([{ text: o.store, style: 'dim' }], o.color)];
 }
 
-// Footer: how many tasks are shown, the filters, and how to leave watch mode.
+// Footer: how many active (not final) and finished tasks are shown, the filters, and how to leave watch mode.
 function footer(d: ViewResult, o: RenderOptions): string {
-  const count = o.filters.length ? `${d.shown} of ${d.total} active tasks shown (${o.filters.join(', ')})` : `${d.total} active tasks`;
+  const count = o.filters.length
+    ? `${d.shown} of ${d.total} active tasks shown, ${d.final_shown} of ${d.final_total} ${d.final_status} (${o.filters.join(', ')})`
+    : `${d.total} active tasks, ${d.final_total} ${d.final_status}`;
   return fit(o.watching ? `${count} · watching for changes, Ctrl+C to exit` : count, o.width);
 }
 
@@ -149,6 +167,7 @@ export function renderBoard(d: ViewResult, o: RenderOptions): string {
         const room = o.width - width(`  ${card.id}  `);
         lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now, room)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
       }
+      if (c.more > 0) lines.push(paint([{ text: fit(`  ${moreText(c)}`, o.width), style: 'dim' }], o.color));
     }
   } else {
     const columns = d.columns.map((c) => {
@@ -157,6 +176,7 @@ export function renderBoard(d: ViewResult, o: RenderOptions): string {
         if (i > 0) body.push([]);
         body.push(...cardLines(card, columnWidth, o.now));
       });
+      if (c.more > 0) body.push([], ...wrapWords(moreText(c), columnWidth).map((text) => [{ text, style: 'dim' as Style }]));
       return [[{ text: fit(columnTitle(c), columnWidth), style: 'bold' as Style }], [{ text: '-'.repeat(columnWidth) }], ...body];
     });
     const rows = Math.max(...columns.map((c) => c.length));

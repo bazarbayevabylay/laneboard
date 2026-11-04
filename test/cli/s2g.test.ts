@@ -234,9 +234,12 @@ describe('narrow view keeps the session part of a default name (review S2f)', ()
       name: 'b',
       description: null,
       prefix: 'LANE',
-      columns: ['todo', 'in_progress', 'review', 'done'].map((status) => ({ status, known: true, cards: status === 'todo' ? [card('LANE-12')] : [] })),
+      columns: ['todo', 'in_progress', 'review', 'done'].map((status) => ({ status, known: true, cards: status === 'todo' ? [card('LANE-12')] : [], more: 0 })),
       shown: 1,
       total: 1,
+      final_status: 'done',
+      final_shown: 0,
+      final_total: 0,
     };
     for (const width of [40, 36]) {
       const line = renderBoard(d, { width, color: false, now: new Date(), store: '/s', filters: [] }).split('\n').find((l) => l.includes('LANE-12')) ?? '';

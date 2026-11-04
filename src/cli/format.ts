@@ -147,6 +147,8 @@ export function eventText(type: string, data: Record<string, unknown>): string {
   if (type === 'commented' && typeof data.text === 'string') return data.text;
   // claim --resume: the task came from another session of the same default name base.
   if (type === 'assigned' && data.resumed === true) return `resumed from ${eventValue(data.from)} to=${eventValue(data.to)}`;
+  // finish by somebody else: the event's actor accepted the task from review (LB-9).
+  if (type === 'status' && data.accepted === true) return `accepted from=${eventValue(data.from)} to=${eventValue(data.to)}`;
   return Object.entries(data)
     .map(([key, value]) => {
       if (key === 'sha256' && typeof value === 'string') return `${key}=${value.slice(0, SHA_SHOWN)}…`;
@@ -266,6 +268,13 @@ function sessionLine(agent: string): string {
 // `line` cut to `room` characters, marked with an ellipsis when cut.
 function fit(line: string, room: number): string {
   return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
+}
+
+// Task counts of the status line: the active ones (not final) per status, then the finished ones that wait for archive (LB-10).
+function statusCounts(d: PrimeData): string {
+  const active = d.statuses.filter((x) => x.status !== d.final_status).map((x) => `${x.status} ${x.count}`);
+  const done = d.statuses.find((x) => x.status === d.final_status);
+  return `active tasks: ${active.join(', ') || 'none'}${done === undefined ? '' : `; ${done.status} ${done.count}`}`;
 }
 
 // `--as` for a printed command: the agent's own name, none for the default name (writes use it anyway), a placeholder without one.
@@ -421,7 +430,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json`;
   const storeHead = `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;
   const warning = d.store_warning ? `\nwarning: ${d.store_warning}` : '';
-  let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;
+  let status = `Statuses in order (final: ${d.final_status ?? '-'}), ${statusCounts(d)}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
   // What each list keeps whatever comes before it: the first own task, the newest earlier-session task (the one a session after
   // /clear most likely resumes), the first free tasks; each with its footer.

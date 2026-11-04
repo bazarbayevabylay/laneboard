@@ -20,7 +20,7 @@ describe('prime', () => {
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
     expect(r.stdout).toBe(
-      `${agentRules()}\n\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1, done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
+      `${agentRules()}\n\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1; done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
     );
     const json = JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(json).toMatchObject({ store: s.dir, prefix: 'LB', warnings: [] });
@@ -35,7 +35,7 @@ describe('prime', () => {
     expect(r.code).toBe(0);
     expect(
       r.stdout.endsWith(
-        'Statuses in order (final: done), active tasks: todo 0, in_progress 0, review 0, done 1\nFields (--field key=value): priority (number, 0 = highest)\n' +
+        'Statuses in order (final: done), active tasks: todo 0, in_progress 0, review 0; done 1\nFields (--field key=value): priority (number, 0 = highest)\n' +
           'You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:\n' +
           '  laneboard create "<short title of your work>" --status todo --assignee <your-name> --as <your-name> --json\n' +
           'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).\n',
@@ -53,9 +53,10 @@ describe('prime', () => {
     expect(r.stdout).toContain(
       'You have no task in progress. Create one now:\n' +
         '  laneboard create "<short title of your work>" --status backlog --assignee dev-1 --as dev-1 --json\n' +
-        'Given a task id instead: laneboard claim <ID> --as dev-1 --json\n' +
-        'Your active tasks (dev-1), newest update first:\n  LB-1  [shipped]  rev 1  Old one\n',
+        'Given a task id instead: laneboard claim <ID> --as dev-1 --json\n',
     );
+    // Rewritten in S4 (LB-10): a task in the final status is no active task, so it is not listed as the agent's.
+    expect(r.stdout).not.toContain('Your active tasks');
     expect(r.stdout).not.toMatch(/: none\b/);
     const empty = await cli(['prime', '--hook'], { cwd: (await newStore()).root, env: { LANEBOARD_AGENT: 'dev-1' } });
     expect(empty.stdout.endsWith('You have no task in progress. Create one now:\n  laneboard create "<short title of your work>" --status todo --assignee dev-1 --as dev-1 --json\nGiven a task id instead: laneboard claim <ID> --as dev-1 --json\n')).toBe(true);

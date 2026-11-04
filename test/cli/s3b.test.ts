@@ -57,7 +57,7 @@ function stored(s: TestStore, id: string): { rev: number; status: string; links:
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
 describe('review S3 MAJOR 1: prime keeps the status and field lines, the commands and the first tasks whole', () => {
-  const STATUS_LINE = (todo: number, inProgress: number) => `Statuses in order (final: done), active tasks: todo ${todo}, in_progress ${inProgress}, review 0, done 0`;
+  const STATUS_LINE = (todo: number, inProgress: number) => `Statuses in order (final: done), active tasks: todo ${todo}, in_progress ${inProgress}, review 0; done 0`;
   const FIELDS_LINE = 'Fields (--field key=value): priority (number, 0 = highest)';
 
   // A store whose path is exactly `len` characters, like the real Projects/laneboard/.laneboard (85).
@@ -424,7 +424,8 @@ describe('owner, S3b: claim --resume is offered only by the resume section, and 
       const e = JSON.parse((await cli([...argv, '--json'], { cwd: s.root, env: SESSION_B })).stdout).error;
       expect(e.code).toBe('ALREADY_CLAIMED');
       expect(`${e.message} ${e.fix}`).not.toContain('--resume');
-      expect(e.message).toBe(`task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision`);
+      // Rewritten in S4 (LB-9): finish by somebody else names acceptance from review; claim keeps the old text.
+      expect(e.message).toBe(argv[0] === 'claim' ? `task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision` : `task LB-1 is claimed by ${NAME_A} and is in_progress; somebody else's finish only accepts a task from review into done; do not take it over: comment or ask the orchestrator`);
     }
   });
 });
