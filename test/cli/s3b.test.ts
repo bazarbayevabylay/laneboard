@@ -89,9 +89,11 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
       expect(lines, where).toContain(STATUS_LINE(3, 1));
       expect(lines, where).toContain(FIELDS_LINE);
       // With --dir in each command it would not fit: one line names it (the commands stay whole either way).
-      const dirLine = `This board was named by --dir: add --dir ${shellQuote(dir)} to every laneboard command below.`;
+      // Rewritten in S4b (review S4): the path is printed once, as `--dir <path>` in the Store line, which the dir line points to.
+      const dirLine = 'This board was named by --dir: add the --dir option of the Store line to every laneboard command below.';
       const inCommands = lines.includes(`  laneboard create "<short title of your work>" --status todo --assignee ${NAME_B}${run.dirArg} --json`);
-      expect(inCommands || (lines.includes(dirLine) && lines.includes(`  laneboard create "<short title of your work>" --status todo --assignee ${NAME_B} --json`)), where).toBe(true);
+      const once = lines.includes(dirLine) && lines.some((l) => l.startsWith(`Store: --dir ${shellQuote(dir)} (prefix SHOP)`));
+      expect(inCommands || (once && lines.includes(`  laneboard create "<short title of your work>" --status todo --assignee ${NAME_B} --json`)), where).toBe(true);
       expect(lines, where).toContain('  SHOP-1  [in_progress]  <1m ago  session aaaa1111  Add discount to total()');
       for (const i of [1, 2, 3]) expect(lines, where).toContain(`  SHOP-${i + 1}  [todo]  rev 1  Free task ${i}`);
       // Only the board line may be cut.
@@ -143,7 +145,10 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
                 expect(lines, where).toContain(STATUS_LINE(0, 0));
                 expect(lines, where).toContain(FIELDS_LINE);
                 expect(lines.some((l) => l.startsWith('Your name: session default ')), where).toBe(true);
-                const dirOnce = lines.includes(`This board was named by --dir: add --dir ${storeDir} to every laneboard command below.`);
+                // Rewritten in S4b: the path once, in the Store line as `--dir <path>`; the dir line points to it.
+                const dirOnce = lines.includes('This board was named by --dir: add the --dir option of the Store line to every laneboard command below.');
+                if (dirOnce) expect(lines.some((l) => l.startsWith(`Store: --dir ${storeDir} (prefix LB)`)), where).toBe(true);
+                if (dirOnce) expect(text.split(storeDir ?? '').length - 1, where).toBe(1);
                 const dirArg = withDir && !dirOnce ? ` --dir ${storeDir}` : '';
                 if (own === 0) {
                   expect(lines, where).toContain(`  laneboard create "<short title of your work>" --status todo --assignee ${name}${dirArg} --json`);
@@ -244,7 +249,8 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     expect(stored(s, 'LB-1').events.slice(-3).map((e) => [e.type, e.data])).toEqual([
       ['commented', { text: 'Ready for review' }],
       ['updated', { links: [[], [{ kind: 'commit', ref: head }]] }],
-      ['status', { from: 'in_progress', to: 'review' }],
+      // S4b: the assignee's finish into a status that is not final hands the task in.
+      ['status', { from: 'in_progress', to: 'review', handed_in: true }],
     ]);
     const again = await cli(['finish', 'LB-1', '--result', 'Again', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root });
     expect(again.code).toBe(0);
@@ -424,20 +430,25 @@ describe('owner, S3b: claim --resume is offered only by the resume section, and 
       const e = JSON.parse((await cli([...argv, '--json'], { cwd: s.root, env: SESSION_B })).stdout).error;
       expect(e.code).toBe('ALREADY_CLAIMED');
       expect(`${e.message} ${e.fix}`).not.toContain('--resume');
-      // Rewritten in S4 (LB-9): finish by somebody else names acceptance from review; claim keeps the old text.
-      expect(e.message).toBe(argv[0] === 'claim' ? `task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision` : `task LB-1 is claimed by ${NAME_A} and is in_progress; somebody else's finish only accepts a task from review into done; do not take it over: comment or ask the orchestrator`);
+      // Rewritten in S4 (LB-9): finish by somebody else names acceptance; claim keeps the old text. S4b: acceptance by the data.
+      expect(e.message).toBe(argv[0] === 'claim' ? `task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision` : `task LB-1 is claimed by ${NAME_A} and is in_progress, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish LB-1 --status <status>); do not take it over: ask ${NAME_A} to hand it in, or close it as the orchestrator: laneboard update LB-1 --status done --as ${NAME_B}`);
     }
   });
 });
 
 describe('review S3 NIT: finish checks the owner before "already closed"', () => {
-  it("somebody else's closed task: ALREADY_CLAIMED (exit 4), not a no-op", async () => {
+  // Rewritten in S4b (owner): somebody else's finish of a closed task is a repeated acceptance (or a retry), a no-op with a warning;
+  // into a status that is not final it stays ALREADY_CLAIMED.
+  it("somebody else's closed task: a no-op with a warning into the final status, ALREADY_CLAIMED (exit 4) into another; nothing written", async () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'Done', status: 'done', assignee: 'dev-1' });
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
     const r = await cli(['finish', 'LB-1', '--result', 'x', '--as', 'dev-2', '--json'], { cwd: s.root });
-    expect(r.code).toBe(4);
-    expect(JSON.parse(r.stdout).error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' } });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ data: { id: 'LB-1', rev: 1, status: 'done', assignee: 'dev-1' }, warnings: ['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")'] });
+    const back = await cli(['finish', 'LB-1', '--result', 'x', '--status', 'review', '--as', 'dev-2', '--json'], { cwd: s.root });
+    expect(back.code).toBe(4);
+    expect(JSON.parse(back.stdout).error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' } });
     expect(fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8')).toBe(before);
   });
 });

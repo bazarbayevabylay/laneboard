@@ -216,12 +216,12 @@ export interface SummaryResult {
   first_status: string;
   // The last configured status: work there is done.
   final_status: string;
-  // Configured statuses that are not final (free and resumable tasks are in one of them).
+  // Configured statuses that are not final (own, free and resumable tasks are in one of them).
   open_statuses: string[];
   // Declared fields with type, description and an example.
   fields: Record<string, FieldInfo>;
   assignee: string | null;
-  // Active tasks of `assignee` not in the final status, newest update first (empty without an assignee); finished ones stay on the
+  // Active tasks of `assignee` in a configured status that is not final, newest update first (empty without an assignee); finished ones stay on the
   // board until archived, but they are no work of the agent (LB-10).
   assigned: ListItem[];
   // Active tasks not in the final status that are assigned to `assignee` (without one: to anybody) - work in progress.
@@ -249,11 +249,12 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   const counts = new Map<string, number>(config.statuses.map((st) => [st, 0]));
   for (const { task } of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
   const finalStatus = config.statuses.at(-1) ?? '';
-  const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee && task.status !== finalStatus);
+  // The agent's own, free and resumable work is in a configured status that is not final, so `list --assignee <name> --status
+  // <open>...` and `list --unassigned --status <open>...` (the footers of prime) find the same tasks.
+  const open = config.statuses.filter((st) => !finalStatuses(config.statuses).includes(st));
+  const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee && open.includes(task.status));
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
-  // Free and resumable work is in a configured status that is not final, so `list --unassigned --status <open>...` finds the same tasks.
-  const open = config.statuses.filter((st) => !finalStatuses(config.statuses).includes(st));
   const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status));
   free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
   const resumable =

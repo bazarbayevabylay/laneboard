@@ -10,7 +10,8 @@ export const finish: CommandDef = {
   summary:
     'Close your task in one write: the result comment, a link to the current git commit (HEAD; --no-commit: none), then the final status ' +
     '(--status: any but the first one, e.g. review to hand in). Only the assignee (or anybody for an unassigned task); no --expected-rev. ' +
-    "Somebody else's task only to accept it: from review into the final status (the status event says accepted). " +
+    'Your finish into a status that is not final hands the task in (the status event says handed_in). ' +
+    "Somebody else's task only to accept it after its assignee handed it in with finish: into the final status, no commit link (the status event says accepted). " +
     'Commit your changes first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). ' +
     'Again in the same status: unchanged, a new commit is linked.',
   options: { result: { type: 'string' }, status: { type: 'string' }, 'no-commit': { type: 'boolean' }, ...FULL_OPTION },

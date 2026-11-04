@@ -503,7 +503,7 @@ export interface WriteReply extends WriteFacts {
 }
 
 // What a write did that the task alone does not show: the earlier session a claim --resume took the task from,
-// the commit finish linked (null: none, outside git or --no-commit), and that finish accepted somebody else's task from review.
+// the commit finish linked (null: none, outside git, --no-commit or an acceptance), and that finish accepted somebody else's handed-in task.
 export interface WriteFacts {
   resumed_from?: string;
   commit?: string | null;

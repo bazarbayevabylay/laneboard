@@ -112,7 +112,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   finishTask: {
     name: 'task_finish',
     description:
-      'Close a task in one call: the result comment, a link to the current git commit (HEAD of the server folder; no_commit: true for none), then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; a task of somebody else only to accept it from review into the final status (reply accepted: true). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). Already in that status or final: unchanged, with a warning (a new commit is still linked). Returns id, rev, status, assignee, commit.',
+      'Close a task in one call: the result comment, a link to the current git commit (HEAD of the server folder; no_commit: true for none), then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). Already in that status or final: unchanged, with a warning (a new commit of the assignee is still linked). Returns id, rev, status, assignee, commit.',
     params: taskWriteParams(FinishInput),
     write: true,
     taskReply: true,

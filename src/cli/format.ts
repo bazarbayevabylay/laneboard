@@ -147,8 +147,10 @@ export function eventText(type: string, data: Record<string, unknown>): string {
   if (type === 'commented' && typeof data.text === 'string') return data.text;
   // claim --resume: the task came from another session of the same default name base.
   if (type === 'assigned' && data.resumed === true) return `resumed from ${eventValue(data.from)} to=${eventValue(data.to)}`;
-  // finish by somebody else: the event's actor accepted the task from review (LB-9).
+  // finish by somebody else: the event's actor accepted a task its assignee handed in (LB-9).
   if (type === 'status' && data.accepted === true) return `accepted from=${eventValue(data.from)} to=${eventValue(data.to)}`;
+  // finish by the assignee into a status that is not final: it handed the task in (S4b).
+  if (type === 'status' && data.handed_in === true) return `handed in from=${eventValue(data.from)} to=${eventValue(data.to)}`;
   return Object.entries(data)
     .map(([key, value]) => {
       if (key === 'sha256' && typeof value === 'string') return `${key}=${value.slice(0, SHA_SHOWN)}…`;
@@ -341,7 +343,8 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
 export const PRIME_MIN_FREE = 3;
 
 // What prime gives up, step by step, to stay under PRIME_MAX_CHARS: short forms of the rules (agent-rules.md), the board's name and
-// description, long task titles, then the --dir of each printed command (one line names it instead). Never a command,
+// description, long task titles, then the --dir of each printed command (the Store line names it as `--dir <path>`, a line says to
+// add it; the path is printed once). Never a command,
 // the session line, the first own task, the newest earlier-session task or the first PRIME_MIN_FREE free tasks (review S3). The status and field
 // lines are cut last: for a config with very many statuses or fields, or a very long store path named by --dir (the --dir line
 // then takes their room; review S3b MINOR).
@@ -394,15 +397,28 @@ export function primeText(d: PrimeData, storeDir?: string, now = new Date()): st
   return fit(text, PRIME_MAX_CHARS);
 }
 
+// Longest `--status <open>...` a footer command of prime carries; a config with more or longer statuses gets the short command and a note.
+const OPEN_OPTIONS_MAX = 300;
+
+// The footer commands list the same tasks as prime's lists (own or free ones in a configured status that is not final), so the
+// "N more" they count is what the command prints (review S4 MINOR): `--status` per open status. Past OPEN_OPTIONS_MAX characters
+// (a config with very many statuses) the command goes without them and a note says it lists the final status too.
+function openStatusOptions(d: PrimeData): { options: string; note: string } {
+  const options = d.open_statuses.map((st) => ` --status ${shellQuote(st)}`).join('');
+  if (options.length <= OPEN_OPTIONS_MAX) return { options, note: '' };
+  return { options: '', note: ` (lists ${d.final_status ?? 'final'} tasks too)` };
+}
+
 // primeText with one squeeze step; `fits`: every required part is there and the whole stays under PRIME_MAX_CHARS.
 function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, squeeze: Squeeze): { text: string; fits: boolean } {
   const head = `${squeeze.shortRules ? shortRules(d.rules) : d.rules}\n`;
   const named = storeDir === undefined ? '' : shellQuote(storeDir);
   const dir = storeDir === undefined || squeeze.dirOnce ? '' : ` --dir ${named}`;
-  const dirLine = storeDir !== undefined && squeeze.dirOnce ? `This board was named by --dir: add --dir ${named} to every laneboard command below.` : '';
-  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'}${dir} --json`;
-  // The same tasks as the free list: no assignee, a configured status that is not final.
-  const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${d.open_statuses.map((st) => ` --status ${shellQuote(st)}`).join('')}${dir} --json`;
+  // dirOnce: the path is printed once, as the whole `--dir <path>` option in the Store line (review S4: not a second time here).
+  const dirLine = storeDir !== undefined && squeeze.dirOnce ? 'This board was named by --dir: add the --dir option of the Store line to every laneboard command below.' : '';
+  const open = openStatusOptions(d);
+  const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'}${open.options}${dir} --json${open.note}`;
+  const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${open.options}${dir} --json${open.note}`;
   const resumeMore = (n: number): string => `\n... ${n} more not shown`;
   const listed = d.agent !== null && d.tasks.length > 0;
   const noTask = d.agent === null || d.in_progress === 0;
@@ -428,7 +444,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${fit(t.title, titleMax)}`;
   // Without a task in progress the numbered ways above carry the claim command, so the header gives no second order.
   const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json`;
-  const storeHead = `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;
+  const storeHead = storeDir !== undefined && squeeze.dirOnce ? `Store: --dir ${named} (prefix ${d.prefix ?? '-'})` : `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;
   const warning = d.store_warning ? `\nwarning: ${d.store_warning}` : '';
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), ${statusCounts(d)}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;

@@ -1,5 +1,6 @@
 // Human views of boards for people in a terminal: the kanban of `laneboard view` and the table of `laneboard boards`.
 // Plain text by default; ANSI styles only on a terminal without NO_COLOR (no-color.org).
+import { shellQuote } from '../core/index.ts';
 import type { BoardInfo, BoardsResult, ViewCard, ViewResult } from '../core/index.ts';
 
 // Narrowest column that still shows an id and a few words; below it the board becomes a list grouped by status.
@@ -17,6 +18,9 @@ export interface RenderOptions {
   store: string;
   // Filters in use, shown in the footer.
   filters: string[];
+  // Options of this view the list command under the final column repeats (filters, --dir, --board), shell-quoted, each with a
+  // leading space, so that command lists the same tasks.
+  listOptions?: string;
   watching?: boolean;
 }
 
@@ -121,18 +125,19 @@ function columnTitle(c: ViewResult['columns'][number]): string {
   return `${c.status}${c.known ? '' : '?'} (${c.cards.length + c.more})`;
 }
 
-// Under the newest cards of the final column: how many more and the command that lists them (LB-10).
-function moreText(c: ViewResult['columns'][number]): string {
-  return `+${c.more} more: laneboard list --status ${c.status}`;
+// Under the newest cards of the final column: how many more and the command that lists them with the view's filters and board (LB-10).
+function moreText(c: ViewResult['columns'][number], o: RenderOptions): string {
+  return `+${c.more} more: laneboard list --status ${shellQuote(c.status)}${o.listOptions ?? ''}`;
 }
 
-// `text` split at spaces into lines of at most `room` columns, so a command is never cut (a single longer word is).
-function wrapWords(text: string, room: number): string[] {
+// `text` split at spaces into lines of at most `room` columns, so a command is never cut; a single longer word (a --dir path) is cut
+// only with `cutLong` (a column with another one to its right), else it stays whole on its own line.
+function wrapWords(text: string, room: number, cutLong: boolean): string[] {
   const lines: string[] = [];
   for (const word of text.split(' ')) {
     const last = lines.at(-1);
     if (last !== undefined && width(last) + 1 + width(word) <= room) lines[lines.length - 1] = `${last} ${word}`;
-    else lines.push(fit(word, room));
+    else lines.push(cutLong ? fit(word, room) : word);
   }
   return lines;
 }
@@ -167,16 +172,17 @@ export function renderBoard(d: ViewResult, o: RenderOptions): string {
         const room = o.width - width(`  ${card.id}  `);
         lines.push(paint(fitPieces([{ text: '  ' }, { text: card.id, style: 'id' }, { text: `  ${holder(card, o.now, room)}`, style: 'dim' }, { text: `  ${card.title}` }], o.width), o.color));
       }
-      if (c.more > 0) lines.push(paint([{ text: fit(`  ${moreText(c)}`, o.width), style: 'dim' }], o.color));
+      // Wrapped at spaces like in a column: with filters and --dir the command may be wider than the terminal, and a cut one cannot be run.
+      if (c.more > 0) lines.push(...wrapWords(moreText(c, o), o.width - 2, false).map((text) => paint([{ text: `  ${text}`, style: 'dim' }], o.color)));
     }
   } else {
-    const columns = d.columns.map((c) => {
+    const columns = d.columns.map((c, at) => {
       const body: Piece[][] = [];
       c.cards.forEach((card, i) => {
         if (i > 0) body.push([]);
         body.push(...cardLines(card, columnWidth, o.now));
       });
-      if (c.more > 0) body.push([], ...wrapWords(moreText(c), columnWidth).map((text) => [{ text, style: 'dim' as Style }]));
+      if (c.more > 0) body.push([], ...wrapWords(moreText(c, o), columnWidth, at < n - 1).map((text) => [{ text, style: 'dim' as Style }]));
       return [[{ text: fit(columnTitle(c), columnWidth), style: 'bold' as Style }], [{ text: '-'.repeat(columnWidth) }], ...body];
     });
     const rows = Math.max(...columns.map((c) => c.length));

@@ -1,12 +1,12 @@
 // laneboard view: the board as a kanban for people in a terminal (agents use list --json).
 import fs from 'node:fs';
 import path from 'node:path';
-import { LaneboardError, toLaneboardError, viewBoard } from '../../core/index.ts';
+import { LaneboardError, shellQuote, toLaneboardError, viewBoard } from '../../core/index.ts';
 import type { OpContext, ViewInputT } from '../../core/index.ts';
 import { DEFAULT_WIDTH, renderBoard } from '../board-view.ts';
 import { errorText } from '../format.ts';
 import { flag, list as many, str } from './args.ts';
-import type { CliIo, CommandDef } from './types.ts';
+import type { CliIo, CommandDef, Values } from './types.ts';
 
 // Fallback poll for --watch when fs.watch misses an event (network drives, some editors): every 2 s.
 const POLL_MS = 2000;
@@ -77,6 +77,19 @@ function nextChange(storeDir: string, signal: AbortSignal | undefined, pollMs: n
   });
 }
 
+// The view's filters and board as options of `laneboard list`, for the command under the final column: --dir as the resolved store
+// (copyable from any folder), --board as given (review S4 MINOR).
+function viewListOptions(input: ViewInputT, values: Values, storeDir: string): string {
+  const parts = [
+    ...(input.assignee !== undefined ? [`--assignee ${shellQuote(input.assignee)}`] : []),
+    ...(input.labels ?? []).map((l) => `--label ${shellQuote(l)}`),
+    ...(input.text !== undefined ? [`--text ${shellQuote(input.text)}`] : []),
+    ...(typeof values.dir === 'string' ? [`--dir ${shellQuote(storeDir)}`] : []),
+    ...(typeof values.board === 'string' ? [`--board ${shellQuote(values.board)}`] : []),
+  ];
+  return parts.map((part) => ` ${part}`).join('');
+}
+
 export const view: CommandDef = {
   name: 'view',
   usage: 'view [--assignee A] [--label L]... [--text Q] [--watch] [--board <prefix|name|path>]',
@@ -96,9 +109,10 @@ export const view: CommandDef = {
       ...(input.text ? [`text=${input.text}`] : []),
     ];
     const ctx: OpContext = c.op();
+    const listOptions = viewListOptions(input, c.values, ctx.store.dir);
     const render = async (): Promise<{ data: unknown; warnings: string[]; human: string }> => {
       const r = await viewBoard(ctx, input);
-      const human = renderBoard(r.data, { width: terminalWidth(c.io), color: useColor(c.io), now: new Date(), store: ctx.store.dir, filters, watching: watch });
+      const human = renderBoard(r.data, { width: terminalWidth(c.io), color: useColor(c.io), now: new Date(), store: ctx.store.dir, filters, listOptions, watching: watch });
       return { data: r.data, warnings: r.warnings, human };
     };
     if (!watch) return render();

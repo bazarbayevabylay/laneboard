@@ -122,9 +122,13 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 `finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
-the final one. Somebody else's task `finish` only accepts: from review (the statuses after the first two, before the final one) into the
-final status; the assignee stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`.
-From todo or in_progress: `ALREADY_CLAIMED`. A second `finish` into the same status (or of a closed task) keeps the status and the result and warns; only a commit not
+the final one. The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
+Somebody else's task `finish` only accepts, and only a handed-in one (the newest `status` event into its current status is the
+assignee's `finish` with `handed_in`): into the final status, the result comment and no commit link (the assignee linked it); the assignee
+stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`. A task in work or moved by
+`update` (or handed in with 0.2.0, before the mark): `ALREADY_CLAIMED`, the fix asks the assignee to hand it in with
+`finish --status <status>`; the orchestrator may close it with `laneboard update <ID> --status done`. Accepting a closed task again:
+unchanged, with a warning. A second `finish` by the assignee into the same status (or of a closed task) keeps the status and the result and warns; only a commit not
 linked yet is added. A warning, not an error, when tracked files have uncommitted changes (staged ones too) or the HEAD commit is older
 than your claim (the link would point at a commit without your work): commit and run `finish` again, or use `--no-commit`. finish asks
 git (`rev-parse`, `log`, `status`, 2 s each); no git, no answer or an error: the task is still finished, with a `could not check git` warning.
@@ -324,7 +328,7 @@ laneboard create "Not here" --status todo --board BILL --json  # exit 6
 (cards by `priority`, 0 first and none last, then the latest update; a default name drops its harness and keeps the session part);
 a narrow terminal gets a list grouped by status, and colors appear only on a terminal without `NO_COLOR`. Filters: `--assignee`, `--label`,
 `--text`. Active tasks are those not in the final status (footer `3 active tasks, 12 done`); the final column lists the newest 5 updates and
-`+7 more: laneboard list --status done` (no auto-archive: `laneboard archive`). `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
+`+7 more: laneboard list --status done` with the view's filters and `--dir`/`--board` (no auto-archive: `laneboard archive`). `laneboard view --watch` redraws after every write until Ctrl+C. Agents use `list --json` instead.
 
 ```sh
 laneboard view --board BILL

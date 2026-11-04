@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import { readCheckout } from '../git.ts';
 import type { CheckoutState } from '../git.ts';
-import type { LinkT } from '../schema.ts';
+import type { LinkT, TaskT } from '../schema.ts';
 import { transact } from '../transact.ts';
 import {
   actorSourceOf,
@@ -269,26 +269,35 @@ function finishStatuses(statuses: readonly string[]): string[] {
   return statuses.filter((st, i) => i > 0 || finals.includes(st));
 }
 
-// Statuses a task is handed in to for review: after the first two (new tasks start in the first, work goes on in the second, e.g.
-// in_progress) and before the final one; with the default statuses only review (LB-9).
-export function reviewStatuses(statuses: readonly string[]): string[] {
-  return statuses.slice(2).filter((st) => !finalStatuses(statuses).includes(st));
+// Was the task handed in by its assignee: the newest `status` event into its current status is the assignee's finish, which marks
+// it `handed_in: true` (S4b, by the data: no meaning is read from the names or the order of statuses). False without such an event
+// (set by update or claim, created in this status, handed in before the marker, or the event was dropped by the events limit).
+export function handedIn(task: TaskT): boolean {
+  for (let i = task.events.length - 1; i >= 0; i--) {
+    const e = task.events[i];
+    if (e?.type === 'status' && e.data.to === task.status) return e.actor === task.assignee && e.data.handed_in === true;
+  }
+  return false;
 }
 
-// May somebody else finish this task? Only to accept it: from a review status into the final one (LB-9, S4).
-function canAccept(statuses: readonly string[], from: string, to: string): boolean {
-  return reviewStatuses(statuses).includes(from) && finalStatuses(statuses).includes(to);
-}
-
-// ALREADY_CLAIMED of a finish by somebody else that is not an acceptance (the task is not in review, or the target is not final).
+// ALREADY_CLAIMED of a finish by somebody else into a status that is not final: acceptance only closes a task.
 // The fix stays the comment to the holder: it may be run blindly.
-function notAcceptable(id: string, holder: string, current: string, actor: string, statuses: readonly string[]): LaneboardError {
-  const review = reviewStatuses(statuses);
-  const from = review.length ? review.join(' or ') : 'review (this board has no such status)';
+function notFinalTarget(id: string, holder: string, current: string, actor: string, final: string): LaneboardError {
   return new LaneboardError(
     'ALREADY_CLAIMED',
-    `task ${id} is claimed by ${holder} and is ${current}; somebody else's finish only accepts a task from ${from} into ${finalStatuses(statuses).join('')}; do not take it over: comment or ask the orchestrator`,
+    `task ${id} is claimed by ${holder} and is ${current}; somebody else's finish only accepts a task its assignee handed in, into ${final}; do not take it over: comment or ask the orchestrator`,
     { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+  );
+}
+
+// ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix asks the
+// holder to hand it in (a comment, safe to run blindly); the message names the orchestrator's way to close it anyway.
+function notHandedIn(id: string, holder: string, current: string, actor: string, final: string, statuses: readonly string[]): LaneboardError {
+  const handIn = finishStatuses(statuses).includes(current) ? current : '<status>';
+  return new LaneboardError(
+    'ALREADY_CLAIMED',
+    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status <status>); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}` },
   );
 }
 
@@ -314,10 +323,12 @@ function checkoutWarnings(id: string, git: CheckoutState, workStart: string | un
 
 // Close a task in one write: the result comment, the commit of the git checkout (kind=commit; not with no_commit, outside git
 // or before the first commit), the actor as assignee of an unassigned task, then the status (default: the final one), in this event order.
-// The assignee (or anybody for an unassigned task) finishes; somebody else only accepts: a task in review into the final status, the
-// assignee stays, the status event says `accepted: true` and its actor is who accepted (LB-9). A task already in that status or in a
-// final status keeps its status and gets no second result (a warning); only a commit that is not linked yet is added, so "commit, then
-// finish again" links it.
+// The assignee (or anybody for an unassigned task) finishes; into a status that is not final it hands the task in (the status event says
+// `handed_in: true`, also when the task is already there but was not handed in). Somebody else only accepts: a task its assignee
+// handed in (handedIn) into the final status, with the result comment and no commit link (the assignee linked its commit when handing
+// in); the assignee stays, the status event says `accepted: true` and its actor is who accepted (LB-9, S4b). A task already in that
+// status (handed in) or in a final status keeps its status and gets no second result (a warning); for the assignee only a commit that
+// is not linked yet is added, so "commit, then finish again" links it; somebody else's finish of a closed task changes nothing.
 export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(FinishInput, input);
@@ -326,7 +337,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   const commit = git.head;
   const warnings: string[] = [];
   let finished = false;
-  let accepted = false;
+  let byOther = false;
   let linked = false;
   let workStart: string | undefined;
   let taskId = '';
@@ -347,14 +358,31 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         });
       }
       const task = requireActiveTask(s, id);
-      // The owner first: somebody else's task is ALREADY_CLAIMED even when it is closed (review S3 NIT), unless this is an acceptance.
-      accepted = task.assignee !== null && task.assignee !== actor;
-      if (accepted && !canAccept(s.config.statuses, task.status, status)) throw notAcceptable(id, task.assignee ?? '', task.status, actor, s.config.statuses);
-      // When the actor's work began (across claim --resume, its earlier sessions' too): a commit older than that is not its work.
-      workStart = task.assignee === actor ? workStartedAt(task) : undefined;
-      const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
-      const again = task.status === status || finals.includes(task.status);
       const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>")`;
+      // The owner first: somebody else's task is ALREADY_CLAIMED (review S3 NIT), unless this is an acceptance or the task is closed.
+      const holder = task.assignee;
+      byOther = holder !== null && holder !== actor;
+      if (holder !== null && byOther) {
+        if (!finals.includes(status)) throw notFinalTarget(id, holder, task.status, actor, finals.join(''));
+        // Accepted before (or a retry after a lost lock): nothing to do.
+        if (finals.includes(task.status)) {
+          warnings.push(`no changes: ${id} is already ${task.status}; ${notRecorded}`);
+          return toTaskView(task, false);
+        }
+        if (!handedIn(task)) throw notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses);
+        touch(task, s.now, actor);
+        addEvent(task, s.config, s.now, actor, 'commented', { text: p.result }, actorSourceOf(ctx));
+        addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status, accepted: true }, actorSourceOf(ctx));
+        task.status = status;
+        finished = true;
+        return toTaskView(task, false);
+      }
+      // When the actor's work began (across claim --resume, its earlier sessions' too): a commit older than that is not its work.
+      workStart = holder === actor ? workStartedAt(task) : undefined;
+      const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
+      const handIn = !finals.includes(status);
+      // Already there: final, or handed in to this status (a task moved there by update is handed in now).
+      const again = finals.includes(task.status) || (task.status === status && (!handIn || handedIn(task)));
       if (again && newCommit === undefined) warnings.push(`no changes: ${id} is already ${task.status}; ${notRecorded}`);
       if (again && newCommit !== undefined) warnings.push(`status and result unchanged: ${id} is already ${task.status}; ${notRecorded}; commit ${newCommit.slice(0, 12)} linked`);
       if (again && newCommit === undefined) return toTaskView(task, false);
@@ -372,14 +400,15 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         task.assignee = actor;
         addEvent(task, s.config, s.now, actor, 'assigned', { from: null, to: actor }, actorSourceOf(ctx));
       }
-      addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status, ...(accepted ? { accepted: true } : {}) }, actorSourceOf(ctx));
+      addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status, ...(handIn ? { handed_in: true } : {}) }, actorSourceOf(ctx));
       task.status = status;
       finished = true;
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),
   );
-  warnings.push(...checkoutWarnings(taskId, git, workStart));
-  if (finished) return { data, warnings, reply: accepted ? { commit: commit ?? null, accepted: true } : { commit: commit ?? null } };
+  // An acceptance links no commit, so the checkout of who accepts says nothing about the work.
+  if (!byOther) warnings.push(...checkoutWarnings(taskId, git, workStart));
+  if (finished) return { data, warnings, reply: byOther ? { commit: null, accepted: true } : { commit: commit ?? null } };
   return linked && commit !== undefined ? { data, warnings, reply: { commit }, unchanged: true } : { data, warnings };
 }

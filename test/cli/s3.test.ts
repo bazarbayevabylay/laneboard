@@ -118,16 +118,18 @@ describe('laneboard finish', () => {
     await createTask(as(s, 'a'), { title: 'Theirs', status: 'in_progress', assignee: 'dev-1' });
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
     const r = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--as', 'dev-2', '--json'], { cwd: s.root })).stdout);
-    expect(r.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard comment LB-1 "<note for dev-1>" --as dev-2' });
+    // Rewritten in S4b (owner): the fix asks the holder to hand the task in with finish (a comment).
+    expect(r.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard comment LB-1 "hand it in: laneboard finish LB-1 --status in_progress --result <result>" --as dev-2' });
     expect(r.error.message).not.toContain('--resume');
     expect(fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8')).toBe(before);
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Mine before /clear', status: 'in_progress', assignee: NAME_A });
     const mine = JSON.parse((await cli(['finish', 'LB-2', '--result', 'x', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(mine.error.code).toBe('ALREADY_CLAIMED');
     // Rewritten in S3b (owner's decision): ALREADY_CLAIMED never offers --resume, only prime's resume section does.
-    // Rewritten in S4 (LB-9): finish by somebody else says it only accepts a task from review.
-    expect(mine.error.message).toBe(`task LB-2 is claimed by ${NAME_A} and is in_progress; somebody else's finish only accepts a task from review into done; do not take it over: comment or ask the orchestrator`);
-    expect(mine.error.fix).toBe(`laneboard comment LB-2 "<note for ${NAME_A}>" --as ${NAME_B}`);
+    // Rewritten in S4 (LB-9): finish by somebody else says it only accepts a task from review. S4b (owner): a task its assignee
+    // handed in with finish; the fix asks the holder to hand it in.
+    expect(mine.error.message).toBe(`task LB-2 is claimed by ${NAME_A} and is in_progress, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish LB-2 --status <status>); do not take it over: ask ${NAME_A} to hand it in, or close it as the orchestrator: laneboard update LB-2 --status done --as ${NAME_B}`);
+    expect(mine.error.fix).toBe(`laneboard comment LB-2 "hand it in: laneboard finish LB-2 --status in_progress --result <result>" --as ${NAME_B}`);
   });
 
   it('a task already in the final status: unchanged, with a warning that the result was not recorded (exit 0)', async () => {
@@ -171,7 +173,8 @@ describe('laneboard finish', () => {
     await createTask(as(s, 'a'), { title: 'C', status: 'todo', assignee: 'dev-1' });
     const taken = await callTool('task_finish', { id: 'LB-3', result: 'x', actor: 'm' }, env);
     expect(taken.isError).toBe(true);
-    expect(taken.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment LB-3 "<note for dev-1>" --as m' });
+    // Rewritten in S4b: LB-3 is in todo (the first status), so the hand-in status is a placeholder.
+    expect(taken.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment LB-3 "hand it in: laneboard finish LB-3 --status <status> --result <result>" --as m' });
     expect((await callTool('task_finish', { id: 'LB-3', result: 'x', expected_rev: 1, actor: 'dev-1' }, env)).structuredContent).toMatchObject({ code: 'USAGE' });
   });
 });

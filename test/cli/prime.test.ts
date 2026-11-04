@@ -158,7 +158,7 @@ describe('prime', () => {
     const text = r.stdout.trimEnd();
     expect(text.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
     expect(text.startsWith(agentRules())).toBe(true);
-    const more = /\n\.\.\. (\d+) more: laneboard list --assignee dev-1 --json$/.exec(text);
+    const more = /\n\.\.\. (\d+) more: laneboard list --assignee dev-1 --status todo --status in_progress --status review --json$/.exec(text);
     expect(more).not.toBeNull();
     const shown = text.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;
     expect(shown + Number(more?.[1])).toBe(120);
@@ -232,7 +232,7 @@ describe('prime', () => {
         const text = primeText(data(n, len));
         expect(text.length, `n=${n} len=${len}`).toBeLessThanOrEqual(PRIME_MAX_CHARS);
         const shown = text.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;
-        const more = /\n\.\.\. (\d+) more: laneboard list --assignee dev-1 --json$/.exec(text);
+        const more = /\n\.\.\. (\d+) more: laneboard list --assignee dev-1 --status todo --status in_progress --status review --json$/.exec(text);
         expect(shown + Number(more?.[1] ?? 0), `n=${n} len=${len}`).toBe(n);
       }
     }
@@ -240,7 +240,7 @@ describe('prime', () => {
 
   it('a task line that would end exactly one character past the footer room is moved to the footer', () => {
     // Rewritten in S3b: the first own task line is always kept (review S3 MAJOR 1), so the boundary is checked on the second one.
-    const footer = (n: number): number => `\n... ${n} more: laneboard list --assignee dev-1 --json`.length;
+    const footer = (n: number): number => `\n... ${n} more: laneboard list --assignee dev-1 --status todo --status in_progress --status review --json`.length;
     // Everything up to the first task line, as printed for an agent with tasks in progress.
     const head = primeText(data(1, 1));
     expect(head.endsWith('Your active tasks (dev-1), newest update first:\n  LB-1  [todo]  rev 1  x')).toBe(true);
@@ -252,7 +252,7 @@ describe('prime', () => {
     };
     const over = primeText(three(PRIME_MAX_CHARS + 1 - head.length - fixed - footer(1)));
     expect(over.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
-    expect(over.endsWith('rev 1  x\n... 2 more: laneboard list --assignee dev-1 --json')).toBe(true);
+    expect(over.endsWith('rev 1  x\n... 2 more: laneboard list --assignee dev-1 --status todo --status in_progress --status review --json')).toBe(true);
     // One character less: the second line fits with the footer room, and the short third line fits in that room itself.
     const exact = primeText(three(PRIME_MAX_CHARS - head.length - fixed - footer(1)));
     expect(exact.length).toBe(PRIME_MAX_CHARS - footer(1) + '\n  LB-3  [todo]  rev 1  x'.length);
