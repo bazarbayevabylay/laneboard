@@ -299,3 +299,7 @@ h3 .n { color: var(--muted); font-weight: 500; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Text from the store (board name and description, titles, comments, labels, names, links, field values) is isolated from the text
+   around it: a bidi control in it (U+202E, Trojan Source) cannot reorder the id, status or time next to it. */
+h1, .desc, .c-title, .c-last-t, .chip, .t, .nm, .p-title, .fields dd, .ref, .actor, .step-b, .prose { unicode-bidi: isolate; }

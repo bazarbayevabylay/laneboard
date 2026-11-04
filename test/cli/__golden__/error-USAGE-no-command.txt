@@ -1,16 +1,16 @@
 # error-USAGE-no-command
-$ laneboard
+$ laneboard --as a
 exit 2
 --- stdout
 
 --- stderr
-error USAGE: missing command
+error USAGE: the command comes first: laneboard <command> [options], got --as
   allowed: create, get, list, update, claim, comment, finish, attach, archive, restore, delete, events, init, config, setup, import, prime, view, board, boards, mcp, migrate, doctor
-  fix: laneboard prime
+  fix: laneboard prime --as a
 
-$ laneboard --json
+$ laneboard --as a --json
 exit 2
 --- stdout
-{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"the command comes first: laneboard <command> [options], got --json","fix":"laneboard prime --json","allowed":["create","get","list","update","claim","comment","finish","attach","archive","restore","delete","events","init","config","setup","import","prime","view","board","boards","mcp","migrate","doctor"]}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"USAGE","message":"the command comes first: laneboard <command> [options], got --as","fix":"laneboard prime --as a --json","allowed":["create","get","list","update","claim","comment","finish","attach","archive","restore","delete","events","init","config","setup","import","prime","view","board","boards","mcp","migrate","doctor"]}}
 --- stderr
 

@@ -3,6 +3,7 @@ import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject, 
 import type { DoctorResult, EventsResult, FieldInfo, LastComment, LinkedTask, LinkT, ListItem, ListResult, OverviewBoard, OverviewCard, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import { age, fit as fitChars, shortName } from './board-view.ts';
+import { safeData, safeText } from './display.ts';
 import type { SetupResult } from '../setup/index.ts';
 
 export { shellQuote };
@@ -24,7 +25,7 @@ export function errorEnvelope(store: string | null, prefix: string | null, err: 
   return `${JSON.stringify({ ok: false, store, prefix, error: toErrorObject(err, fix) })}\n`;
 }
 
-// Human error block for stderr.
+// Human error block for stderr; the message and the fix may echo argv or task data, so the block is made safe for the terminal.
 export function errorText(err: LaneboardError, fix: string): string {
   const lines = [`error ${err.code}: ${err.message}`];
   if (err.allowed) lines.push(`  allowed: ${err.allowed.length ? err.allowed.join(', ') : '(none)'}`);
@@ -32,12 +33,12 @@ export function errorText(err: LaneboardError, fix: string): string {
   // A snippet to add by hand (setup) is part of the fix, so human output shows it too.
   const snippet = err.details?.snippet;
   if (typeof snippet === 'string') lines.push('  snippet:', ...snippet.split('\n').map((l) => `    ${l}`));
-  return `${lines.join('\n')}\n`;
+  return `${safeText(lines.join('\n'))}\n`;
 }
 
-// Human warning lines for stderr.
+// Human warning lines for stderr (made safe for the terminal: a warning may name task data).
 export function warningText(warnings: readonly string[]): string {
-  return warnings.map((w) => `warning: ${w}\n`).join('');
+  return warnings.map((w) => `warning: ${safeText(w)}\n`).join('');
 }
 
 // Align rows into columns separated by two spaces.
@@ -152,8 +153,10 @@ export function commentLine(c: LastComment): string {
   return `${c.result ? '=' : '>'} ${c.text}`;
 }
 
-// Human view of a task list with the paging footer; a row with a comment gets its newest comment line under it.
-export function listText(r: ListResult): string {
+// Human view of a task list with the paging footer; a row with a comment gets its newest comment line under it. The data is made
+// safe for the terminal before the columns are aligned (the runner escapes the rest of the human text, run.ts).
+export function listText(result: ListResult): string {
+  const r = safeData(result);
   const lines: string[] = [];
   if (r.items.length) {
     const rows = [['ID', 'STATUS', 'ASSIGNEE', 'REV', 'UPDATED', 'TITLE']];
