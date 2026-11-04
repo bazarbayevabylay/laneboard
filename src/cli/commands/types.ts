@@ -11,6 +11,8 @@ export interface CliIo {
   env: Record<string, string | undefined>;
   cwd: string;
   readStdin(): string;
+  // stdin is a terminal: nothing is piped in, so a hook does not wait for input.
+  stdinIsTTY?: boolean;
   stdout(text: string): void;
   stderr(text: string): void;
   // Override of the 15 s lock wait budget (tests only).

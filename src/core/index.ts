@@ -7,7 +7,7 @@ export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MA
 export { isLiveBoard, listBoards, readRegistry, registerStore, registryFile, resolveBoard } from './boards.ts';
 export type { BoardEntry, BoardInfo, BoardsResult } from './boards.ts';
 export { actorPart, agentUser, defaultAgentBase, defaultAgentName, isEarlierSessionName, resolveActor } from './agent-name.ts';
-export { gitHead } from './git.ts';
+export { gitHead, hasUncommittedChanges, headMovedAt } from './git.ts';
 export type { ActorSource, ResolvedActor } from './agent-name.ts';
 export type { DiscoveryInput, ForeignStore, StoreRef, StoreSource } from './store.ts';
 export { derivePrefix, storePrefix } from './config.ts';

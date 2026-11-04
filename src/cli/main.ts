@@ -12,6 +12,7 @@ process.exitCode = await runCli({
   env: process.env,
   cwd: process.cwd(),
   readStdin: () => fs.readFileSync(0, 'utf8'),
+  stdinIsTTY: process.stdin.isTTY === true,
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
   columns: process.stdout.isTTY ? process.stdout.columns : undefined,

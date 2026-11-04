@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import type { ErrorCode } from '../errors.ts';
+import { isEarlierSessionName } from '../agent-name.ts';
 import type { ActorSource } from '../agent-name.ts';
 import { ACTOR_RE, ID_RE, LABEL_RE, LINK_KINDS } from '../schema.ts';
 import type { ConfigT, EventType, FieldType, LinkT, StoreFileT, TaskEventT, TaskT } from '../schema.ts';
@@ -37,6 +38,8 @@ export interface OpResult<T> {
   data: T;
   warnings: string[];
   reply?: WriteFacts;
+  // The op wrote less than it was asked for (finish of a task already in that status that only linked a new commit).
+  unchanged?: boolean;
 }
 
 export const MAX_COMMENT_CHARS = 10000;
@@ -160,6 +163,28 @@ export function normalizeId(raw: string, prefix: string, field = 'id'): string {
 export function finalStatuses(statuses: readonly string[]): string[] {
   const last = statuses.at(-1);
   return last === undefined ? [] : [last];
+}
+
+// The event that gave the task its current assignee (the newest `assigned` event, else `created`); undefined for an unassigned task
+// or when that event was dropped by the events limit.
+export function assignmentEvent(task: TaskT): TaskEventT | undefined {
+  if (task.assignee === null) return undefined;
+  for (let i = task.events.length - 1; i >= 0; i--) {
+    const e = task.events[i];
+    if (e?.type === 'assigned') return e.data.to === task.assignee ? e : undefined;
+    if (e?.type === 'created') return e.data.assignee === task.assignee ? e : undefined;
+  }
+  return undefined;
+}
+
+// Is the task the work of another session of the actor's default name (claim --resume)? Its holder looks like `<base>:<session>`
+// and took it itself under its session default name: that event says actor_source `default`. By the data, not the form of the name:
+// an explicit name of the same form (`<base>:reviewer`) and a task handed to such a name by someone else never qualify (review S3).
+export function heldByEarlierSession(task: TaskT, sessionBase: string | undefined, actor: string): boolean {
+  const holder = task.assignee;
+  if (holder === null || !isEarlierSessionName(holder, sessionBase, actor)) return false;
+  const e = assignmentEvent(task);
+  return e !== undefined && e.actor === holder && e.actor_source === 'default';
 }
 
 // Status must be one of config.statuses.

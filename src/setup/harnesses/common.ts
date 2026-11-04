@@ -32,7 +32,7 @@ export function shellWord(value: string): string {
 // The task rule every instruction block carries: weak models skip optional-sounding advice, so it says MANDATORY and when it applies.
 const TASK_RULE =
   'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); ' +
-  'comment each meaningful step; when done, set the final status and add a result comment. No untracked work.';
+  'comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json` (one write: the result, the commit link, the status). No untracked work.';
 
 const NAME_LINE = 'Writes need your name: pass `--as <your-name>` on every command (or `export LANEBOARD_AGENT=<your-name>`).';
 

@@ -263,9 +263,6 @@ function sessionLine(agent: string): string {
   );
 }
 
-// Characters the status and field lines keep before the board's description in the store line is cut (prime at its size limit).
-const MIN_STATUS_ROOM = 40;
-
 // `line` cut to `room` characters, marked with an ellipsis when cut.
 function fit(line: string, room: number): string {
   return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
@@ -278,18 +275,19 @@ function asOption(d: PrimeData): string {
 }
 
 // A task line of prime: id, status, rev, title.
-function taskLine(t: ListItem): string {
-  return `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${t.title}`;
+function taskLine(t: ListItem, titleMax = Infinity): string {
+  return `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${fit(t.title, titleMax)}`;
 }
 
-// `text` plus one line per task while the whole stays under PRIME_MAX_CHARS with `reserve` characters left for what follows;
-// tasks that do not fit (or that `total` counts beyond `items`) end in the `more` footer.
-function withTasks(text: string, items: readonly ListItem[], total: number, more: (n: number) => string, reserve: number, line = taskLine): string {
+// `text` plus the first `keep` task lines (their room is counted in advance, see sectionMin), then one line per task while the whole
+// stays under PRIME_MAX_CHARS with `reserve` characters left for what follows; tasks that do not fit (or that `total` counts beyond
+// `items`) end in the `more` footer.
+function withTasks(text: string, items: readonly ListItem[], total: number, more: (n: number) => string, reserve: number, keep: number, line: (t: ListItem) => string): string {
   let out = text;
   for (const [i, t] of items.entries()) {
     const next = line(t);
     const left = total - i - 1;
-    if (out.length + next.length + (left ? more(left).length : 0) + reserve > PRIME_MAX_CHARS) return out + more(total - i);
+    if (i >= keep && out.length + next.length + (left ? more(left).length : 0) + reserve > PRIME_MAX_CHARS) return out + more(total - i);
     out += next;
   }
   return total > items.length ? out + more(total - items.length) : out;
@@ -330,13 +328,85 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
   return [intro, ...ways.map((w, i) => `${i + 1}. ${w}`), create, ...(d.agent === null ? [keepName] : [])].join('\n');
 }
 
+// Free tasks prime always lists (when there are that many), with the footer command for the rest.
+export const PRIME_MIN_FREE = 3;
+
+// What prime gives up, step by step, to stay under PRIME_MAX_CHARS: short forms of the rules (SHORT_RULES), the board's name and
+// description, long task titles, then the --dir of each printed command (one line names it instead). Never a command,
+// the session line, the first own task, the newest earlier-session task or the first PRIME_MIN_FREE free tasks (review S3). Only a
+// config with very many statuses or fields gets its status and field lines cut (the last step).
+interface Squeeze {
+  shortRules: boolean;
+  cutBoard: boolean;
+  shortTitles: boolean;
+  dirOnce: boolean;
+  cutLines: boolean;
+}
+const SQUEEZES: readonly Squeeze[] = [
+  { shortRules: false, cutBoard: false, shortTitles: false, dirOnce: false, cutLines: false },
+  { shortRules: true, cutBoard: false, shortTitles: false, dirOnce: false, cutLines: false },
+  { shortRules: true, cutBoard: true, shortTitles: false, dirOnce: false, cutLines: false },
+  { shortRules: true, cutBoard: true, shortTitles: true, dirOnce: false, cutLines: false },
+  { shortRules: true, cutBoard: true, shortTitles: true, dirOnce: true, cutLines: false },
+  { shortRules: true, cutBoard: true, shortTitles: true, dirOnce: true, cutLines: true },
+];
+
+// Characters of a task title in prime once long titles give way (the id is what the commands need).
+const SHORT_TITLE = 60;
+
+// Short forms of the rules that repeat what prime prints after them (3, 4, 8) and of the longer ones (the full text stays in the skill,
+// the setup block's harness files and the agent guide). A test checks that each number still exists in agent-rules.md.
+export const SHORT_RULES = new Map<string, string>([
+  ['3', '3. Always pass `--json`. Your name: without `--as`, the session default (prime names it); your own: `--as <name>` on every command (or LANEBOARD_AGENT; MCP: `actor`), one per subagent or parallel worker.'],
+  ['4', '4. New task and start of work: the create and claim commands in this output (with your name; `--as` only for a name of your own, rule 3).'],
+  ['5', '5. `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`); none for status, comment, claim, finish.'],
+  ['6', '6. REV_CONFLICT: re-apply your change on `error.details.task` with its rev (keep others\' edits). Never retry blindly.'],
+  ['8', '8. Statuses (in order; the last one is final) and typed fields: the lines below the store. On UNKNOWN_* copy a value from `allowed`.'],
+  ['9', '9. Notes: `laneboard comment <ID> "<text>"`. Files: `laneboard attach <ID> <path>`. Links: `--add-link commit=<sha>` (or branch=, pr=; finish links HEAD).'],
+  ['11', '11. Ids are exact and carry the board prefix (WEB-12). Every reply names `store` and `prefix`: write only to your project\'s board.'],
+  [
+    '12',
+    '12. Not sure which board is yours: `laneboard boards --json`, pick it by `description` and `path`, then `--dir <path>` on every command. ' +
+      'None for this project: in its root `laneboard init --dir .laneboard --name <name> --description "<whose project, what work>"`.',
+  ],
+  ['14', '14. Text starting with "-": options first, then `--`, then the text (`laneboard comment <ID> --json -- "- item"`; values: `--description="- item"`).'],
+]);
+
+// The rules with SHORT_RULES in place of their full lines.
+function shortRules(rules: string): string {
+  return rules
+    .split('\n')
+    .map((line) => SHORT_RULES.get(/^(\d+)\. /.exec(line)?.[1] ?? '') ?? line)
+    .join('\n');
+}
+
+// Characters of the first `n` task lines plus the footer for the rest: what a list section always keeps.
+function sectionMin(items: readonly ListItem[], total: number, more: (n: number) => string, n: number, line: (t: ListItem) => string): number {
+  const shown = items.slice(0, n);
+  return shown.reduce((sum, t) => sum + line(t).length, 0) + (total > shown.length ? more(total - shown.length).length : 0);
+}
+
 // Rules, store, statuses (final one named), fields, the session-name line, then the agent's tasks or the ways to start one, the tasks of
-// its earlier sessions (resume), then the free tasks with the claim command; at most PRIME_MAX_CHARS characters.
-// `storeDir`: the store was named by --dir, so the printed commands carry it; `now`: for the age of earlier-session tasks.
+// its earlier sessions (resume), then the free tasks with the claim command; at most PRIME_MAX_CHARS characters (SQUEEZES says what
+// gives way). `storeDir`: the store was named by --dir, so the printed commands carry it; `now`: for the age of earlier-session tasks.
 export function primeText(d: PrimeData, storeDir?: string, now = new Date()): string {
-  const head = `${d.rules}\n`;
-  if (d.store_problem !== null) return fit(`${head}\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
-  const dir = storeDir === undefined ? '' : ` --dir ${shellQuote(storeDir)}`;
+  if (d.store_problem !== null) return fit(`${d.rules}\n\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
+  let text = '';
+  for (const squeeze of SQUEEZES) {
+    const out = primeLayout(d, storeDir, now, squeeze);
+    text = out.text;
+    if (out.fits) return text;
+  }
+  // Not even the last step keeps every required part (an unusually long config): the tail is cut.
+  return fit(text, PRIME_MAX_CHARS);
+}
+
+// primeText with one squeeze step; `fits`: every required part is there and the whole stays under PRIME_MAX_CHARS.
+function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, squeeze: Squeeze): { text: string; fits: boolean } {
+  const head = `${squeeze.shortRules ? shortRules(d.rules) : d.rules}\n`;
+  const named = storeDir === undefined ? '' : shellQuote(storeDir);
+  const dir = storeDir === undefined || squeeze.dirOnce ? '' : ` --dir ${named}`;
+  const dirLine = storeDir !== undefined && squeeze.dirOnce ? `This board was named by --dir: add --dir ${named} to every laneboard command below.` : '';
   const more = (n: number): string => `\n... ${n} more: laneboard list --assignee ${d.agent ?? '<you>'}${dir} --json`;
   // The same tasks as the free list: no assignee, a configured status that is not final.
   const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${d.open_statuses.map((st) => ` --status ${shellQuote(st)}`).join('')}${dir} --json`;
@@ -349,6 +419,7 @@ export function primeText(d: PrimeData, storeDir?: string, now = new Date()): st
   // Without a name the agent's own tasks are unknown, so the ways to start one are always shown.
   const closing = [
     d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent) : '',
+    dirLine,
     noTask ? noTaskText(d, dir, { resume, free }) : '',
     listed ? `Your active tasks (${d.agent}), newest update first:` : '',
   ]
@@ -358,37 +429,40 @@ export function primeText(d: PrimeData, storeDir?: string, now = new Date()): st
   const resumeHead = resume
     ? '\nYour earlier sessions, unfinished (a parallel session of yours has the same name: resume only your own):'
     : '';
+  const titleMax = squeeze.shortTitles ? SHORT_TITLE : Infinity;
+  const line = (t: ListItem): string => taskLine(t, titleMax);
   // The holder differs only in its session part: `<base>:<session>`.
-  const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${t.title}`;
+  const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${fit(t.title, titleMax)}`;
   // Without a task in progress the numbered ways above carry the claim command, so the header gives no second order.
   const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json`;
-  let board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
   const storeHead = `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;
   const warning = d.store_warning ? `\nwarning: ${d.store_warning}` : '';
-  // The status and field lines share what is left after the rules, the store, the closing lines, the section headers and the footers;
-  // only when fewer than MIN_STATUS_ROOM characters would be left for them is the board's name and description cut too.
-  const freeTail = freeHead.length + (free ? freeMore(d.unassigned_total).length : 0);
-  // The newest task of an earlier session is the one a session after /clear most likely resumes: its line is never left out.
-  const firstResume = resume && d.resumable[0] ? resumeLine(d.resumable[0]).length : 0;
-  const tail = resumeHead.length + firstResume + (resume ? resumeMore(d.resumable.length).length : 0) + freeTail;
-  const room = PRIME_MAX_CHARS - head.length - storeHead.length - warning.length - closing.length - (listed ? more(d.tasks.length).length : 0) - tail - 4;
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), active tasks: ${d.statuses.map((x) => `${x.status} ${x.count}`).join(', ') || 'none'}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
-  const lines = status.length + 1 + fields.length;
-  if (board.length + lines > room) {
-    if (room - board.length < Math.min(lines, MIN_STATUS_ROOM)) board = fit(board, Math.max(0, room - Math.min(lines, MIN_STATUS_ROOM)));
-    const left = room - board.length;
-    if (lines > left) {
-      fields = fit(fields, Math.floor(left / 3));
-      status = fit(status, left - 1 - fields.length);
-    }
+  // What each list keeps whatever comes before it: the first own task, the newest earlier-session task (the one a session after
+  // /clear most likely resumes), the first free tasks; each with its footer.
+  const freeKeep = free ? freeHead.length + sectionMin(d.unassigned, d.unassigned_total, freeMore, PRIME_MIN_FREE, line) : 0;
+  const resumeKeep = resume ? resumeHead.length + sectionMin(d.resumable, d.resumable.length, resumeMore, 1, resumeLine) : 0;
+  const ownKeep = listed ? sectionMin(d.tasks, d.tasks.length, more, 1, line) : 0;
+  // Four newlines join the five blocks below.
+  const others = head.length + storeHead.length + warning.length + closing.length + 4 + ownKeep + resumeKeep + freeKeep;
+  if (squeeze.cutLines && others + status.length + fields.length > PRIME_MAX_CHARS) {
+    // The board goes first here (cutBoard is on); the field line gets at most a third of the room, the status line the rest.
+    const left = Math.max(0, PRIME_MAX_CHARS - others - 1);
+    fields = fit(fields, Math.floor(left / 3));
+    status = fit(status, left - 1 - fields.length);
   }
+  const required = others + status.length + fields.length;
+  let board = d.name || d.description ? ` - ${[d.name, d.description].filter(Boolean).join(': ')}` : '';
+  const boardRoom = PRIME_MAX_CHARS - required;
+  // A board line cut below a few words says nothing: then it goes.
+  if (squeeze.cutBoard && board.length > boardRoom) board = boardRoom >= 12 ? fit(board, boardRoom) : '';
   let text = [head, `${storeHead}${board}${warning}`, status, fields, closing].join('\n');
-  // The agent's own tasks first; the section headers keep their room, so they are never cut.
-  if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, tail);
-  if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeTail, resumeLine);
-  if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0);
-  return fit(text, PRIME_MAX_CHARS);
+  // The agent's own tasks first; the later sections keep their room.
+  if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, resumeKeep + freeKeep, 1, line);
+  if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeKeep, 1, resumeLine);
+  if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0, PRIME_MIN_FREE, line);
+  return { text, fits: required + board.length <= PRIME_MAX_CHARS };
 }
 
 // Human setup report: one line per file, diffs of replaced values, notes.

@@ -5,9 +5,8 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, IdInput, locate, normalizeId, notFound, parseInput, toTaskView, unique } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, locate, normalizeId, notFound, parseInput, toTaskView, unique } from './common.ts';
 import type { FieldInfo, OpContext, OpResult, TaskView } from './common.ts';
-import { isEarlierSessionName } from '../agent-name.ts';
 import type { ActorSource } from '../agent-name.ts';
 
 export const GetInput = z.strictObject({
@@ -230,8 +229,8 @@ export interface SummaryResult {
   // at most SUMMARY_UNASSIGNED_MAX of them, `unassigned_total` counts all.
   unassigned: ListItem[];
   unassigned_total: number;
-  // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's), newest update
-  // first, at most SUMMARY_RESUMABLE_MAX; empty without `session_base`.
+  // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's) that their holder
+  // took under its session default name (heldByEarlierSession), newest update first, at most SUMMARY_RESUMABLE_MAX; empty without `session_base`.
   resumable: ListItem[];
 }
 
@@ -259,7 +258,7 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   const resumable =
     p.assignee === undefined
       ? []
-      : tasks.filter(({ task }) => task.assignee !== null && open.includes(task.status) && isEarlierSessionName(task.assignee, p.session_base, p.assignee ?? ''));
+      : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? ''));
   resumable.sort((a, b) => byUpdatedDesc(a.task, b.task));
   return {
     data: {

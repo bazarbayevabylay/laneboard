@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, claimTask, createTask } from '../../src/core/index.ts';
-import { PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
+import { PRIME_MAX_CHARS, primeText, SHORT_RULES } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import { as, cleanupTemp, cli, newStore, tempDir, writeRaw } from '../helpers.ts';
 
@@ -238,26 +238,42 @@ describe('prime', () => {
   });
 
   it('a task line that would end exactly one character past the footer room is moved to the footer', () => {
+    // Rewritten in S3b: the first own task line is always kept (review S3 MAJOR 1), so the boundary is checked on the second one.
     const footer = (n: number): number => `\n... ${n} more: laneboard list --assignee dev-1 --json`.length;
-    // Everything before the first task line, as printed for an agent with tasks in progress.
-    const head = primeText(data(1, 1)).slice(0, -'\n  LB-1  [todo]  rev 1  x'.length);
-    expect(head.endsWith('Your active tasks (dev-1), newest update first:')).toBe(true);
-    // Two tasks: the first line is sized so that it plus the footer for the second is PRIME_MAX_CHARS + 1.
-    const fixed = '\n  LB-1  [todo]  rev 1  '.length;
-    const len = PRIME_MAX_CHARS + 1 - head.length - fixed - footer(1);
-    const text = primeText({ ...data(2, 1), tasks: [{ ...data(1, len).tasks[0]!, id: 'LB-1' }, { ...data(1, 1).tasks[0]!, id: 'LB-2' }] });
-    expect(text.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
-    expect(text.endsWith('\n... 2 more: laneboard list --assignee dev-1 --json')).toBe(true);
+    // Everything up to the first task line, as printed for an agent with tasks in progress.
+    const head = primeText(data(1, 1));
+    expect(head.endsWith('Your active tasks (dev-1), newest update first:\n  LB-1  [todo]  rev 1  x')).toBe(true);
+    const fixed = '\n  LB-2  [todo]  rev 1  '.length;
+    // Three tasks: the second line is sized so that it plus the footer for the third is PRIME_MAX_CHARS + 1 (then one less).
+    const three = (len: number): PrimeData => {
+      const [one, two, threeTask] = data(3, 1).tasks;
+      return { ...data(3, 1), tasks: [one!, { ...two!, title: 'x'.repeat(len) }, threeTask!] };
+    };
+    const over = primeText(three(PRIME_MAX_CHARS + 1 - head.length - fixed - footer(1)));
+    expect(over.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
+    expect(over.endsWith('rev 1  x\n... 2 more: laneboard list --assignee dev-1 --json')).toBe(true);
+    // One character less: the second line fits with the footer room, and the short third line fits in that room itself.
+    const exact = primeText(three(PRIME_MAX_CHARS - head.length - fixed - footer(1)));
+    expect(exact.length).toBe(PRIME_MAX_CHARS - footer(1) + '\n  LB-3  [todo]  rev 1  x'.length);
+    expect(exact.endsWith('xx\n  LB-3  [todo]  rev 1  x')).toBe(true);
   });
 
   it('150 long status names: every form stays within the cap and still names the final status', async () => {
     const statuses = Array.from({ length: 150 }, (_, i) => `status_with_a_long_name_${i}`);
     const forms = [data(30, 60, statuses), { ...data(0, 1, statuses), agent: null }, data(0, 1, statuses)];
+    // Rewritten in S3b: at the limit the rules of SHORT_RULES are short; every rule stays, the others word for word, and the create
+    // command stays whole.
+    const ruleLines = agentRules().split('\n');
     for (const d of forms) {
       const text = primeText(d);
       expect(text.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
-      expect(text.startsWith(agentRules())).toBe(true);
+      expect(text.startsWith(`${ruleLines[0]}\n1. `)).toBe(true);
+      for (const rule of ruleLines.slice(1)) {
+        const n = /^(\d+)\. /.exec(rule)?.[1];
+        expect(text).toContain(SHORT_RULES.has(n ?? '') ? `\n${n}. ` : `\n${rule}\n`);
+      }
       expect(text).toContain('Statuses in order (final: status_with_a_long_name_149)');
+      if (d.in_progress === 0) expect(text).toMatch(/\n {2}laneboard create "<short title of your work>" --status status_with_a_long_name_0 --assignee (dev-1 --as dev-1|<your-name> --as <your-name>) --json\n/);
     }
     const s = await newStore({ statuses });
     await createTask(as(s, 'a'), { title: 'x', status: 'status_with_a_long_name_0', assignee: 'dev-1' });

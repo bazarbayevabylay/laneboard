@@ -1,13 +1,13 @@
 // Ops that change an active task: update, claim, comment, finish (task_update, task_claim, task_comment, task_finish).
 import { z } from 'zod';
-import { isEarlierSessionName } from '../agent-name.ts';
 import { LaneboardError } from '../errors.ts';
-import { gitHead } from '../git.ts';
+import { gitHead, hasUncommittedChanges, headMovedAt } from '../git.ts';
 import type { LinkT } from '../schema.ts';
 import { transact } from '../transact.ts';
 import {
   actorSourceOf,
   addEvent,
+  assignmentEvent,
   checkActor,
   checkExpectedRev,
   checkFields,
@@ -16,6 +16,7 @@ import {
   checkTaskLinks,
   DescriptionInput,
   finalStatuses,
+  heldByEarlierSession,
   IdInput,
   LinkInput,
   linkKey,
@@ -164,17 +165,15 @@ export const ClaimInput = z.strictObject({
 });
 export type ClaimInputT = z.infer<typeof ClaimInput>;
 
-// ALREADY_CLAIMED for a task held by `holder`. The fix may be run blindly, so it names no takeover command; only when the holder is
-// a default name of another session of this user and harness does the message name `claim --resume` (for the agent's own earlier work).
+// ALREADY_CLAIMED for a task held by `holder`. Neither the fix (it may be run blindly) nor the message names a takeover command:
+// `claim --resume` is offered only by prime's resume section (owner's decision, S3b).
 function claimedBy(ctx: OpContext, id: string, holder: string, actor: string, resumeAsked: boolean): LaneboardError {
   let why = 'do not take it over: reassignment is the orchestrator\'s decision';
   if (resumeAsked) {
     why =
       ctx.sessionBase === undefined
         ? `--resume takes over only a task of an earlier session of the session default name, and you write as ${actor}; ${why}`
-        : `--resume takes over only a default name ${ctx.sessionBase}:<other session>, and ${holder} is not one; ${why}`;
-  } else if (isEarlierSessionName(holder, ctx.sessionBase, actor)) {
-    why = `${holder} is your default name in another session (before /clear, or a parallel session). Only if you did this task yourself and it matches your current request: laneboard claim ${id} --resume; otherwise leave it`;
+        : `--resume takes over only a task that another session of yours took under its default name ${ctx.sessionBase}:<other session>, and ${holder} did not; ${why}`;
   }
   return new LaneboardError('ALREADY_CLAIMED', `task ${id} is already claimed by ${holder}; ${why}`, {
     details: { assignee: holder },
@@ -198,7 +197,7 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const task = requireActiveTask(s, id);
       checkExpectedRev(task, false, p.expected_rev);
       const holder = task.assignee;
-      const resumed = holder !== null && p.resume === true && isEarlierSessionName(holder, ctx.sessionBase, actor);
+      const resumed = p.resume === true && heldByEarlierSession(task, ctx.sessionBase, actor);
       if (holder !== null && holder !== actor && !resumed) throw claimedBy(ctx, id, holder, actor, p.resume === true);
       const assignChange = holder !== actor ? { from: holder, to: actor, ...(resumed ? { resumed: true } : {}) } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
@@ -215,7 +214,7 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
         task.status = statusChange.to;
         addEvent(task, s.config, s.now, actor, 'status', statusChange, actorSourceOf(ctx));
       }
-      if (resumed) resumedFrom = holder;
+      if (resumed && holder !== null) resumedFrom = holder;
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),
@@ -256,50 +255,90 @@ export const FinishInput = z.strictObject({
   id: IdInput,
   // The result comment (what was done, how it was checked).
   result: CommentText,
-  // One of the final statuses; default: the final status (the last one in config).
+  // Any status but the first one (e.g. review: the agent hands in, the orchestrator sets the final one); default: the final status.
   status: z.string().min(1).optional(),
   // true: no commit link even inside a git repository.
   no_commit: z.boolean().optional(),
 });
 export type FinishInputT = z.infer<typeof FinishInput>;
 
+// Statuses finish may set: all but the first one (where new tasks start), the final one always.
+function finishStatuses(statuses: readonly string[]): string[] {
+  const finals = finalStatuses(statuses);
+  return statuses.filter((st, i) => i > 0 || finals.includes(st));
+}
+
+// What the git checkout says about the linked commit: whether HEAD moved since the claim (unix seconds of its last move) and whether
+// tracked files have uncommitted changes; read before the lock, undefined parts are unknown (the warning is then left out).
+interface CheckoutFacts {
+  movedAt?: number;
+  dirty?: boolean;
+}
+
+// Warnings that the linked commit may not hold the agent's work (owner's decision, S3b): uncommitted changes, or HEAD has not moved
+// since the actor claimed the task (`claimedAt`, unknown for a task it did not hold).
+function commitWarnings(id: string, commit: string, facts: CheckoutFacts, claimedAt: string | undefined): string[] {
+  const sha = commit.slice(0, 12);
+  const again = `commit your work and run laneboard finish ${id} again to link the new commit (work without a commit: --no-commit)`;
+  const out: string[] = [];
+  if (facts.dirty === true) out.push(`the working tree has uncommitted changes to tracked files, so the linked commit ${sha} may not hold your work; ${again}`);
+  // Seconds: a commit in the same second as the claim counts as newer.
+  if (facts.movedAt !== undefined && claimedAt !== undefined && facts.movedAt < Math.floor(Date.parse(claimedAt) / 1000)) {
+    out.push(`the linked commit ${sha} is from before your work: HEAD has not moved since you claimed ${id}; ${again}`);
+  }
+  return out;
+}
+
 // Close a task in one write: the result comment, the commit of the git checkout (kind=commit; not with no_commit, outside git
-// or before the first commit), the actor as assignee of an unassigned task, then the final status, in this event order.
-// Only the assignee (or anybody for an unassigned task) finishes; a task already in a final status is left as it is (a warning).
+// or before the first commit), the actor as assignee of an unassigned task, then the status (default: the final one), in this event order.
+// Only the assignee (or anybody for an unassigned task) finishes. A task already in that status or in a final status keeps its status
+// and gets no second result (a warning); only a commit that is not linked yet is added, so "commit, then finish again" links it.
 export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(FinishInput, input);
   // Read before the lock: the checkout does not change because of this write.
   const commit = p.no_commit === true || ctx.cwd === undefined ? undefined : gitHead(ctx.cwd);
+  const facts: CheckoutFacts = commit === undefined || ctx.cwd === undefined ? {} : { movedAt: headMovedAt(ctx.cwd, commit), dirty: hasUncommittedChanges(ctx.cwd, commit) };
   const warnings: string[] = [];
   let finished = false;
+  let linked = false;
+  let claimedAt: string | undefined;
+  let taskId = '';
   const data = await transact(
     ctx.store,
     { files: ['active', 'archive'] },
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
+      taskId = id;
       const finals = finalStatuses(s.config.statuses);
+      const allowed = finishStatuses(s.config.statuses);
       const status = p.status ?? finals[0] ?? '';
       if (p.status !== undefined) checkStatus(s.config, p.status);
-      if (!finals.includes(status)) {
-        throw new LaneboardError('INVALID_VALUE', `"${status}" is not a final status; finish sets ${finals.join(' or ')} (other statuses: laneboard update ${id} --status <status>)`, {
-          allowed: finals,
+      if (!allowed.includes(status)) {
+        throw new LaneboardError('INVALID_VALUE', `"${status}" is the starting status; finish sets one of ${allowed.join(', ')} (default ${finals.join('')}; back to the start: laneboard update ${id} --status ${status})`, {
+          allowed,
           input: finals.length === 1 ? { field: 'status', value: status, suggestion: finals[0] ?? '' } : { field: 'status', value: status },
         });
       }
       const task = requireActiveTask(s, id);
+      // The owner first: somebody else's task is ALREADY_CLAIMED even when it is closed (review S3 NIT).
       if (task.assignee !== null && task.assignee !== actor) throw claimedBy(ctx, id, task.assignee, actor, false);
-      if (finals.includes(task.status)) {
-        warnings.push(`no changes: ${id} is already ${task.status}; the result was not recorded (add it with laneboard comment ${id} "<text>")`);
-        return toTaskView(task, false);
-      }
+      // When the actor took the task: a commit older than that is not its work.
+      claimedAt = task.assignee === actor ? assignmentEvent(task)?.at : undefined;
+      const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
+      const again = task.status === status || finals.includes(task.status);
+      if (again) warnings.push(`no changes: ${id} is already ${task.status}; the result was not recorded (add it with laneboard comment ${id} "<text>")`);
+      if (again && newCommit === undefined) return toTaskView(task, false);
+      // One write, one rev, whatever events follow.
       touch(task, s.now, actor);
-      addEvent(task, s.config, s.now, actor, 'commented', { text: p.result }, actorSourceOf(ctx));
-      if (commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit)) {
-        const links: LinkT[] = [...task.links, { kind: 'commit', ref: commit }];
+      if (!again) addEvent(task, s.config, s.now, actor, 'commented', { text: p.result }, actorSourceOf(ctx));
+      if (newCommit !== undefined) {
+        const links: LinkT[] = [...task.links, { kind: 'commit', ref: newCommit }];
         addEvent(task, s.config, s.now, actor, 'updated', { links: [task.links, links] }, actorSourceOf(ctx));
         task.links = links;
+        linked = true;
       }
+      if (again) return toTaskView(task, false);
       if (task.assignee === null) {
         task.assignee = actor;
         addEvent(task, s.config, s.now, actor, 'assigned', { from: null, to: actor }, actorSourceOf(ctx));
@@ -311,5 +350,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
     },
     txOptions(ctx, warnings),
   );
-  return finished ? { data, warnings, reply: { commit: commit ?? null } } : { data, warnings };
+  if (commit !== undefined) warnings.push(...commitWarnings(taskId, commit, facts, claimedAt));
+  if (finished) return { data, warnings, reply: { commit: commit ?? null } };
+  return linked && commit !== undefined ? { data, warnings, reply: { commit }, unchanged: true } : { data, warnings };
 }

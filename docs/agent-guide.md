@@ -121,7 +121,11 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 `assignee` (after `attach` also the `attachment`, after `finish` the `commit`). The whole task: `laneboard get <ID>`, or `--full` on the write (MCP: `full: true`).
 `finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
-who then becomes its assignee); a second `finish` of a finished task changes nothing and warns. `--status` picks a final status.
+who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
+the final one. A second `finish` into the same status (or of a closed task) keeps the status and the result and warns; only a commit not
+linked yet is added. A warning, not an error, when tracked files have uncommitted changes or HEAD has not moved since your claim (the link
+would point at a commit from before your work): commit and run `finish` again, or use `--no-commit`. laneboard reads `.git` itself and
+never runs git, so changes that are staged but not committed are not seen.
 
 ```sh
 export LANEBOARD_AGENT=dev-1
@@ -215,9 +219,11 @@ export LANEBOARD_AGENT=dev-1
 After `/clear` Claude Code gives the session a new id, so its default name changes and its task in progress looks like another session's.
 `prime` under the default name lists unfinished tasks of the same base with another session id ("Your earlier sessions", with the age
 of the last update), and `claim <ID> --resume` takes one over: an `assigned` event with `resumed: true` (`get` shows "resumed from <old name>"),
-`resumed_from` in the reply. Only default names of the same user and harness qualify; a task of an explicit name (`dev-1` above) stays
-`ALREADY_CLAIMED`. A parallel live session of the same user has the same base, so resume only a task you did yourself before `/clear`
-that matches the current request. Compaction and `claude --resume <id>` keep the id; the MCP server keeps the id it started with.
+`resumed_from` in the reply. Only a task its holder took itself under its default name (the event says `actor_source: default`) of the
+same user and harness qualifies; a task of an explicit name (`dev-1` above, or `claude-code@ann:reviewer`) stays `ALREADY_CLAIMED`, which
+never suggests `--resume`. A parallel live session of the same user has the same base, so resume only a task you did yourself before `/clear`
+that matches the current request; the SessionStart hook (`prime --hook`) shows the section only after `/clear` (`source: "clear"` in the
+hook input), not to a fresh session. Compaction and `claude --resume <id>` keep the id; the MCP server keeps the id it started with.
 
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name

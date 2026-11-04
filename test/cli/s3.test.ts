@@ -126,7 +126,7 @@ describe('laneboard finish', () => {
     ]);
   });
 
-  it("somebody else's task: ALREADY_CLAIMED with the comment fix, nothing written; an earlier session of the default name: the message names --resume", async () => {
+  it("somebody else's task: ALREADY_CLAIMED with the comment fix, nothing written; an earlier session of the default name: no --resume either", async () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'Theirs', status: 'in_progress', assignee: 'dev-1' });
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
@@ -137,7 +137,8 @@ describe('laneboard finish', () => {
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Mine before /clear', status: 'in_progress', assignee: NAME_A });
     const mine = JSON.parse((await cli(['finish', 'LB-2', '--result', 'x', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(mine.error.code).toBe('ALREADY_CLAIMED');
-    expect(mine.error.message).toContain(`${NAME_A} is your default name in another session (before /clear, or a parallel session). Only if you did this task yourself and it matches your current request: laneboard claim LB-2 --resume; otherwise leave it`);
+    // Rewritten in S3b (owner's decision): ALREADY_CLAIMED never offers --resume, only prime's resume section does.
+    expect(mine.error.message).toBe(`task LB-2 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision`);
     expect(mine.error.fix).toBe(`laneboard comment LB-2 "<note for ${NAME_A}>" --as ${NAME_B}`);
   });
 
@@ -152,12 +153,14 @@ describe('laneboard finish', () => {
     expect(stored(s, 'LB-1').rev).toBe(1);
   });
 
-  it('--status must be a final status (the fix names it); unknown status, missing --result, archived task fail as elsewhere', async () => {
+  it('--status must not be the starting status (the fix names the final one); unknown status, missing --result, archived task fail as elsewhere', async () => {
+    // Rewritten in S3b (owner's decision): finish takes any status but the first one, so the refused input is now `todo`.
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'T', status: 'todo', assignee: 'dev-1' });
-    const review = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
-    expect(review.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['done'], fix: "laneboard finish LB-1 --result x --status done --as dev-1 --json" });
-    expect(review.error.message).toBe('"review" is not a final status; finish sets done (other statuses: laneboard update LB-1 --status <status>)');
+    const first = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'todo', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
+    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: "laneboard finish LB-1 --result x --status done --as dev-1 --json" });
+    expect(first.error.message).toBe('"todo" is the starting status; finish sets one of in_progress, review, done (default done; back to the start: laneboard update LB-1 --status todo)');
+    expect(stored(s, 'LB-1').rev).toBe(1);
     expect((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'done', '--as', 'dev-1'], { cwd: s.root })).code).toBe(0);
     await createTask(as(s, 'a'), { title: 'U', status: 'todo' });
     expect(JSON.parse((await cli(['finish', 'LB-2', '--result', 'x', '--status', 'doing', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).error.code).toBe('UNKNOWN_STATUS');
@@ -231,12 +234,13 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     expect(after).not.toContain('Your earlier sessions');
   });
 
-  it('--json reply names resumed_from; without --resume ALREADY_CLAIMED names --resume in the message, never in the fix', async () => {
+  it('--json reply names resumed_from; without --resume ALREADY_CLAIMED names --resume neither in the message nor in the fix', async () => {
     const s = await newStore();
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Mine', status: 'in_progress', assignee: NAME_A });
     const plain = JSON.parse((await cli(['claim', 'LB-1', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(plain.error.code).toBe('ALREADY_CLAIMED');
-    expect(plain.error.message).toContain('laneboard claim LB-1 --resume');
+    // Rewritten in S3b (owner's decision): the message no longer offers `claim --resume`.
+    expect(plain.error.message).not.toContain('--resume');
     expect(plain.error.fix).not.toContain('--resume');
     const r = JSON.parse((await cli(['claim', 'LB-1', '--resume', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(r.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A });
@@ -256,7 +260,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     for (const id of ['LB-1', 'LB-2']) {
       const e = await err(['claim', id, '--resume'], SESSION_B);
       expect(e.code).toBe('ALREADY_CLAIMED');
-      expect(e.message).toContain(`--resume takes over only a default name ${BASE}:<other session>, and `);
+      expect(e.message).toContain(`--resume takes over only a task that another session of yours took under its default name ${BASE}:<other session>, and `);
     }
     const explicit = await err(['claim', 'LB-3', '--resume', '--as', 'dev-2'], SESSION_B);
     expect(explicit).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment LB-3 "<note for ${NAME_A}>" --as dev-2` });
@@ -270,17 +274,19 @@ describe('claim --resume (after /clear the session default name changes)', () =>
 
   it('at the size limit (long store path, long board description) the newest earlier-session task is still listed', async () => {
     const s = await newStore();
-    await createTask(as(s, 'a'), { title: 'Add discount to total()', status: 'in_progress', assignee: NAME_A });
-    await createTask(as(s, 'a'), { title: 'Newest work', status: 'in_progress', assignee: NAME_A });
+    // Since S3b resume is decided by the events: session A took its tasks under its default name.
+    await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Add discount to total()', status: 'in_progress', assignee: NAME_A });
+    await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Newest work', status: 'in_progress', assignee: NAME_A });
     const data = JSON.parse((await cli(['prime', '--json'], { cwd: s.root, env: SESSION_B })).stdout).data as PrimeData;
     const text = primeText({ ...data, store: `/${'p'.repeat(150)}/.laneboard`, name: 'n'.repeat(60), description: 'd'.repeat(200) });
     expect(text.length).toBeLessThanOrEqual(4000);
-    expect(text).toContain('  LB-2  [in_progress]  <1m ago  session aaaa1111  Newest work\n... 1 more not shown');
+    // Rewritten in S3b: the short forms of the repeated rules make room, so both tasks are listed now, the newest first.
+    expect(text).toContain('  LB-2  [in_progress]  <1m ago  session aaaa1111  Newest work\n  LB-1  [in_progress]  <1m ago  session aaaa1111  Add discount to total()');
   });
 
   it('MCP task_claim resume: true under the server session default name', async () => {
     const s = await newStore();
-    await createTask(as(s, 'a'), { title: 'Ann', status: 'in_progress', assignee: NAME_A });
+    await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Ann', status: 'in_progress', assignee: NAME_A });
     const r = await callTool('task_claim', { id: 'LB-1', resume: true }, { cwd: s.root, env: SESSION_B });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A });
@@ -288,7 +294,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
 
   it("no resume section or command under a warning that the store looks like another project's", async () => {
     const parent = await newStore();
-    await createTask(as(parent, 'a'), { title: 'Ann', status: 'in_progress', assignee: NAME_A });
+    await createTask(as(parent, NAME_A, { actorSource: 'default' }), { title: 'Ann', status: 'in_progress', assignee: NAME_A });
     const nested = path.join(parent.root, 'nested');
     fs.mkdirSync(nested);
     fs.writeFileSync(path.join(nested, 'CLAUDE.md'), '# nested project\n');

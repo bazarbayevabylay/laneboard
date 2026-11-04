@@ -5,7 +5,7 @@ import type { ActorSource, ForeignStore, OpContext, SummaryResult } from '../../
 import { primeText } from '../format.ts';
 import type { PrimeData } from '../format.ts';
 import { flag } from './args.ts';
-import type { CommandDef, CommandOutput } from './types.ts';
+import type { CommandContext, CommandDef, CommandOutput } from './types.ts';
 
 // What an agent does when no store is found: find this project's board, else create it (agent rule 12). `--dir` on every command,
 // not `export`: each Bash call of an agent is a new shell, and the MCP server never sees an export.
@@ -60,13 +60,29 @@ async function editHook(op: () => OpContext, agent: string | undefined, cwd: str
   }
 }
 
+// The `source` of the Claude Code SessionStart hook input on stdin (startup, resume, clear, compact, fork:
+// code.claude.com/docs/en/hooks); undefined without input (a terminal, another harness, not JSON).
+function sessionStartSource(io: CommandContext['io']): string | undefined {
+  if (io.stdinIsTTY === true) return undefined;
+  let input: unknown;
+  try {
+    input = JSON.parse(io.readStdin());
+  } catch {
+    // A hook never fails: no input, unreadable or not JSON all mean "source unknown".
+    return undefined;
+  }
+  const source = typeof input === 'object' && input !== null ? (input as Record<string, unknown>).source : undefined;
+  return typeof source === 'string' ? source : undefined;
+}
+
 export const prime: CommandDef = {
   name: 'prime',
   usage: 'prime [--hook | --edit-hook]',
   summary:
     'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the ways to start one: ' +
       'claim a task from the request, resume your own task from before /clear (claim --resume), take a free task, create one. ' +
-    '--hook: plain text for a SessionStart hook, never fails. --edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing.',
+    '--hook: plain text for a SessionStart hook, never fails; the resume way only after /clear (source "clear" in the hook input on stdin). ' +
+    '--edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing.',
   options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' } },
   args: { min: 0, max: 0 },
   async run(c) {
@@ -82,6 +98,9 @@ export const prime: CommandDef = {
     // looks at anybody's work in progress then (a session without a task is not reminded while another one has one).
     if (edit) return editHook(c.op, agentSource === 'default' ? undefined : agent, c.io.cwd, c.io.env.HOME || undefined);
     const rules = agentRules();
+    // In the SessionStart hook the tasks of earlier sessions are offered only after /clear: a fresh session (startup) has no earlier
+    // work of its own, so a parallel live session's task is not offered to it (owner's decision, S3b). Plain prime keeps the section.
+    const resumeShown = !hook || sessionStartSource(c.io) === 'clear';
     let summary: SummaryResult | undefined;
     let ctx: OpContext | undefined;
     let problem: string | undefined;
@@ -119,7 +138,7 @@ export const prime: CommandDef = {
       unassigned: summary?.unassigned ?? [],
       unassigned_total: summary?.unassigned_total ?? 0,
       session_base: named.sessionBase ?? null,
-      resumable: summary?.resumable ?? [],
+      resumable: resumeShown ? (summary?.resumable ?? []) : [],
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).
