@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { startMachine } from './fixture.ts';
+import { ageTask, startMachine } from './fixture.ts';
 import type { Machine } from './fixture.ts';
 
 let m: Machine;
@@ -184,6 +184,86 @@ test('a write between the first GET and the stream start still shows up: the pag
   await expect(page.getByTestId('live')).toContainText('Live');
 });
 
+// The core's stale threshold (STALE_AFTER_MS, read.ts): 4 hours.
+const STALE_MS = 4 * 60 * 60 * 1000;
+
+test('handed in: after `finish --status review` by the assignee the card shows Waiting for acceptance live, with the Result line', async ({ page }) => {
+  await page.goto(`${m.url}?board=API`);
+  await expect(page.getByTestId('live')).toContainText('Live');
+  const created = JSON.parse(m.lb(m.api, ['create', 'Paginate the orders list', '--status', 'in_progress', '--assignee', 'dev-7', '--as', 'dev-7', '--json'])) as { data: { id: string } };
+  const id = created.data.id;
+  const card = page.locator(`.card[data-task="${id}"]`);
+  await expect(card).toBeVisible({ timeout: 2000 });
+  await expect(card.getByTestId('flag-handed')).toHaveCount(0);
+  m.lb(m.api, ['finish', id, '--status', 'review', '--result', 'Cursor paging done; gate 0', '--no-commit', '--as', 'dev-7']);
+  const handed = page.locator(`section.lane[data-status="review"] .card[data-task="${id}"]`);
+  await expect(handed.getByTestId('flag-handed')).toHaveText('Waiting for acceptance', { timeout: 2000 });
+  await expect(handed).toHaveClass(/is-handed/);
+  await expect(handed.getByTestId('last-comment').locator('.badge')).toHaveText('Result');
+  await expect(handed.getByTestId('last-comment').locator('.c-last-t')).toHaveText('Cursor paging done; gate 0');
+  await expect(page.getByTestId('count-handed')).toHaveText('1 waiting for acceptance');
+});
+
+test('stale: a task in work turns stale without a reload; only the periodic refresh (?refresh_ms) brings the core mark', async ({ page }) => {
+  // 6 s short of the threshold: not stale when the page loads, stale a few seconds later with no write to the store at all.
+  ageTask(m.shop, 'SHOP-5', STALE_MS - 6000);
+  await page.goto(`${m.url}?refresh_ms=1000`);
+  const card = page.locator('.card[data-task="SHOP-5"]');
+  await expect(card).toBeVisible();
+  await expect(card.getByTestId('flag-stale')).toHaveCount(0);
+  // A marker on this document: a reload would drop it.
+  await page.evaluate('window.lbSamePage = true');
+  await expect(card.getByTestId('flag-stale')).toBeVisible({ timeout: 15_000 });
+  await expect(card.getByTestId('flag-stale')).toContainText('Stale');
+  await expect(card).toHaveClass(/is-stale/);
+  await expect(page.getByTestId('count-stale')).toHaveText('1 stale');
+  expect(await page.evaluate('window.lbSamePage === true'), 'no reload').toBe(true);
+});
+
+test('subtasks, waiting-owner and the comment line: ^parent on the child, n/m on the parent, links in the panel', async ({ page }) => {
+  await openShop(page);
+  await expect(page.locator('.card[data-task="SHOP-3"]').getByTestId('parent-mark')).toHaveText('^SHOP-4');
+  const parent = page.locator('.card[data-task="SHOP-4"]');
+  await expect(parent.getByTestId('children-mark')).toHaveText('1/2');
+  await expect(parent.getByTestId('children-mark')).toHaveAttribute('title', '1 of 2 subtasks in the final status');
+  await expect(parent.getByTestId('last-comment')).toHaveText('Fix in progress: restore the code first, then compute the total.');
+  const owner = page.locator('.card[data-task="SHOP-2"] .chip.is-owner');
+  await expect(owner).toHaveText('waiting-owner');
+  await expect(page.getByTestId('count-owner')).toHaveText('1 waiting for the owner');
+  await parent.click();
+  const panel = page.getByTestId('task-panel');
+  await expect(panel.getByTestId('children').locator('.task-link')).toHaveCount(2);
+  await expect(panel.getByTestId('children')).toContainText('SHOP-3');
+  await panel.getByTestId('children').locator('.task-link', { hasText: 'SHOP-3' }).click();
+  await expect(page).toHaveURL(/task=SHOP-3/);
+  await expect(panel.locator('.p-title')).toHaveText('Write the e2e test for the checkout happy path');
+  await expect(panel.getByTestId('parent')).toContainText('SHOP-4');
+  await expect(panel.getByTestId('parent')).toContainText('Cart total ignores the discount code');
+});
+
+test('panel: Result block and badge on finish’s comment; a png attachment previews, a file downloads', async ({ page }) => {
+  await openShop(page);
+  await page.locator('.card[data-task="SHOP-6"]').click();
+  const panel = page.getByTestId('task-panel');
+  await expect(panel.getByTestId('results').locator('.step-b')).toHaveText(['Template done, preview attached in the PR']);
+  await expect(panel.getByTestId('result-badge')).toHaveCount(1);
+  await expect(panel.locator('.hist li', { has: page.getByTestId('result-badge') }).locator('.q')).toHaveText('Template done, preview attached in the PR');
+  const img = panel.locator('.file[data-file="email-preview.png"] .thumb img');
+  await expect(img).toBeVisible();
+  await expect.poll(() => img.evaluate((i: { complete: boolean; naturalWidth: number }) => (i.complete ? i.naturalWidth : 0))).toBe(390);
+  // The preview address carries the run token in its query (an <img> cannot send the header).
+  expect(await img.getAttribute('src')).toMatch(/^\/api\/tasks\/SHOP-6\/attachments\/email-preview\.png\?token=[a-f0-9]{64}$/);
+
+  await page.locator('.card[data-task="SHOP-4"]').click();
+  const link = panel.locator('.file[data-file="cart-repro.log"] a.dl');
+  await expect(link).toHaveAttribute('aria-label', 'Download cart-repro.log');
+  await expect(panel.locator('.file[data-file="cart-repro.log"] img')).toHaveCount(0);
+  const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
+  expect(download.suggestedFilename()).toBe('cart-repro.log');
+  const saved = await download.path();
+  expect(fs.readFileSync(saved, 'utf8')).toBe('GET /cart 200\nPOST /cart/discount 200\nGET /cart 200 total=120.00\n');
+});
+
 // Screenshot of the SHOP board with the final column open and SHOP-4 in the panel; copied to LB_SCREENSHOT_DIR when set.
 async function screenshot(page: Page, name: string, outputPath: string): Promise<void> {
   await openShop(page);
@@ -195,6 +275,35 @@ async function screenshot(page: Page, name: string, outputPath: string): Promise
   const dir = process.env.LB_SCREENSHOT_DIR;
   if (dir) fs.copyFileSync(outputPath, path.join(dir, name));
 }
+
+// S5w2 screenshot: both highlights (SHOP-6 waiting for acceptance, SHOP-5 stale), the counters, and SHOP-6 in the panel with the
+// Result block and the png preview scrolled into view.
+async function screenshotMarks(page: Page, name: string, outputPath: string): Promise<void> {
+  ageTask(m.shop, 'SHOP-5', STALE_MS + 52 * 60 * 1000);
+  await openShop(page);
+  await expect(page.locator('.card[data-task="SHOP-5"]').getByTestId('flag-stale')).toBeVisible();
+  await page.locator('.card[data-task="SHOP-6"]').click();
+  const panel = page.getByTestId('task-panel');
+  const img = panel.locator('.thumb img');
+  await expect.poll(() => img.evaluate((i: { complete: boolean; naturalWidth: number }) => (i.complete ? i.naturalWidth : 0))).toBe(390);
+  await panel.getByTestId('results').scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 899);
+  await page.screenshot({ path: outputPath });
+  const dir = process.env.LB_SCREENSHOT_DIR;
+  if (dir) fs.copyFileSync(outputPath, path.join(dir, name));
+}
+
+test.describe('screenshots S5w2', () => {
+  test('light', async ({ page }, info) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await screenshotMarks(page, 's5w2-board-light.png', info.outputPath('s5w2-board-light.png'));
+  });
+
+  test('dark', async ({ page }, info) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await screenshotMarks(page, 's5w2-board-dark.png', info.outputPath('s5w2-board-dark.png'));
+  });
+});
 
 test.describe('screenshots', () => {
   test('light', async ({ page }, info) => {

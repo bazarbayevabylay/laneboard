@@ -324,7 +324,7 @@ laneboard boards --json
 laneboard config --name demo --description "Demo project: the examples of this guide, billing included"
 ```
 
-`--board <prefix|name|path>` opens another board read-only for `view`, `list`, `get` and `events`; a write through it fails with `STORE_READ_ONLY`.
+`--board <prefix|name|path>` opens another board read-only for `view`, `list`, `get`, `events` and `board`; a write through it fails with `STORE_READ_ONLY`.
 
 ```sh
 laneboard list --board BILL --json
@@ -359,6 +359,21 @@ A card's second line adds `waiting-owner`, `^LB-3` for a subtask and `2/5` (chil
 laneboard view --board BILL
 COLUMNS=60 laneboard view --text export
 ```
+
+### 3.6 Board in the browser
+
+For people, not agents (agents keep to `list --json`). `laneboard board` in a project folder starts a local server and prints
+`http://127.0.0.1:7420/`; it serves until Ctrl+C. The page is read-only: tasks change through the CLI and MCP only.
+- Port: `--port N`, else `board.port` of config.json (7420); a busy port is `PORT_IN_USE` (exit 5), whose fix `--port 0` takes a free one.
+- `--board <prefix|name|path>` opens another board of this machine as the first tab; the other boards are tabs too.
+- Access: 127.0.0.1 only, a new token per run that the page reads by itself; other sites and other hosts get 403.
+- Live: a write shows within 1-2 s without a reload; the board is read again every minute, so `Stale` appears without a write.
+- A source checkout needs `npm run build` first; until then `/` says how to build it or to reinstall the package (`npm i -g laneboard`).
+
+Cards show the core's marks from `view --json` (§3.5): `Waiting for acceptance` (`handed_in`), `Stale` (`stale`), the `waiting-owner`
+label, `^LB-3` on a subtask, `1/2` (children final/total) on a parent and the newest comment; counters of these marks sit next to the
+board title. The task panel shows fields, parent and subtasks, `Result` (finish's comments, `data.result`), description, history and
+attachments: png, jpeg, gif and webp get a preview, every file has a download link (other types are never shown inline).
 
 ## 4. Migrate: import existing tasks
 

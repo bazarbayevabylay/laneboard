@@ -16,7 +16,13 @@ export type IconName =
   | 'warning'
   | 'commit'
   | 'link'
-  | 'back';
+  | 'back'
+  | 'inbox'
+  | 'clock'
+  | 'download'
+  | 'comment'
+  | 'result'
+  | 'subtask';
 
 withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 });
 </script>
@@ -73,5 +79,17 @@ withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 });
       <path d="M9.25 6.75a2.5 2.5 0 0 0-3.5 0l-2 2a2.5 2.5 0 0 0 3.5 3.5l.5-.5" />
     </template>
     <path v-else-if="name === 'back'" d="M9.5 4 5.5 8l4 4" />
+    <template v-else-if="name === 'inbox'">
+      <path d="M2.75 9.25h3l.75 1.5h3l.75-1.5h3" />
+      <path d="M2.75 9.25 4.5 3.75h7l1.75 5.5v3H2.75z" />
+    </template>
+    <template v-else-if="name === 'clock'">
+      <circle cx="8" cy="8" r="5.75" />
+      <path d="M8 5v3.25l2 1.25" />
+    </template>
+    <path v-else-if="name === 'download'" d="M8 2.75v7.5M5 7.5l3 3 3-3M3 13.25h10" />
+    <path v-else-if="name === 'comment'" d="M3 3.75h10v6.5H7.5L4.75 12.5v-2.25H3z" />
+    <path v-else-if="name === 'result'" d="M3.75 8.25 6.5 11l5.75-6" />
+    <path v-else-if="name === 'subtask'" d="M4.5 3v5.5a1.5 1.5 0 0 0 1.5 1.5h5.5M9.5 8l2 2-2 2" />
   </svg>
 </template>

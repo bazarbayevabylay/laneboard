@@ -104,3 +104,24 @@ export function eventsQuery(board: string | null, token: string): string {
     ['token', token],
   ]);
 }
+
+// Address of one attachment file for an <img> or a download link; the token rides in the query (neither can send a header).
+export function attachmentHref(id: string, name: string, board: string | null, token: string): string {
+  const query = build([
+    ['board', board],
+    ['token', token],
+  ]);
+  return `/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(name)}${query}`;
+}
+
+// The plain refresh of the board (ages, the stale mark, which the server decides by its clock without any write) every 60 s.
+export const REFRESH_MS = 60_000;
+// The shortest refresh the address may ask for (the e2e test does, so it does not wait a minute).
+export const MIN_REFRESH_MS = 500;
+
+// Refresh interval from the address: ?refresh_ms=<n> within MIN_REFRESH_MS…REFRESH_MS, else REFRESH_MS.
+export function refreshInterval(search: string): number {
+  const raw = new URLSearchParams(search).get('refresh_ms');
+  const n = raw === null || !/^\d+$/.test(raw) ? NaN : Number(raw);
+  return Number.isFinite(n) ? Math.min(REFRESH_MS, Math.max(MIN_REFRESH_MS, n)) : REFRESH_MS;
+}

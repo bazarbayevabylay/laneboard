@@ -2,7 +2,7 @@
 import type { BoardData } from '../server/api.ts';
 
 export type { BoardData, BoardTab } from '../server/api.ts';
-export type { ListItem, ListResult, TaskView, ViewCard } from '../../core/index.ts';
+export type { ListItem, ListResult, TaskDetail, TaskRef, TaskView, ViewCard } from '../../core/index.ts';
 
 // One column of GET /api/board.
 export type BoardColumnData = BoardData['columns'][number];

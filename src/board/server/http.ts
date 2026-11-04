@@ -8,9 +8,10 @@ import { LaneboardError } from '../../core/index.ts';
 import type { StoreRef } from '../../core/index.ts';
 import { apiRoute, errorReply, eventStore } from './api.ts';
 import type { ApiReply } from './api.ts';
+import { ATTACHMENT_ROUTE_RE, attachmentReply } from './attachments.ts';
 import { streamChanges } from './sse.ts';
 import type { StreamOptions } from './sse.ts';
-import { hostAllowed, LOOPBACK, newToken, presentedToken, SECURITY_HEADERS, tokenMatches } from './security.ts';
+import { hasDotSegment, hostAllowed, LOOPBACK, newToken, presentedToken, SECURITY_HEADERS, tokenMatches } from './security.ts';
 
 export interface BoardServerOptions {
   // 0 = the OS picks a free port.
@@ -59,7 +60,7 @@ export function defaultUiDir(): string {
 
 // Text of `/` when the UI is not built (a source checkout before `npm run build`): the API keeps working, tests need no build.
 export function notBuiltText(dir: string): string {
-  return `The web board is not built: no ${path.join(dir, 'index.html')}. Build it in the laneboard source folder: npm ci && npm run build`;
+  return `The web board is not built: no ${path.join(dir, 'index.html')}. Build it in the laneboard source folder: npm ci && npm run build; or reinstall laneboard: npm i -g laneboard`;
 }
 
 // index.html with the run's token in a meta tag, and every asset file read once at start (only listed files are ever served);
@@ -124,6 +125,7 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     if (!hostAllowed(req.headers.host, port)) return sendText(res, 403, 'Forbidden: this server answers only to 127.0.0.1 and localhost');
     if (req.method !== 'GET') return sendText(res, 405, 'Method not allowed: the board is read-only', { Allow: 'GET' });
+    if (hasDotSegment(req.url ?? '/')) return sendText(res, 404, 'Not found');
     const url = new URL(req.url ?? '/', `http://${LOOPBACK}:${port}`);
     if (url.pathname === '/') {
       if (ui.index === null) return sendText(res, 503, notBuiltText(uiDir));
@@ -149,6 +151,17 @@ export async function startBoardServer(opts: BoardServerOptions): Promise<BoardS
         return sendJson(res, errorReply(err));
       }
       return streamChanges(req, res, store, shutdown.signal, opts.stream);
+    }
+    if (ATTACHMENT_ROUTE_RE.test(url.pathname)) {
+      const reply = await attachmentReply(ctx, url);
+      if ('text' in reply) return sendText(res, reply.status, `Not found: ${reply.text}`);
+      if ('headers' in reply) {
+        // Own headers only: the page's CSP would not sandbox a stored file opened in a tab of its own.
+        res.writeHead(reply.status, reply.headers);
+        res.end(reply.body);
+        return;
+      }
+      return sendJson(res, reply);
     }
     const reply = await apiRoute(ctx, url);
     if (!reply) return sendText(res, 404, 'Not found');
