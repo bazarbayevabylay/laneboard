@@ -1,6 +1,6 @@
 // laneboard prime
 import path from 'node:path';
-import { agentRules, boardsOverview, foreignStore, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
+import { agentRules, boardsOverview, foreignStore, inRegistry, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
 import type { ActorSource, ForeignStore, OpContext, OverviewBoard, StoreRef, SummaryResult } from '../../core/index.ts';
 import { BOARD_DATA_NOTE, OVERVIEW_MAX_CHARS, overviewText, primeText } from '../format.ts';
 import type { PrimeData } from '../format.ts';
@@ -19,11 +19,12 @@ function noBoardLine(message: string): string {
 }
 
 // SessionStart line for a board that is not in the machine registry (a cloned repository with a committed .laneboard, review security F4):
-// its name, description and titles are another author's text, so the hook shows none of them, and no agent rule either.
-function unregisteredLine(dir: string): string {
+// its name, description and titles are another author's text, so the hook shows none of them, and no agent rule either. `overview`: the
+// registered boards follow (--all-boards), so the line ends with the data note as noOwnBoardLine (review S6i MINOR 3).
+function unregisteredLine(dir: string, overview: boolean): string {
   return (
     `laneboard: the board found here, ${dir}, is not in this machine's board registry (a board that came with a cloned repository, or one made without laneboard init or setup on this machine), so this hook shows none of its texts. ` +
-    'If the user wants to use it: laneboard setup claude-code in the project root adds it to the registry.'
+    `If the user wants to use it: laneboard setup claude-code in the project root adds it to the registry.${overview ? ` The boards of this machine follow. ${BOARD_DATA_NOTE}` : ''}`
   );
 }
 
@@ -159,17 +160,20 @@ export const prime: CommandDef = {
       const fix = !noStore ? err.fix : everyBoard ? 'none needed for the overview: the boards of this machine are below' : NO_STORE_FIX;
       problem = `${err.code}: ${err.message}; fix: ${fix}`;
     }
-    // In the hook a board missing from the machine registry shows none of its texts (review security F4); without HOME it cannot be
-    // told (registered null): the hook stays as it was, since only the project's own .claude/settings.json could unset HOME, and that file
-    // can add a hook of its own anyway.
-    const unregistered = hook && summary?.registered === false && ctx !== undefined;
+    // In the hook a board missing from the machine registry shows none of its texts (review security F4), whether its store loads or not:
+    // the error of a broken config.json repeats its keys and values (review S6i MAJOR 1), so the registry is asked by the store path then.
+    // Without HOME it cannot be told (registered null): the hook stays as it was, since only the project's own .claude/settings.json could
+    // unset HOME, and that file can add a hook of its own anyway.
+    const registered = summary !== undefined ? summary.registered : hook && ctx !== undefined ? inRegistry(ctx.home, ctx.store.dir, warnings) : null;
+    const unregistered = hook && ctx !== undefined && registered === false;
     const data: PrimeData = {
       rules,
       agent: agent ?? null,
       agent_source: agentSource,
       name: summary?.name ?? null,
       description: summary?.description ?? null,
-      store: summary && ctx ? ctx.store.dir : null,
+      // A store that was found but fails to load is named too: primeText then marks its error message as board data.
+      store: ctx ? ctx.store.dir : null,
       prefix: summary?.prefix ?? null,
       store_warning: (summary && ctx && parentStoreWarning(ctx.store, c.io.cwd, summary.prefix, c.io.env.HOME || undefined)) || null,
       store_problem: problem ?? null,
@@ -187,7 +191,7 @@ export const prime: CommandDef = {
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).
-    const own = unregistered && ctx ? unregisteredLine(ctx.store.dir) : hook && noStore ? noStore : primeText(data, ctx?.store.found === 'dir' ? ctx.store.dir : undefined);
+    const own = unregistered && ctx ? unregisteredLine(ctx.store.dir, everyBoard) : hook && noStore ? noStore : primeText(data, ctx?.store.found === 'dir' ? ctx.store.dir : undefined);
     if (!everyBoard) return { data, warnings, human: own, storeWarningInText: true };
     // An unregistered current board stays out of the hook's overview too: the registry's boards only.
     const overview = await allBoards(c.io.env.HOME || undefined, summary && ctx && !unregistered ? ctx.store : undefined, warnings);

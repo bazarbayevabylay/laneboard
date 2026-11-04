@@ -376,7 +376,10 @@ function sectionMin(items: readonly ListItem[], total: number, more: (n: number)
 export function primeText(raw: PrimeData, rawStoreDir?: string, now = new Date()): string {
   const d = safeData(raw);
   const storeDir = rawStoreDir === undefined ? undefined : safeText(rawStoreDir);
-  if (d.store_problem !== null) return fit(`${d.rules}\n\nlaneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
+  // A store that was found but fails to load: its error message may repeat its own keys and values (a zod "Unrecognized key"), so the
+  // data line goes above it as above a board (review S6i MAJOR 1); no store found: the message is laneboard's own.
+  const dataNote = d.store === null ? '' : `${BOARD_DATA_NOTE}\n`;
+  if (d.store_problem !== null) return fit(`${d.rules}\n\n${dataNote}laneboard store: ${d.store_problem}`, PRIME_MAX_CHARS);
   let text = '';
   for (const squeeze of SQUEEZES) {
     const out = primeLayout(d, storeDir, now, squeeze);
@@ -409,7 +412,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const dirLine = storeDir !== undefined && squeeze.dirOnce ? 'This board was named by --dir: add the --dir option of the Store line to every laneboard command below.' : '';
   const open = openStatusOptions(d);
   const more = (n: number): string => `\n... ${n} more: ${open.note}laneboard list --assignee ${d.agent ?? '<you>'}${open.options}${dir} --json`;
-  const freeMore = (n: number): string => `\n... ${n} more: laneboard list --unassigned${open.options}${dir} --json${open.note}`;
+  const freeMore = (n: number): string => `\n... ${n} more: ${open.note}laneboard list --unassigned${open.options}${dir} --json`;
   const resumeMore = (n: number): string => `\n... ${n} more not shown`;
   const listed = d.agent !== null && d.tasks.length > 0;
   const noTask = d.agent === null || d.in_progress === 0;
@@ -482,7 +485,8 @@ function overviewTag(c: OverviewCard): OverviewTag {
   return 'open';
 }
 
-// What the overview gives up, step by step, to stay under its budget (ADR §29); board headers are never dropped.
+// What the overview gives up, step by step, to stay under its budget (ADR §29); board headers stay, until the last step
+// (overviewClassText) counts the ones it has no room for on a line with the command that lists every board.
 interface OverviewSqueeze {
   openComments: boolean;
   openLines: boolean;
@@ -557,21 +561,25 @@ function overviewBoardLines(b: OverviewBoard, sq: OverviewSqueeze, now: Date): s
 const OVERVIEW_TITLE = 'Boards (not final; all: laneboard list --all-boards --open --json):';
 
 // The urgent classes of the last overview step, most urgent first, each with the command that lists all of its tasks (review orchestrator
-// F4): waiting-owner is a label list filters by; handed in and stale are marks of the cards in prime --all-boards --json.
-const OVERVIEW_CLASSES: ReadonlyArray<{ tag: OverviewTag; all: string }> = [
-  { tag: 'waiting-owner', all: 'laneboard list --all-boards --open --label waiting-owner --json' },
-  { tag: 'handed in', all: 'laneboard prime --all-boards --json (cards with handed_in)' },
-  { tag: 'stale', all: 'laneboard prime --all-boards --json (cards with stale)' },
+// F4): waiting-owner is a label list filters by; handed in and stale are marks of the cards in prime --all-boards --json, which `note` names
+// before the command (LB-11 b: the line after "more ...: " is the whole command, so a copied line stays valid in a shell; review S6i MAJOR 2).
+const OVERVIEW_CLASSES: ReadonlyArray<{ tag: OverviewTag; note: string; all: string }> = [
+  { tag: 'waiting-owner', note: '', all: 'laneboard list --all-boards --open --label waiting-owner --json' },
+  { tag: 'handed in', note: ' (cards with handed_in)', all: 'laneboard prime --all-boards --json' },
+  { tag: 'stale', note: ' (cards with stale)', all: 'laneboard prime --all-boards --json' },
 ];
+
+// The line in place of the board headers the last overview step has no room for (review S6i MINOR 4: 50 boards).
+const OVERVIEW_MORE_BOARDS = (n: number): string => `+${n} more boards: laneboard boards --json`;
 
 // Longest board header of the last overview step: many boards with long names or many statuses keep room for the urgent classes.
 const OVERVIEW_HEADER_MAX = 120;
 
-// `<tag> (<n>): <id>, <id>, +K more: <all>`: as many ids as fit in `room` characters, the rest counted with the command; the count and
-// the command are always there (the line is longer than `room` only when they alone are).
-function overviewClassLine(tag: OverviewTag, ids: readonly string[], all: string, room: number): string {
+// `<tag> (<n>): <id>, <id>, +K more<note>: <all>`: as many ids as fit in `room` characters, the rest counted with the command; the count
+// and the command are always there (the line is longer than `room` only when they alone are: room 0 gives that shortest line).
+function overviewClassLine(tag: OverviewTag, ids: readonly string[], note: string, all: string, room: number): string {
   const head = `${tag} (${ids.length}): `;
-  const more = (n: number, sep: boolean): string => (n > 0 ? `${sep ? ', ' : ''}+${n} more: ${all}` : '');
+  const more = (n: number, sep: boolean): string => (n > 0 ? `${sep ? ', ' : ''}+${n} more${note}: ${all}` : '');
   let body = '';
   let shown = 0;
   for (const id of ids) {
@@ -583,24 +591,44 @@ function overviewClassLine(tag: OverviewTag, ids: readonly string[], all: string
   return `${head}${body}${more(ids.length - shown, shown > 0)}`;
 }
 
-// The last overview step (review orchestrator F4: 20 boards with many stale tasks lost the handed-in ones of 11 boards): every board's
-// header (its counts), then each urgent class across all boards, waiting-owner, handed in, stale; a class gets an equal share of the room
-// left, and what an earlier class leaves unused goes to the later ones.
+// The last overview step (review orchestrator F4: 20 boards with many stale tasks lost the handed-in ones of 11 boards): the board headers
+// (their counts), then each urgent class across all boards, waiting-owner, handed in, stale. The shortest line of every class (its count
+// and command) is set aside first, so no class is lost to the headers (review S6i MINOR 4); the headers that do not fit in the rest are
+// counted on one line with the command that lists every board. The room left is shared equally between the classes, and what an earlier
+// class leaves unused goes to the later ones.
 function overviewClassText(boards: readonly OverviewBoard[], budget: number): string {
-  const lines = [OVERVIEW_TITLE, ...boards.map((b) => fitChars(overviewHeader(b), OVERVIEW_HEADER_MAX))];
-  let room = budget - lines.join('\n').length;
   const rank = (t: OverviewTag): number => OVERVIEW_TAGS.indexOf(t);
-  const classes = OVERVIEW_CLASSES.map((c) => ({
-    ...c,
+  const classes = OVERVIEW_CLASSES.map((c) => {
     // Per board, the urgent first, in the order of the earlier steps (the most urgent tag of a card is its class).
-    ids: boards.flatMap((b) => [...b.cards].sort((x, y) => rank(overviewTag(x)) - rank(overviewTag(y))).filter((card) => overviewTag(card) === c.tag).map((card) => card.id)),
-  })).filter((c) => c.ids.length > 0);
-  for (const [i, c] of classes.entries()) {
-    // One newline joins each line.
-    const line = overviewClassLine(c.tag, c.ids, c.all, Math.floor(room / (classes.length - i)) - 1);
-    lines.push(line);
-    room -= line.length + 1;
+    const ids = boards.flatMap((b) => [...b.cards].sort((x, y) => rank(overviewTag(x)) - rank(overviewTag(y))).filter((card) => overviewTag(card) === c.tag).map((card) => card.id));
+    return { ...c, ids, min: overviewClassLine(c.tag, ids, c.note, c.all, 0).length };
+  }).filter((c) => c.ids.length > 0);
+  // One newline joins each line: a line costs its length + 1 after the title.
+  const reserved = classes.reduce((n, c) => n + c.min + 1, 0);
+  const headers = boards.map((b) => fitChars(overviewHeader(b), OVERVIEW_HEADER_MAX));
+  const lines = [OVERVIEW_TITLE];
+  let room = budget - OVERVIEW_TITLE.length - reserved;
+  if (headers.reduce((n, h) => n + h.length + 1, 0) <= room) lines.push(...headers);
+  else {
+    // The "+K more boards" line is set aside at its longest (K = every board).
+    room -= OVERVIEW_MORE_BOARDS(boards.length).length + 1;
+    let shown = 0;
+    for (const h of headers) {
+      if (h.length + 1 > room) break;
+      lines.push(h);
+      room -= h.length + 1;
+      shown += 1;
+    }
+    lines.push(OVERVIEW_MORE_BOARDS(boards.length - shown));
   }
+  // What the classes may use on top of their shortest lines.
+  let spare = budget - lines.join('\n').length - reserved;
+  for (const [i, c] of classes.entries()) {
+    const line = overviewClassLine(c.tag, c.ids, c.note, c.all, c.min + Math.max(0, Math.floor(spare / (classes.length - i))));
+    lines.push(line);
+    spare -= line.length - c.min;
+  }
+  // A budget below the title and the shortest class lines alone: whole lines only.
   return cutAtLine(lines.join('\n'), budget);
 }
 

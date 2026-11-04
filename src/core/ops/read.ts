@@ -407,7 +407,8 @@ export interface SummaryResult {
 
 // Is the store at `dir` in the machine registry under `home` (by canonicalPath, as liveBoards)? null without `home`. A registry that
 // cannot be read counts as "not registered" (the hook then shows no board texts) with a warning that names it: prime itself still runs.
-function inRegistry(home: string | undefined, dir: string, warnings: string[]): boolean | null {
+// Exported for prime --hook: a store that fails to load is checked too, since its error message may repeat its texts (review S6i MAJOR 1).
+export function inRegistry(home: string | undefined, dir: string, warnings: string[]): boolean | null {
   if (home === undefined) return null;
   try {
     const own = canonicalPath(dir);
