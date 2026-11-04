@@ -408,6 +408,51 @@ export function notFound(id: string): LaneboardError {
   return new LaneboardError('TASK_NOT_FOUND', `task ${id} does not exist (active or archive)`);
 }
 
+// Check a parent for `childId` (undefined: a task being created) and return its exact id (ADR §25): a task of this board (a foreign
+// prefix gets the fix to link it instead: `linkParam` is the op's link parameter), existing, not archived, and not the child itself
+// or one of its descendants (the chain is walked through both files, so a cycle can never be stored).
+export function checkParent(files: { active: StoreFileT; archive: StoreFileT }, raw: string, prefix: string, childId: string | undefined, linkParam: 'links' | 'add_links'): string {
+  const foreign = ID_RE.test(raw) ? raw.slice(0, raw.lastIndexOf('-')) : prefix;
+  if (foreign !== prefix) {
+    const param = linkParam === 'links' ? '--link' : '--add-link';
+    throw new LaneboardError('INVALID_VALUE', `parent must be a task on this board (${prefix}); ${raw} is on another board: link it instead`, {
+      input: { field: 'parent', value: raw },
+      fix: `drop parent and pass ${linkParam} [{"kind": "task", "ref": "${raw}"}] (CLI: ${param} task=${raw})`,
+      edit: { drop: [{ name: 'parent' }], add: [{ name: linkParam, value: `task=${raw}` }] },
+    });
+  }
+  const id = normalizeId(raw, prefix, 'parent');
+  const found = locate(files, id);
+  if (!found) throw new LaneboardError('TASK_NOT_FOUND', `parent ${id}: no such task`, { input: { field: 'parent', value: id } });
+  if (found.archived) throw new LaneboardError('TASK_ARCHIVED', `parent ${id} is archived and read-only`, { fix: `laneboard restore ${id}` });
+  if (childId === undefined) return id;
+  // Walk up from the new parent: reaching the child means the parent is the child itself or under it.
+  const chain = [id];
+  let at: TaskT = found.task;
+  while (at.id !== childId) {
+    const up = at.parent;
+    const next = up === undefined || chain.includes(up) ? undefined : locate(files, up)?.task;
+    if (next === undefined) return id;
+    chain.push(next.id);
+    at = next;
+  }
+  const why = id === childId ? 'a task cannot be its own parent' : `${id} is under ${childId} (${[...chain].reverse().join(' > ')})`;
+  const instead = `<id of a task not under ${childId}>`;
+  throw new LaneboardError('INVALID_VALUE', `${id} cannot be the parent of ${childId}: ${why}`, {
+    input: { field: 'parent', value: id },
+    fix: `laneboard update ${childId} --parent ${instead}`,
+    edit: { drop: [{ name: 'parent' }], add: [{ name: 'parent', value: instead }] },
+  });
+}
+
+// Warning when `parent` is archived or moved into a final status while its children in active.json are not final (ADR §25, Q2:
+// a warning, not an error; the children keep their parent). Undefined when it has no open child.
+export function openChildrenWarning(active: StoreFileT, parent: string, finals: readonly string[]): string | undefined {
+  const open = active.tasks.filter((t) => t.parent === parent && !finals.includes(t.status));
+  if (!open.length) return undefined;
+  return `${parent} has open children: ${open.map((t) => `${t.id} [${t.status}]`).join(', ')}; they keep parent ${parent}`;
+}
+
 // Find a task that may be changed: must exist and not be archived.
 export function requireActiveTask(files: { active: StoreFileT; archive: StoreFileT }, id: string): TaskT {
   const found = locate(files, id);
@@ -456,6 +501,8 @@ export interface TaskView {
   assignee: string | null;
   labels: string[];
   links: LinkT[];
+  // Id of the parent task on this board (ADR §25); null for a top-level task.
+  parent: string | null;
   fields: Record<string, unknown>;
   attachments: TaskT['attachments'];
   // actor_source: explicit or the session's default name; null for events written before it was recorded (and imported history).
@@ -481,6 +528,7 @@ export function toTaskView(task: TaskT, archived: boolean, eventsLimit?: number)
     assignee: task.assignee,
     labels: [...task.labels],
     links: task.links.map((l) => ({ kind: l.kind, ref: l.ref })),
+    parent: task.parent ?? null,
     fields: { ...task.fields },
     attachments: task.attachments.map((a) => ({ name: a.name, size: a.size, sha256: a.sha256, mime: a.mime, added_by: a.added_by, added_at: a.added_at })),
     events: events.map((e) => ({ at: e.at, actor: e.actor, actor_source: e.actor_source ?? null, type: e.type, data: e.data })),

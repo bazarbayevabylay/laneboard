@@ -1,6 +1,6 @@
 // Output for the CLI: JSON envelopes, human text and error blocks (the fixes themselves are built in argv.ts).
 import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject } from '../core/index.ts';
-import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskView } from '../core/index.ts';
+import type { DoctorResult, EventsResult, FieldInfo, ListItem, ListResult, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import { age } from './board-view.ts';
 import type { SetupResult } from '../setup/index.ts';
@@ -86,7 +86,10 @@ export function eventText(type: string, data: Record<string, unknown>): string {
     .map(([key, value]) => {
       if (key === 'sha256' && typeof value === 'string') return `${key}=${value.slice(0, SHA_SHOWN)}…`;
       const chars = (value as { chars?: unknown } | null)?.chars;
-      if (type === 'updated' && key === 'description' && Array.isArray(chars)) return `description=${eventValue(chars[0])}→${eventValue(chars[1])} chars`;
+      if (type === 'updated' && key === 'description' && Array.isArray(chars)) {
+        const appended = (value as { appended?: unknown }).appended === true ? ' (appended)' : '';
+        return `description=${eventValue(chars[0])}→${eventValue(chars[1])} chars${appended}`;
+      }
       if (type === 'updated' && Array.isArray(value) && value.length === 2) return `${key}=${eventValue(value[0])}→${eventValue(value[1])}`;
       return `${key}=${eventValue(value)}`;
     })
@@ -98,12 +101,25 @@ function actorText(e: { actor: string; actor_source: 'explicit' | 'default' | nu
   return e.actor_source === 'default' ? `${e.actor} (default name)` : e.actor;
 }
 
-// Human view of one task.
-export function taskText(t: TaskView): string {
+// Another task named by `get` (parent, child): `LB-4 [in_progress]`, archived ones `[done, archived]`.
+function refText(r: TaskRef): string {
+  return `${r.id} [${r.status}${r.archived ? ', archived' : ''}]`;
+}
+
+// The parent line: with `get` its title and status (or that the id names no task), a write's --full only the id.
+function parentText(t: TaskView & Partial<TaskDetail>): string {
+  if (t.parent_task === undefined) return t.parent ?? '';
+  return t.parent_task === null ? `${t.parent ?? ''} (no such task)` : `${t.parent_task.id} ${t.parent_task.title} [${t.parent_task.status}${t.parent_task.archived ? ', archived' : ''}]`;
+}
+
+// Human view of one task (with `get`: its parent's title and status, and its children).
+export function taskText(t: TaskView & Partial<TaskDetail>): string {
   const lines = [`${t.id}  ${t.title}`];
   lines.push(`  status: ${t.status} · assignee: ${t.assignee ?? '-'} · rev: ${t.rev} · archived: ${t.archived ? `yes (${t.archived_at ?? ''})` : 'no'}`);
   if (t.labels.length) lines.push(`  labels: ${t.labels.join(', ')}`);
   if (t.links.length) lines.push(`  links: ${t.links.map((l) => `${l.kind}=${l.ref}`).join(', ')}`);
+  if (t.parent !== null) lines.push(`  parent: ${parentText(t)}`);
+  if (t.children?.length) lines.push(`  children: ${t.children.map(refText).join(', ')}`);
   const fields = Object.entries(t.fields);
   if (fields.length) lines.push(`  fields: ${fields.map(([k, v]) => `${k}=${typeof v === 'string' ? v : inline(v)}`).join(', ')}`);
   if (t.attachments.length) lines.push(`  attachments: ${t.attachments.map((a) => `${a.name} (${a.size} B)`).join(', ')}`);
@@ -115,7 +131,9 @@ export function taskText(t: TaskView): string {
   const dropped = t.events_dropped ? `, ${t.events_dropped} older dropped` : '';
   lines.push(`  events (${t.events.length} shown${dropped}):`);
   // A comment of several lines continues under its first line.
-  for (const e of t.events) lines.push(`    ${e.at}  ${actorText(e)}  ${e.type}  ${eventText(e.type, e.data).split('\n').join('\n      ')}`);
+  // finish's result comment says so (ADR §27).
+  const typeText = (e: TaskView['events'][number]): string => (e.type === 'commented' && e.data.result === true ? 'commented (result)' : e.type);
+  for (const e of t.events) lines.push(`    ${e.at}  ${actorText(e)}  ${typeText(e)}  ${eventText(e.type, e.data).split('\n').join('\n      ')}`);
   return lines.join('\n');
 }
 

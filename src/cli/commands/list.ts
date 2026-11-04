@@ -7,7 +7,7 @@ import type { CommandDef } from './types.ts';
 
 export const list: CommandDef = {
   name: 'list',
-  usage: 'list [--status S]... [--assignee A | --unassigned] [--label L]... [--text Q] [--scope active|archive|all] [--limit N] [--offset N]',
+  usage: 'list [--status S]... [--assignee A | --unassigned] [--label L]... [--text Q] [--parent ID] [--scope active|archive|all] [--limit N] [--offset N]',
   summary: 'List tasks, newest update first (default: scope active, limit 20).',
   options: {
     status: { type: 'string', multiple: true },
@@ -15,6 +15,7 @@ export const list: CommandDef = {
     unassigned: { type: 'boolean' },
     label: { type: 'string', multiple: true },
     text: { type: 'string' },
+    parent: { type: 'string' },
     scope: { type: 'string' },
     limit: { type: 'string' },
     offset: { type: 'string' },
@@ -28,6 +29,7 @@ export const list: CommandDef = {
       unassigned: flag(c.values, 'unassigned') || undefined,
       labels: many(c.values, 'label'),
       text: str(c.values, 'text'),
+      parent: str(c.values, 'parent'),
       scope: str(c.values, 'scope') as Scope | undefined,
       limit: int(c.values, 'limit'),
       offset: int(c.values, 'offset'),

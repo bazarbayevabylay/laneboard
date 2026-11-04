@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { jsonSchemas } from '../../src/core/index.ts';
+import { Config, CONFIG_VERSION, EVENT_TYPES, FieldDef, LINK_KINDS, STORE_VERSION } from '../../src/core/schema.ts';
 import { cleanupTemp, REPO, tempDir } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -34,5 +35,21 @@ describe('generated JSON Schema (C8)', () => {
     ]);
     expect(s['config.json']?.additionalProperties).toBe(false);
     expect(s['task.json']?.additionalProperties).toEqual({});
+  });
+});
+
+// K1 (ADR §24): copies of 0.3.1 keep running after an upgrade, and a new enum value or config key makes every read of theirs
+// STORE_INVALID. While the store stays store@1 the closed enums and the config keys stay the 0.3.1 ones; a change needs store@2 + migrate.
+describe('K1: store@1 keeps the 0.3.1 enums and config keys', () => {
+  it('LINK_KINDS, EVENT_TYPES and the Config keys are the 0.3.1 sets while STORE_VERSION and CONFIG_VERSION are 1', () => {
+    expect([STORE_VERSION, CONFIG_VERSION]).toEqual([1, 1]);
+    expect([...LINK_KINDS]).toEqual(['task', 'branch', 'pr', 'commit', 'url', 'file']);
+    expect([...EVENT_TYPES]).toEqual(['created', 'updated', 'status', 'assigned', 'commented', 'attached', 'detached', 'archived', 'restored']);
+    const keys = (shape: Record<string, unknown>): string[] => Object.keys(shape).sort();
+    expect(keys(Config.shape)).toEqual(['attachments', 'board', 'description', 'fields', 'limits', 'name', 'prefix', 'schema', 'statuses']);
+    expect(keys(Config.shape.limits.shape)).toEqual(['attachment_bytes', 'events_per_task', 'list_limit_max']);
+    expect(keys(Config.shape.attachments.shape)).toEqual(['deny_names']);
+    expect(keys(Config.shape.board.shape)).toEqual(['port']);
+    expect(keys(FieldDef.shape)).toEqual(['description', 'type']);
   });
 });

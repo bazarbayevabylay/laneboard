@@ -69,6 +69,8 @@ export const Task = z
     assignee: Actor.nullable(),
     labels: z.array(z.string().regex(LABEL_RE)),
     links: z.array(Link),
+    // Id of the parent task on the same board (a subtask, ADR §25); absent for a top-level task, never null.
+    parent: z.string().regex(ID_RE).optional(),
     fields: z.record(z.string(), z.unknown()),
     attachments: z.array(Attachment),
     events: z.array(TaskEvent),

@@ -18,20 +18,22 @@ function firstStatus(discovery: DiscoveryInput): string {
 
 export const create: CommandDef = {
   name: 'create',
-  usage: 'create <title> --status S [--description T | --description-file P|-] [--assignee A] [--label L]... [--link kind=ref]... [--field k=v]... [--full]',
+  usage: 'create <title> --status S [--description T | --description-file P|-] [--assignee A] [--parent ID] [--label L]... [--link kind=ref]... [--field k=v]... [--full]',
   summary: 'Create a task; prints its id, rev, status and assignee (--full: the whole task).',
   options: {
     status: { type: 'string' },
     description: { type: 'string' },
     'description-file': { type: 'string' },
     assignee: { type: 'string' },
+    parent: { type: 'string' },
     label: { type: 'string', multiple: true },
     link: { type: 'string', multiple: true },
     field: { type: 'string', multiple: true },
     ...FULL_OPTION,
   },
   args: { min: 1, max: 1 },
-  flags: { status: '--status' },
+  // Op parameters named in fixes (a parent on another board becomes --link task=<id>).
+  flags: { status: '--status', links: '--link' },
   required: (discovery) => [{ name: 'status', value: firstStatus(discovery) }],
   async run(c) {
     const r = await createTask(c.op(), {
@@ -39,6 +41,7 @@ export const create: CommandDef = {
       status: str(c.values, 'status') as string,
       description: description(c.values, c.io),
       assignee: str(c.values, 'assignee'),
+      parent: str(c.values, 'parent'),
       labels: list(c.values, 'label'),
       links: list(c.values, 'link')?.map(parseLinkArg),
       field_args: list(c.values, 'field'),

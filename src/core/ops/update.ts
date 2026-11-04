@@ -12,6 +12,7 @@ import {
   checkExpectedRev,
   checkFields,
   checkLabel,
+  checkParent,
   checkStatus,
   checkTaskLinks,
   DescriptionInput,
@@ -22,6 +23,7 @@ import {
   linkKey,
   MAX_COMMENT_CHARS,
   normalizeId,
+  openChildrenWarning,
   parseFieldArgs,
   parseInput,
   requireActiveTask,
@@ -40,9 +42,13 @@ export const UpdateInput = z.strictObject({
   id: IdInput,
   title: TitleInput.optional(),
   description: DescriptionInput.optional(),
+  // Text added to the end of the description (after a blank line), computed under the lock: no expected_rev needed (ADR §26).
+  append_description: z.string().min(1).max(100000).regex(/\S/, 'must not be blank').optional(),
   status: z.string().min(1).optional(),
   // null unassigns.
   assignee: z.string().nullable().optional(),
+  // Id of the parent task on this board (a subtask, ADR §25); null makes it a top-level task.
+  parent: IdInput.nullable().optional(),
   add_labels: z.array(z.string()).optional(),
   remove_labels: z.array(z.string()).optional(),
   add_links: z.array(LinkInput).optional(),
@@ -55,7 +61,7 @@ export const UpdateInput = z.strictObject({
 });
 export type UpdateInputT = z.infer<typeof UpdateInput>;
 
-const CHANGE_KEYS = ['title', 'description', 'status', 'assignee', 'add_labels', 'remove_labels', 'add_links', 'remove_links', 'fields', 'field_args', 'unset_fields'] as const;
+const CHANGE_KEYS = ['title', 'description', 'append_description', 'status', 'assignee', 'parent', 'add_labels', 'remove_labels', 'add_links', 'remove_links', 'fields', 'field_args', 'unset_fields'] as const;
 
 // Same values, same order?
 function sameJson(a: unknown, b: unknown): boolean {
@@ -67,8 +73,13 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
   const actor = requireActor(ctx.actor);
   const p = parseInput(UpdateInput, input);
   if (!CHANGE_KEYS.some((k) => p[k] !== undefined)) {
-    throw new LaneboardError('USAGE', 'nothing to change: pass at least one of title, description, status, assignee, labels, links, fields', {
+    throw new LaneboardError('USAGE', 'nothing to change: pass at least one of title, description, append_description, status, assignee, parent, labels, links, fields', {
       edit: { add: [{ name: 'status', value: '<status>' }] },
+    });
+  }
+  if (p.description !== undefined && p.append_description !== undefined) {
+    throw new LaneboardError('USAGE', 'description and append_description cannot be combined: description replaces the whole text, append_description adds to it', {
+      edit: { drop: [{ name: 'append_description' }] },
     });
   }
   if (typeof p.assignee === 'string') checkActor(p.assignee, 'assignee');
@@ -94,6 +105,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const task = requireActiveTask(s, id);
       checkExpectedRev(task, false, p.expected_rev);
       checkTaskLinks(addLinks, [s.active, s.archive], s.config.prefix);
+      const parent = typeof p.parent === 'string' ? checkParent(s, p.parent, s.config.prefix, id, 'add_links') : p.parent;
       for (const key of unset) {
         if (!Object.hasOwn(s.config.fields, key) && !Object.hasOwn(task.fields, key)) {
           throw new LaneboardError('UNKNOWN_FIELD', `field "${key}" is neither declared nor set on ${id}`, {
@@ -111,6 +123,21 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       if (p.description !== undefined && p.description !== task.description) {
         diff.description = { chars: [task.description.length, p.description.length] };
         task.description = p.description;
+      }
+      if (p.append_description !== undefined) {
+        const text = task.description === '' ? p.append_description : `${task.description}\n\n${p.append_description}`;
+        if (text.length > 100000) {
+          throw new LaneboardError('INVALID_VALUE', `description would be ${text.length} characters, over 100000`, {
+            fix: `laneboard attach ${id} <path of a file with the text>`,
+          });
+        }
+        diff.description = { chars: [task.description.length, text.length], appended: true };
+        task.description = text;
+      }
+      if (parent !== undefined && parent !== (task.parent ?? null)) {
+        diff.parent = [task.parent ?? null, parent];
+        if (parent === null) delete task.parent;
+        else task.parent = parent;
       }
       const labels = [...task.labels.filter((l) => !removeLabels.includes(l)), ...addLabels.filter((l) => !task.labels.includes(l))];
       if (!sameJson(labels, task.labels)) {
@@ -147,6 +174,8 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       if (statusChange) {
         task.status = statusChange.to;
         addEvent(task, s.config, s.now, actor, 'status', statusChange, actorSourceOf(ctx));
+        const open = finalStatuses(s.config.statuses).includes(task.status) ? openChildrenWarning(s.active, id, finalStatuses(s.config.statuses)) : undefined;
+        if (open) warnings.push(open);
       }
       if (assignChange) {
         task.assignee = assignChange.to;
@@ -383,10 +412,13 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         }
         if (!handedIn(task)) throw notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses);
         touch(task, s.now, actor);
-        addEvent(task, s.config, s.now, actor, 'commented', { text: p.result }, actorSourceOf(ctx));
+        // The result mark (ADR §27): only finish writes it, so readers tell the result from other comments.
+        addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
         addEvent(task, s.config, s.now, actor, 'status', { from: task.status, to: status, accepted: true }, actorSourceOf(ctx));
         task.status = status;
         finished = true;
+        const open = openChildrenWarning(s.active, id, finals);
+        if (open) warnings.push(open);
         return toTaskView(task, false);
       }
       // When the actor's work began (across claim --resume, its earlier sessions' too): a commit older than that is not its work.
@@ -400,7 +432,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       if (again && newCommit === undefined) return toTaskView(task, false);
       // One write, one rev, whatever events follow.
       touch(task, s.now, actor);
-      if (!again) addEvent(task, s.config, s.now, actor, 'commented', { text: p.result }, actorSourceOf(ctx));
+      if (!again) addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
       if (newCommit !== undefined) {
         const links: LinkT[] = [...task.links, { kind: 'commit', ref: newCommit }];
         addEvent(task, s.config, s.now, actor, 'updated', { links: [task.links, links] }, actorSourceOf(ctx));
@@ -416,6 +448,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       task.status = status;
       finished = true;
       handedInNow = handIn;
+      const open = handIn ? undefined : openChildrenWarning(s.active, id, finals);
+      if (open) warnings.push(open);
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),

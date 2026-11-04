@@ -159,7 +159,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     const again = await finishTask(as(s, 'dev-1'), { id: 'LB-1', result: 'handed in again', status: 'review', no_commit: true });
     expect(again.warnings).toEqual([]);
     expect(stored(s, 'LB-1').events.slice(-2).map((e) => [e.type, e.data])).toEqual([
-      ['commented', { text: 'handed in again' }],
+      ['commented', { text: 'handed in again', result: true }],
       ['status', { from: 'review', to: 'review', handed_in: true }],
     ]);
     // Handed in now: a second hand-in is unchanged; the acceptance goes through.

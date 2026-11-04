@@ -348,7 +348,7 @@ describe('list', () => {
     const all = await listTasks(as(s), {});
     expect(all.data).toMatchObject({ scope: 'active', limit: 20, offset: 0, total: 3 });
     expect(all.data.items.map((i) => i.id)).toEqual(['LB-3', 'LB-2', 'LB-1']);
-    expect(Object.keys(all.data.items[0] ?? {})).toEqual(['id', 'title', 'status', 'assignee', 'labels', 'updated_at', 'updated_by', 'rev', 'archived']);
+    expect(Object.keys(all.data.items[0] ?? {})).toEqual(['id', 'title', 'status', 'assignee', 'labels', 'parent', 'updated_at', 'updated_by', 'rev', 'archived']);
     expect((await listTasks(as(s), { status: ['todo'] })).data.total).toBe(2);
     expect((await listTasks(as(s), { assignee: 'dev-1' })).data.items.map((i) => i.id)).toEqual(['LB-2']);
     expect((await listTasks(as(s), { unassigned: true })).data.total).toBe(2);

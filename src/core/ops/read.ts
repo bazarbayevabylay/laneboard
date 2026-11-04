@@ -16,15 +16,42 @@ export const GetInput = z.strictObject({
 });
 export type GetInputT = z.infer<typeof GetInput>;
 
-// Get one task from active or archive (both files, read under the lock).
-export async function getTask(ctx: OpContext, input: GetInputT): Promise<OpResult<TaskView>> {
+// Another task of the board as `get` names it: its parent and its children (ADR §25).
+export interface TaskRef {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  archived: boolean;
+}
+
+// `get` result: the task, its parent (null: none, or the id names no task) and its children in id order, from both files.
+// Write replies and --full have neither (they map the task alone).
+export interface TaskDetail extends TaskView {
+  parent_task: TaskRef | null;
+  children: TaskRef[];
+}
+
+// Explicit mapping of a task to a TaskRef.
+function toTaskRef(task: TaskT, archived: boolean): TaskRef {
+  return { id: task.id, title: task.title, status: task.status, assignee: task.assignee, archived };
+}
+
+// Get one task from active or archive (both files, read under the lock), with its parent and children.
+export async function getTask(ctx: OpContext, input: GetInputT): Promise<OpResult<TaskDetail>> {
   const p = parseInput(GetInput, input);
   const warnings: string[] = [];
   const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
   const id = normalizeId(p.id, view.config.prefix);
   const found = locate(view, id);
   if (!found) throw notFound(id);
-  return { data: toTaskView(found.task, found.archived, p.events), warnings };
+  const parent = found.task.parent === undefined ? undefined : locate(view, found.task.parent);
+  const children = [...view.active.tasks.map((t) => ({ t, archived: false })), ...view.archive.tasks.map((t) => ({ t, archived: true }))]
+    .filter(({ t }) => t.parent === id)
+    .sort((a, b) => idNumber(a.t.id) - idNumber(b.t.id))
+    .map(({ t, archived }) => toTaskRef(t, archived));
+  const data: TaskDetail = { ...toTaskView(found.task, found.archived, p.events), parent_task: parent ? toTaskRef(parent.task, parent.archived) : null, children };
+  return { data, warnings };
 }
 
 export const ListInput = z.strictObject({
@@ -33,6 +60,8 @@ export const ListInput = z.strictObject({
   unassigned: z.boolean().optional(),
   labels: z.array(z.string()).optional(),
   text: z.string().min(1).optional(),
+  // Direct children of this task (ADR §25).
+  parent: IdInput.optional(),
   scope: z.enum(SCOPES).optional(),
   limit: z.int().min(1).optional(),
   offset: z.int().min(0).optional(),
@@ -45,6 +74,8 @@ export interface ListItem {
   status: string;
   assignee: string | null;
   labels: string[];
+  // Id of the parent task; null for a top-level task.
+  parent: string | null;
   updated_at: string;
   // Who changed the task last (the assignee may be empty or someone else).
   updated_by: string;
@@ -89,9 +120,10 @@ function byUpdatedDesc(a: TaskT, b: TaskT): number {
   return idNumber(b.id) - idNumber(a.id);
 }
 
-// One filter for list and view: status, assignee (or none), every label, text in id/title/description/labels (any case).
-function taskMatches(task: TaskT, f: { status?: string[]; assignee?: string; unassigned?: boolean; labels?: string[]; text?: string }): boolean {
+// One filter for list and view: status, assignee (or none), every label, text in id/title/description/labels (any case), parent.
+function taskMatches(task: TaskT, f: { status?: string[]; assignee?: string; unassigned?: boolean; labels?: string[]; text?: string; parent?: string }): boolean {
   if (f.status?.length && !f.status.includes(task.status)) return false;
+  if (f.parent !== undefined && task.parent !== f.parent) return false;
   if (f.assignee !== undefined && task.assignee !== f.assignee) return false;
   if (f.unassigned && task.assignee !== null) return false;
   if (f.labels?.length && !f.labels.every((l) => task.labels.includes(l))) return false;
@@ -115,7 +147,8 @@ export async function listTasks(ctx: OpContext, input: ListInputT): Promise<OpRe
   const { config, tasks } = await scopedTasks(ctx, scope, warnings);
   (p.status ?? []).forEach((s) => checkStatus(config, s));
   checkLimit(config, limit);
-  const matches = tasks.filter(({ task }) => taskMatches(task, p));
+  const parent = p.parent === undefined ? undefined : normalizeId(p.parent, config.prefix, 'parent');
+  const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent }));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListItem(task, archived));
   return { data: { items, scope, limit, offset, total: matches.length }, warnings };
@@ -129,6 +162,7 @@ function toListItem(task: TaskT, archived: boolean): ListItem {
     status: task.status,
     assignee: task.assignee,
     labels: [...task.labels],
+    parent: task.parent ?? null,
     updated_at: task.updated_at,
     updated_by: task.updated_by,
     rev: task.rev,

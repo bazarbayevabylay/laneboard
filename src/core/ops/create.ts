@@ -12,9 +12,11 @@ import {
   checkActor,
   checkFields,
   checkLabel,
+  checkParent,
   checkStatus,
   checkTaskLinks,
   DescriptionInput,
+  IdInput,
   LinkInput,
   linkKey,
   parseFieldArgs,
@@ -34,6 +36,8 @@ export const CreateInput = z.strictObject({
   assignee: z.string().optional(),
   labels: z.array(z.string()).optional(),
   links: z.array(LinkInput).optional(),
+  // A subtask: id of the parent task on this board (ADR §25).
+  parent: IdInput.optional(),
   // Typed values; keys must be declared in config.fields.
   fields: z.record(z.string(), z.unknown()).optional(),
   // CLI form `key=value`, converted with the declared field types.
@@ -70,6 +74,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
       const fields = { ...(p.fields ?? {}), ...parseFieldArgs(s.config, p.field_args ?? []) };
       checkFields(s.config, fields);
       checkTaskLinks(links, [s.active, s.archive], s.config.prefix);
+      const parent = p.parent === undefined ? undefined : checkParent(s, p.parent, s.config.prefix, undefined, 'links');
       if (s.active.next_id === undefined) throw new LaneboardError('STORE_INVALID', 'active.json next_id is missing');
       // next_id never decreases and never reuses an id, even after a hand edit (W9).
       const max = maxIdNumber(s.active.tasks, s.archive.tasks);
@@ -88,6 +93,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
         assignee: p.assignee ?? null,
         labels,
         links,
+        ...(parent !== undefined ? { parent } : {}),
         fields,
         attachments: [],
         events: [],
@@ -97,7 +103,8 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
         updated_at: s.now,
         updated_by: actor,
       };
-      addEvent(task, s.config, s.now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee }, actorSourceOf(ctx));
+      const created = { title: task.title, status: task.status, assignee: task.assignee, ...(parent !== undefined ? { parent } : {}) };
+      addEvent(task, s.config, s.now, actor, 'created', created, actorSourceOf(ctx));
       s.active.tasks.push(task);
       return toTaskView(task, false);
     },

@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describeIssue, schemaVersion } from './config.ts';
+import { describeIssue, schemaVersion, unreadableStoreFile } from './config.ts';
 import { LaneboardError } from './errors.ts';
 import { shellQuote } from './shell.ts';
 import { STORE_SCHEMA, STORE_VERSION, StoreFile } from './schema.ts';
@@ -253,7 +253,7 @@ export function readStoreFile(storeDir: string, kind: FileKind, warnings: string
     raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new LaneboardError('STORE_INVALID', `${label} is missing in ${storeDir}`);
-    throw err;
+    throw unreadableStoreFile(file, label, err);
   }
   let json: unknown;
   try {

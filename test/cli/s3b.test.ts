@@ -102,7 +102,7 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
   });
 
   // Synthetic summaries: own tasks, earlier-session tasks, free tasks, at a store path of `len` characters.
-  const item = (id: number, title: string, assignee: string | null): ListItem => ({ id: `LB-${id}`, title, status: 'todo', assignee, labels: [], updated_at: new Date().toISOString(), updated_by: 'a', rev: 1, archived: false });
+  const item = (id: number, title: string, assignee: string | null): ListItem => ({ id: `LB-${id}`, title, status: 'todo', assignee, labels: [], parent: null, updated_at: new Date().toISOString(), updated_by: 'a', rev: 1, archived: false });
   // Default name bases: the length of the real one on the owner's machine, and the longest a name may get (64 with the session part).
   const BASES = ['claude-code@abylaybazarbayev', `claude-code@${'u'.repeat(43)}`];
   const summary = (len: number, own: number, resume: number, free: number, description: string, base: string): PrimeData => ({
@@ -247,7 +247,7 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     expect(r.data).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'dev-1', commit: head });
     expect(r.warnings).toEqual([]);
     expect(stored(s, 'LB-1').events.slice(-3).map((e) => [e.type, e.data])).toEqual([
-      ['commented', { text: 'Ready for review' }],
+      ['commented', { text: 'Ready for review', result: true }],
       ['updated', { links: [[], [{ kind: 'commit', ref: head }]] }],
       // S4b: the assignee's finish into a status that is not final hands the task in.
       ['status', { from: 'in_progress', to: 'review', handed_in: true }],

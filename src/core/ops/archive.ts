@@ -5,7 +5,25 @@ import { removeDir } from '../fsio.ts';
 import type { StoreFileT, TaskT } from '../schema.ts';
 import { readBoth, transact } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { actorSourceOf, addEvent, checkExpectedRev, checkStatus, IdInput, locate, normalizeId, notFound, parseInput, requireActor, RevInput, toTaskView, touch, txOptions, unique } from './common.ts';
+import {
+  actorSourceOf,
+  addEvent,
+  checkExpectedRev,
+  checkStatus,
+  finalStatuses,
+  IdInput,
+  locate,
+  normalizeId,
+  notFound,
+  openChildrenWarning,
+  parseInput,
+  requireActor,
+  RevInput,
+  toTaskView,
+  touch,
+  txOptions,
+  unique,
+} from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -101,6 +119,11 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
         addEvent(task, s.config, s.now, actor, 'archived', {}, actorSourceOf(ctx));
         move(s.active, s.archive, task);
       }
+      // A parent archived while its children are still open: a warning, the children keep their parent (ADR §25, Q2).
+      for (const task of tasks) {
+        const open = openChildrenWarning(s.active, task.id, finalStatuses(s.config.statuses));
+        if (open) warnings.push(open);
+      }
       return { archived: tasks.map((t) => ({ id: t.id, rev: t.rev })), dry_run: false };
     },
     txOptions(ctx, warnings),
@@ -144,10 +167,11 @@ export const DeleteInput = z.strictObject({
 });
 export type DeleteInputT = z.infer<typeof DeleteInput>;
 
-// Hard delete from active or archive: the record, then its attachment directory; next_id is untouched (W9).
+// Hard delete from active or archive: the record, then its attachment directory; next_id is untouched (W9). Its children (in either
+// file) lose `parent` in the same write, each with an `updated {parent: [id, null]}` event, so a parent always names a task (ADR §25).
 export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<OpResult<{ id: string; deleted: true }>> {
-  // A delete is a write and needs an actor, even though no event survives it.
-  requireActor(ctx.actor);
+  // A delete is a write and needs an actor, even though no event of the task survives it (its children get one).
+  const actor = requireActor(ctx.actor);
   const p = parseInput(DeleteInput, input);
   const warnings: string[] = [];
   const data = await transact(
@@ -165,6 +189,11 @@ export async function deleteTask(ctx: OpContext, input: DeleteInputT): Promise<O
       if (!found) throw notFound(id);
       checkExpectedRev(found.task, found.archived, p.expected_rev);
       found.file.tasks = found.file.tasks.filter((t) => t.id !== id);
+      for (const child of [...s.active.tasks, ...s.archive.tasks].filter((t) => t.parent === id)) {
+        touch(child, s.now, actor);
+        delete child.parent;
+        addEvent(child, s.config, s.now, actor, 'updated', { parent: [id, null] }, actorSourceOf(ctx));
+      }
       s.onCommit(() => removeDir(attachmentDir(ctx.store.dir, id)));
       return { id, deleted: true as const };
     },

@@ -104,6 +104,16 @@ export function validateConfig(json: unknown, label: string): ConfigT {
   return config;
 }
 
+// A store file that exists but cannot be read (no permission, a directory, an I/O error): a store error with a fix, not INTERNAL
+// (review LB-19 MINOR 1). Without read and write permission the fix is the chmod that gives them back.
+export function unreadableStoreFile(file: string, label: string, err: unknown): LaneboardError {
+  const code = (err as NodeJS.ErrnoException).code ?? 'EIO';
+  const permission = code === 'EACCES' || code === 'EPERM';
+  return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, {
+    fix: permission ? `chmod u+rw ${shellQuote(file)}` : `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor`,
+  });
+}
+
 // Read and validate config.json fresh from disk.
 export function loadConfig(storeDir: string): ConfigT {
   const file = configPath(storeDir);
@@ -116,7 +126,7 @@ export function loadConfig(storeDir: string): ConfigT {
         fix: `restore ${file} (from git or a copy); or move ${shellQuote(storeDir)} aside and create a new board: laneboard init --dir ${shellQuote(storeDir)} --name <name> --description "<whose project, what work>"`,
       });
     }
-    throw err;
+    throw unreadableStoreFile(file, 'config.json', err);
   }
   let json: unknown;
   try {

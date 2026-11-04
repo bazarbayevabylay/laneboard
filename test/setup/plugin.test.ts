@@ -38,7 +38,8 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     expect(rules).toContain('rev from your last read or write');
     // S3: the rev is needed only on top of what was read; two agents fetched it with `get` before a status change.
     expect(rules).toContain('`--expected-rev` is optional: only for edits on top of what you read');
-    expect(rules).toContain('Status, comment, claim, finish: without it, and no `get` for it.');
+    // S5a (ADR §26): appending to the description needs no rev either.
+    expect(rules).toContain('Status, comment, claim, finish, `--append-description`: without it, and no `get` for it.');
     expect(rules).toContain('`--description` replaces the whole text');
     expect(rules).toContain('`error.details.task`');
     expect(rules).toContain('the last one is final');

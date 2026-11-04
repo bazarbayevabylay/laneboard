@@ -132,6 +132,13 @@ unchanged, with a warning. A second `finish` by the assignee into the same statu
 linked yet is added. A warning, not an error, when tracked files have uncommitted changes (staged ones too) or the HEAD commit is older
 than your claim (the link would point at a commit without your work): commit and run `finish` again, or use `--no-commit`. finish asks
 git (`rev-parse`, `log`, `status`, 2 s each); no git, no answer or an error: the task is still finished, with a `could not check git` warning.
+finish's result comment carries `result: true` in its event data (`get` prints `commented (result)`); `comment` never sets it.
+
+Subtasks: `laneboard create "<title>" --status <status> --parent <ID> --json`, the parent being a task of this board (a cycle or an id of
+another board is refused with a fix; link another board's task instead). `get` lists `children`, `list --parent <ID>` the direct ones,
+`update <ID> --no-parent` makes a top-level task. Deleting a parent removes `parent` from its children; closing or archiving a parent
+while children are open works, with a warning. Add to a description with `update <ID> --append-description "<text>"` (a blank line, then
+the text; no `--expected-rev`, nothing you read is overwritten); `--description` replaces the whole text.
 
 ```sh
 export LANEBOARD_AGENT=dev-1
@@ -139,6 +146,7 @@ laneboard create "Fix login redirect" --status todo --assignee dev-1 --json
 laneboard claim DEMO-1 --status in_progress --json
 laneboard comment DEMO-1 "Cause: the redirect drops the query string" --json
 laneboard update DEMO-1 --add-link branch=fix/login-redirect --field priority=1 --expected-rev 3 --json
+laneboard update DEMO-1 --append-description "Repro: log in from /cart" --json
 echo "request log" > trace.txt
 laneboard attach DEMO-1 trace.txt --json
 laneboard finish DEMO-1 --result "Fixed, regression test added" --json

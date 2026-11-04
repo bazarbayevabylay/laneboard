@@ -126,7 +126,7 @@ const CASES: ParityCase[] = [
     tool: 'task_update',
     args: { id: 'LB-1', actor: 'a' },
     error: 'USAGE',
-    mcpFix: 'call task_update with these parameters (? = optional): id, title?, description?, status?, assignee?, add_labels?, remove_labels?, add_links?, remove_links?, fields?, unset_fields?, expected_rev?, actor?, full?',
+    mcpFix: 'call task_update with these parameters (? = optional): id, title?, description?, append_description?, status?, assignee?, parent?, add_labels?, remove_labels?, add_links?, remove_links?, fields?, unset_fields?, expected_rev?, actor?, full?',
   },
 ];
 
@@ -156,6 +156,29 @@ describe('MCP server over stdio (SDK client)', () => {
       const instructions = mcp.client.getInstructions() ?? '';
       expect(instructions).toBe(agentRules());
       expect(instructions.length).toBeLessThanOrEqual(4096);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('K2 (ADR §25-§26): the new op inputs are tool params by themselves (task_create/task_list parent; task_update parent, append_description)', async () => {
+    const s = await newStore();
+    const mcp = await startMcp(s.root);
+    try {
+      const { tools } = await mcp.client.listTools();
+      const params = (name: string): string[] => Object.keys(tools.find((t) => t.name === name)?.inputSchema.properties ?? {});
+      expect(tools).toHaveLength(12);
+      expect(params('task_create')).toContain('parent');
+      expect(params('task_list')).toContain('parent');
+      expect(params('task_update')).toEqual(expect.arrayContaining(['parent', 'append_description']));
+      const created = await mcp.call('task_create', { title: 'P', status: 'todo', actor: 'a' });
+      expect(created.isError).toBe(false);
+      const child = await mcp.call('task_create', { title: 'C', status: 'todo', parent: 'LB-1', actor: 'a', full: true });
+      expect(child.structured).toMatchObject({ id: 'LB-2', parent: 'LB-1' });
+      const appended = await mcp.call('task_update', { id: 'LB-1', append_description: 'more', actor: 'a', full: true });
+      expect(appended.structured).toMatchObject({ description: 'more' });
+      const got = await mcp.call('task_get', { id: 'LB-1' });
+      expect(got.structured).toMatchObject({ children: [{ id: 'LB-2', title: 'C' }] });
     } finally {
       await mcp.close();
     }
@@ -259,7 +282,7 @@ describe('MCP server over stdio (SDK client)', () => {
       const r = await mcp.call('task_create', { title: 'x', status: 'todo', field_args: ['priority=1'], actor: 'a' });
       expect(r.isError).toBe(true);
       expect(r.structured).toMatchObject({ code: 'USAGE', message: 'unknown parameter: field_args' });
-      expect(r.structured.fix).toBe('call task_create with these parameters (? = optional): title, status, description?, assignee?, labels?, links?, fields?, actor?, full?');
+      expect(r.structured.fix).toBe('call task_create with these parameters (? = optional): title, status, description?, assignee?, labels?, links?, parent?, fields?, actor?, full?');
       const read = await mcp.call('task_get', { id: 'LB-1', actor: 'a' });
       expect(read.structured).toMatchObject({ code: 'USAGE', message: 'unknown parameter: actor' });
     } finally {

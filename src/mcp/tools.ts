@@ -69,7 +69,7 @@ function taskWriteParams(input: z.ZodObject): z.ZodObject {
 export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   createTask: {
     name: 'task_create',
-    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields. Returns its id, rev, status, assignee (full: the whole task).',
+    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields; parent: id of a task on this board (a subtask). Returns its id, rev, status, assignee (full: the whole task).',
     params: taskWriteParams(CreateInput.omit({ field_args: true })),
     write: true,
     taskReply: true,
@@ -89,7 +89,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   updateTask: {
     name: 'task_update',
     description:
-      'Change a task (at least one change). assignee null unassigns. description replaces the whole text. expected_rev is optional: pass it (the rev of your last read or write) only for edits on top of what you read (description, fields); a status change needs none. Closing a task: task_finish.',
+      'Change a task (at least one change). assignee null unassigns. description replaces the whole text; append_description adds to it after a blank line and needs no expected_rev. parent: id of a task on this board (a subtask), null: a top-level task. expected_rev is optional: pass it (the rev of your last read or write) only for edits on top of what you read (description, fields); a status change needs none. Closing a task: task_finish.',
     params: taskWriteParams(UpdateInput.omit({ field_args: true })),
     write: true,
     taskReply: true,
@@ -111,8 +111,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   finishTask: {
     name: 'task_finish',
-    description:
-      'Close a task in one call: the result comment, a link to the current git commit (HEAD of the server folder; no_commit: true for none), then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). Already in that status or final: unchanged, with a warning (a new commit of the assignee is still linked). Returns id, rev, status, assignee, commit.',
+    description: 'Close a task in one call: the result comment (event data result: true, which only finish writes), a link to the current git commit (HEAD of the server folder; no_commit: true for none), then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). Already in that status or final: unchanged, with a warning (a new commit of the assignee is still linked). Returns id, rev, status, assignee, commit.',
     params: taskWriteParams(FinishInput),
     write: true,
     taskReply: true,

@@ -45,10 +45,12 @@ describe('write replies are short (LB-7)', () => {
     expect((await run(['comment', 'LB-2', 'note', '--as', 'a'])).stdout).toBe('LB-2 commented (rev 2, todo, dev-2)\n');
     expect((await run(['claim', 'LB-2', '--as', 'dev-2'])).stdout).toBe('LB-2 claimed (rev 2, todo, dev-2)\n');
     expect((await run(['update', 'LB-2', '--unassign', '--as', 'a'])).stdout).toBe('LB-2 updated (rev 3, todo, unassigned)\n');
-    // --full: the task as get shows it, in JSON and for people.
+    // --full: the task as get shows it, in JSON and for people; get alone adds its parent and children (ADR §25).
     const full = await json(['comment', 'LB-2', 'more', '--as', 'a', '--full']);
     const got = await json(['get', 'LB-2']);
-    expect(full.data).toEqual(got.data);
+    const { parent_task, children, ...task } = got.data;
+    expect({ parent_task, children }).toEqual({ parent_task: null, children: [] });
+    expect(full.data).toEqual(task);
     expect(full.data.events.at(-1)).toMatchObject({ type: 'commented', data: { text: 'more' } });
     const human = (await run(['comment', 'LB-2', 'last', '--as', 'a', '--full'])).stdout;
     expect(human).toMatch(/^LB-2 {2}For someone\n {2}status: todo · assignee: - · rev: 5 /);
@@ -171,7 +173,7 @@ describe('prime for subagents (LB-8)', () => {
   // A prime summary with `own` tasks of the agent, `free` free tasks (10 listed at most) and `earlier` tasks of earlier sessions
   // (5 at most), titles `len` characters long.
   const data = (own: number, free: number, len: number, earlier = 0): PrimeData => {
-    const item = (i: number, assignee: string | null): ListItem => ({ id: `LB-${i}`, title: 'x'.repeat(len), status: 'todo', assignee, labels: [], updated_at: '', updated_by: 'a', rev: 1, archived: false });
+    const item = (i: number, assignee: string | null): ListItem => ({ id: `LB-${i}`, title: 'x'.repeat(len), status: 'todo', assignee, labels: [], parent: null, updated_at: '', updated_by: 'a', rev: 1, archived: false });
     return {
       rules: agentRules(),
       agent: DEFAULT_NAME,

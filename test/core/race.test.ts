@@ -1,4 +1,4 @@
-// Multi-process rules: W2 concurrent creates and the lost lock, W7 two-file reads vs a flipper, W8 SIGKILLed holder.
+// Multi-process rules: W2 concurrent creates and the lost lock, W7 two-file reads vs a flipper, W8 SIGKILLed holder, K5 parent cycles.
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
@@ -114,5 +114,22 @@ describe('W8 crash recovery', () => {
     const waited = Date.now() - started;
     expect(created.data.id).toBe('LB-1');
     expect(waited).toBeLessThan(15_000);
+  });
+});
+
+describe('K5 (ADR §25): no parent cycle under parallel writers', () => {
+  it('two processes cross-set parents (LB-1 under LB-2, LB-2 under LB-1): exactly one wins, the other gets INVALID_VALUE; no cycle stored', async () => {
+    for (let round = 0; round < 3; round++) {
+      const s = await newStore();
+      await createTask(as(s), { title: 'A', status: 'todo' });
+      await createTask(as(s), { title: 'B', status: 'todo' });
+      const update = (id: string, parent: string) => spawnNode([CLI_SOURCE, 'update', id, '--parent', parent, '--as', `w-${id}`, '--json'], { cwd: s.root });
+      const runs = await Promise.all([update('LB-1', 'LB-2'), update('LB-2', 'LB-1')]);
+      expect(runs.map((r) => r.code).sort(), runs.map((r) => r.stdout + r.stderr).join('\n')).toEqual([0, 2]);
+      const failed = runs.find((r) => r.code === 2);
+      expect(JSON.parse(failed?.stdout ?? '{}').error.code).toBe('INVALID_VALUE');
+      const parents = await Promise.all(['LB-1', 'LB-2'].map(async (id) => (await getTask(as(s), { id })).data.parent));
+      expect(parents.filter((p) => p !== null)).toHaveLength(1);
+    }
   });
 });

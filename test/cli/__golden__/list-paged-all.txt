@@ -11,6 +11,6 @@ LB-2  todo    -         1    YYYY-MM-DDTHH:MM:SS.mmmZ  Second
 $ laneboard list --scope all --limit 1 --offset 1 --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"items":[{"id":"LB-2","title":"Second","status":"todo","assignee":null,"labels":[],"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false}],"scope":"all","limit":1,"offset":1,"total":3},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"items":[{"id":"LB-2","title":"Second","status":"todo","assignee":null,"labels":[],"parent":null,"updated_at":"YYYY-MM-DDTHH:MM:SS.mmmZ","updated_by":"a","rev":1,"archived":false}],"scope":"all","limit":1,"offset":1,"total":3},"warnings":[]}
 --- stderr
 

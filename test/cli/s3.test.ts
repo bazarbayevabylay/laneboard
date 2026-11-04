@@ -74,12 +74,12 @@ describe('laneboard finish', () => {
     expect(t.links).toEqual([{ kind: 'commit', ref: head }]);
     // The result comes before the status change, all at the same time (one write, one rev).
     expect(t.events.slice(-3).map((e) => [e.type, e.data])).toEqual([
-      ['commented', { text: 'Fixed, tests green' }],
+      ['commented', { text: 'Fixed, tests green', result: true }],
       ['updated', { links: [[], [{ kind: 'commit', ref: head }]] }],
       ['status', { from: 'in_progress', to: 'done' }],
     ]);
     const human = await cli(['get', 'LB-1'], { cwd: s.root });
-    expect(human.stdout).toContain('dev-1  commented  Fixed, tests green');
+    expect(human.stdout).toContain('dev-1  commented (result)  Fixed, tests green');
   });
 
   it('human line names the linked commit; the same commit is not linked twice; --no-commit and a folder outside git link none', async () => {
@@ -107,7 +107,7 @@ describe('laneboard finish', () => {
     expect(r.data).toMatchObject({ assignee: 'dev-2', status: 'done', rev: 2 });
     expect(r.reply).toEqual({ commit: null });
     expect(stored(s, 'LB-1').events.slice(-3).map((e) => [e.type, e.data])).toEqual([
-      ['commented', { text: 'done' }],
+      ['commented', { text: 'done', result: true }],
       ['assigned', { from: null, to: 'dev-2' }],
       ['status', { from: 'todo', to: 'done' }],
     ]);

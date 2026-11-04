@@ -53,6 +53,15 @@ export function readTextFile(io: CliIo, file: string, option: string): string {
   }
 }
 
+// Text to add to the description, from --append-description or --append-description-file; neither goes with a replacing
+// --description or --description-file (the fix drops the append option).
+export function appendedDescription(values: Values, io: CliIo): string | undefined {
+  exclusive(values, 'append-description', 'append-description-file');
+  for (const replace of ['description', 'description-file']) for (const append of ['append-description', 'append-description-file']) exclusive(values, replace, append);
+  const file = str(values, 'append-description-file');
+  return file !== undefined ? readTextFile(io, file, 'append-description-file') : str(values, 'append-description');
+}
+
 // Description from --description or --description-file.
 export function description(values: Values, io: CliIo): string | undefined {
   exclusive(values, 'description', 'description-file');
