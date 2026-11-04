@@ -100,7 +100,9 @@ describe('W7 reads across both files', () => {
     expect(r.code, r.stderr).toBe(0);
     expect(reads).toBeGreaterThan(0);
     expect(wrong).toBe(0);
-  });
+    // The time is the flipper's 400 writes, each fsyncing both files: 15-25 s on an idle Mac, 54 s for the flips alone beside a full
+    // `npm test` (LB-30 measurements); a run under more load went past 60 s on the base without S6d. Same 200 flips, more time.
+  }, 180_000);
 });
 
 describe('W8 crash recovery', () => {

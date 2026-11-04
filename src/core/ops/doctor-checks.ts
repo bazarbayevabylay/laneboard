@@ -3,12 +3,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { idNumber, repeatedIds, validateStoreJson, backupPath, storeFilePath } from '../store.ts';
+import { idNumber, parseStoreFile, repeatedIds, validateStoreJson, backupPath, storeFilePath } from '../store.ts';
+import type { LoadedFile } from '../store.ts';
 import { ensureDir, moveEntry, removeEmptyDir, removeFile, writeFileAtomic } from '../fsio.ts';
 import { shellQuote } from '../shell.ts';
 import { FILE_KINDS, ID_RE } from '../schema.ts';
 import type { ConfigT, FileKind, StoreFileT, TaskT } from '../schema.ts';
-import type { HeldLock } from '../lock.ts';
 import type { ActorSource } from '../agent-name.ts';
 import { attachmentDir } from './attach.ts';
 import { addEvent, matchesType, touch } from './common.ts';
@@ -57,33 +57,66 @@ export function readFailure(file: string): string | undefined {
   }
 }
 
-// What a restore did: the message, and the damaged file's text (to learn which ids it already used).
-export interface RestoreOutcome extends CheckResult {
-  broken?: string;
+// A restore decided but not yet written: the .bak loaded as the file's new content, and the damaged bytes to keep aside.
+export interface RestorePlan {
+  kind: FileKind;
+  // The .bak as a loaded store file; `raw` is the .bak's own text, so the commit leaves the .bak as it is.
+  file: LoadedFile;
+  // The damaged file's bytes (undefined when it is missing) and the name it is kept under.
+  current?: Buffer;
+  keptName: string;
+  message: string;
 }
 
-// Swap in `<kind>.json.bak` for a damaged file; the damaged file is kept next to it as `<kind>.json.invalid-<time>`.
-export function restoreFromBackup(storeDir: string, kind: FileKind, now: string, lock: HeldLock): RestoreOutcome {
+// Plan swapping in `<kind>.json.bak` for a damaged file, without writing anything: the restore is written by the same commit as
+// what it implies (next_id floor, returned tasks, A3), so no exit between them leaves a restored file without its floor.
+export function planRestore(storeDir: string, kind: FileKind, now: string): RestorePlan | CheckResult {
   const current = readBytes(storeFilePath(storeDir, kind));
   const backup = readBytes(backupPath(storeDir, kind));
   const counts = `current: ${countTasks(current?.toString('utf8'))}; backup: ${countTasks(backup?.toString('utf8'))}`;
   if (backup === undefined) return { ok: false, message: `invalid and no ${kind}.json.bak to restore (${counts})` };
+  let file: LoadedFile;
   try {
     // A .bak with an id used twice is still a good base: the duplicate-ids check gives the later copy a new id.
-    validateStoreJson(JSON.parse(backup.toString('utf8')), kind, `${kind}.json.bak`, { allowDuplicateIds: true });
+    file = parseStoreFile(backup.toString('utf8'), backupPath(storeDir, kind), kind, `${kind}.json.bak`, [], { allowDuplicateIds: true });
   } catch (err) {
     return { ok: false, message: `invalid, and ${kind}.json.bak is invalid too: ${(err as Error).message} (${counts})` };
   }
-  lock.assertHeld();
-  let kept = '';
-  // Copy the broken file aside first, then replace it in one atomic step: lock-free readers never see it missing.
-  if (current !== undefined) {
-    const keptName = `${kind}.json.invalid-${now.replace(/[:.]/g, '-')}`;
-    writeFileAtomic(path.join(storeDir, keptName), current, 0o444);
-    kept = `; broken file kept as ${keptName}`;
+  const keptName = `${kind}.json.invalid-${now.replace(/[:.]/g, '-')}`;
+  const kept = current !== undefined ? `; broken file kept as ${keptName}` : '';
+  return { kind, file, current, keptName, message: `restored from ${kind}.json.bak (${counts})${kept}` };
+}
+
+// Is this a restore plan (and not the line of a restore that cannot be done)?
+export function isRestorePlan(r: RestorePlan | CheckResult): r is RestorePlan {
+  return 'file' in r;
+}
+
+// Keep the damaged files of planned restores as `<kind>.json.invalid-<time>`; called right before the commit that replaces them.
+export function keepDamagedFiles(storeDir: string, plans: readonly RestorePlan[]): void {
+  for (const plan of plans) {
+    if (plan.current !== undefined) writeFileAtomic(path.join(storeDir, plan.keptName), plan.current, 0o444);
   }
-  writeFileAtomic(storeFilePath(storeDir, kind), backup, 0o444);
-  return { ok: false, fixed: true, message: `restored from ${kind}.json.bak (${counts})${kept}`, broken: current?.toString('utf8') };
+}
+
+// Damaged store files kept by earlier restores (`*.json.invalid-*`), as name and text.
+function keptDamagedTexts(storeDir: string): Array<{ name: string; text: string }> {
+  const names = fs.existsSync(storeDir) ? fs.readdirSync(storeDir).filter((n) => /^(active|archive)\.json\.invalid-/.test(n)) : [];
+  return names.flatMap((name) => {
+    const bytes = readBytes(path.join(storeDir, name));
+    return bytes === undefined ? [] : [{ name, text: bytes.toString('utf8') }];
+  });
+}
+
+// Lowest next_id that gives no id seen in a kept damaged file (`*.invalid-*`) again, and that file's name; a second guard for a
+// restore whose floor never reached the disk (a crash between the files).
+export function keptDamagedFloor(storeDir: string): { floor: number; name?: string } {
+  let best: { floor: number; name?: string } = { floor: 1 };
+  for (const { name, text } of keptDamagedTexts(storeDir)) {
+    const floor = Math.max(textNextId(text) ?? 1, ...textIds(text).map((id) => idNumber(id) + 1));
+    if (floor > best.floor) best = { floor, name };
+  }
+  return best;
 }
 
 // next_id written in a store file's text, also when the rest is damaged (it comes early in the file).
@@ -110,9 +143,34 @@ function backupTasks(storeDir: string, kind: FileKind): TaskT[] | undefined {
   }
 }
 
+// Numbers of this board's ids (`<prefix>-N`) in a text.
+function prefixedNumbers(text: string, prefix: string): number[] {
+  return [...text.matchAll(new RegExp(`(?<![A-Za-z0-9])${prefix}-([1-9][0-9]*)(?![0-9])`, 'g'))].map((m) => Number(m[1]));
+}
+
+// Highest id number this board's tasks name anywhere but in free text: their ids, parents, task links, and the id, parent and
+// links of their events (an id once renumbered or linked), plus the attachment folders (a task may be gone, its files not).
+function highestNamedId(storeDir: string, tasks: readonly TaskT[], prefix: string): number {
+  const texts: string[] = [];
+  for (const t of tasks) {
+    texts.push(t.id, t.parent ?? '', ...t.links.filter((l) => l.kind === 'task').map((l) => l.ref));
+    for (const e of t.events) texts.push(JSON.stringify([e.data.id, e.data.parent, e.data.links]));
+  }
+  const root = path.join(storeDir, 'attachments');
+  if (fs.existsSync(root)) texts.push(...fs.readdirSync(root).filter((name) => ID_RE.test(name)));
+  return Math.max(0, ...texts.flatMap((text) => prefixedNumbers(text, prefix)));
+}
+
+// "LB-3, LB-4" for up to 10 ids, else "LB-3..LB-40 (38 ids)".
+function idList(prefix: string, numbers: readonly number[]): string {
+  if (numbers.length <= 10) return numbers.map((n) => `${prefix}-${n}`).join(', ');
+  return `${prefix}-${numbers[0]}..${prefix}-${numbers.at(-1)} (${numbers.length} ids)`;
+}
+
 // After a restore (A3): put back every task that only a .bak still holds (the lost write moved it between the files), and keep
-// next_id above every id the store ever used (the damaged file, both .bak files), so no id is given twice.
-export function recoverAfterRestore(storeDir: string, files: Record<FileKind, StoreFileT>, broken: Map<FileKind, string | undefined>): CheckResult {
+// next_id above every id the store ever used (the damaged file, both .bak files, kept damaged files, ids the tasks and their events
+// name, attachment folders), so no id is given twice.
+export function recoverAfterRestore(storeDir: string, files: Record<FileKind, StoreFileT>, broken: Map<FileKind, string | undefined>, prefix: string): CheckResult {
   const present = new Set([...files.active.tasks, ...files.archive.tasks].map((t) => t.id));
   const returned: string[] = [];
   for (const kind of FILE_KINDS) {
@@ -125,21 +183,32 @@ export function recoverAfterRestore(storeDir: string, files: Record<FileKind, St
   }
   // Ids the damaged files named that are still nowhere: their last change is lost with the write that made it.
   const lost = [...broken.values()].flatMap((text) => textIds(text)).filter((id, i, all) => !present.has(id) && all.indexOf(id) === i);
-  const texts = [...broken.values(), ...FILE_KINDS.map((kind) => readBytes(backupPath(storeDir, kind))?.toString('utf8'))];
+  const texts = [
+    ...broken.values(),
+    ...FILE_KINDS.map((kind) => readBytes(backupPath(storeDir, kind))?.toString('utf8')),
+    ...keptDamagedTexts(storeDir).map((k) => k.text),
+  ];
   let floor = 1;
   for (const text of texts) {
     floor = Math.max(floor, textNextId(text) ?? 1, ...textIds(text).map((id) => idNumber(id) + 1));
   }
-  for (const t of [...files.active.tasks, ...files.archive.tasks]) floor = Math.max(floor, idNumber(t.id) + 1);
+  const tasks = [...files.active.tasks, ...files.archive.tasks];
+  floor = Math.max(floor, highestNamedId(storeDir, tasks, prefix) + 1);
   const next = files.active.next_id ?? 1;
-  // active.json is one write ahead of its .bak. When the damaged file shows no next_id, that write may have created a task with the
-  // .bak's next_id: skip it rather than give that id to another task.
+  // active.json is one write ahead of its .bak. When the damaged file shows no next_id, that write may have created tasks from the
+  // .bak's next_id on (one create: one id; an import: several, A3): every id up to the floor is skipped and named, at least one.
   const blind = broken.has('active') && textNextId(broken.get('active')) === undefined;
   if (blind) floor = Math.max(floor, next + 1);
   const parts: string[] = [];
   if (returned.length) parts.push(`returned tasks found only in a .bak: ${returned.join(', ')}; if one was deleted on purpose, delete it again`);
   if (lost.length) parts.push(`lost with the damaged file: ${lost.join(', ')} (their last change; the damaged file is kept as .invalid-*)`);
-  if (blind) parts.push(`the last write to active.json is lost and may have created a task numbered ${next}`);
+  if (blind) {
+    const unused = Array.from({ length: floor - next }, (_, i) => next + i).filter((n) => !present.has(`${prefix}-${n}`));
+    parts.push(
+      `the last write to active.json is lost and may have created ${idList(prefix, unused)}; those ids are not given again, ` +
+        `but an import there may have created more, and nothing on disk shows them: ids its reply named above these can be given again`,
+    );
+  }
   if (floor > next) {
     files.active.next_id = floor;
     parts.push(`next_id ${next} -> ${floor}, so no id used before is given again`);
@@ -167,23 +236,46 @@ export function describeRepeats(files: Record<FileKind, StoreFileT>): string[] {
   return out;
 }
 
-// Give every later copy of an id used twice in one file the next free id (A8): the copy created first keeps the id. The renumbered
-// task gets an `updated {id: [old, new]}` event and its attachment files move to the new id's folder. Links and subtasks that name
-// the old id keep pointing to the first copy. Call only after next_id is above every id in the store.
+// Tasks whose parent or task link names `id` (other than `except`), as "LB-4 (parent LB-2)" with the command to point it at `newId`.
+function referencesTo(files: Record<FileKind, StoreFileT>, id: string, newId: string, except: TaskT): string[] {
+  const out: string[] = [];
+  for (const t of [...files.active.tasks, ...files.archive.tasks]) {
+    if (t === except) continue;
+    if (t.parent === id) out.push(`${t.id} (parent ${id}; if it meant the renumbered one: laneboard update ${t.id} --parent ${newId})`);
+    if (t.links.some((l) => l.kind === 'task' && l.ref === id)) {
+      out.push(`${t.id} (link task=${id}; if it meant the renumbered one: laneboard update ${t.id} --remove-link task=${id} --add-link task=${newId})`);
+    }
+  }
+  return out;
+}
+
+// What renumberRepeats did: "LB-2 "b" -> LB-5" lines, and tasks whose parent or link names an old id (which copy they meant is not
+// known: they keep the first one until a person moves them).
+export interface Renumbered {
+  changes: string[];
+  references: string[];
+}
+
+// Give every later copy of an id used twice in one file the next free id (A8): the copy created first (created_at; on a tie, the one
+// earlier in the file) keeps the id. The renumbered task gets an `updated {id: [old, new]}` event and its attachment files move to
+// the new id's folder. Links and subtasks that name the old id keep pointing to the first copy and are named in `references`.
+// Call only after next_id is above every id in the store.
 export function renumberRepeats(
   storeDir: string,
   files: Record<FileKind, StoreFileT>,
   config: ConfigT,
   who: { now: string; actor: string; source: ActorSource },
   moves: AttachmentMoves,
-): string[] {
+): Renumbered {
   const changes: string[] = [];
+  const references: string[] = [];
   for (const kind of FILE_KINDS) {
     for (const id of repeatedIds(files[kind].tasks)) {
       const copies = files[kind].tasks.map((task, index) => ({ task, index })).filter((c) => c.task.id === id);
       copies.sort((a, b) => a.task.created_at.localeCompare(b.task.created_at) || a.index - b.index);
       const keeper = copies[0]?.task as TaskT;
       const keptNames = new Set(keeper.attachments.map((a) => a.name));
+      const renamed: string[] = [];
       for (const { task } of copies.slice(1)) {
         const nextId = files.active.next_id ?? 1;
         const newId = `${config.prefix}-${nextId}`;
@@ -199,10 +291,13 @@ export function renumberRepeats(
         touch(task, who.now, who.actor);
         addEvent(task, config, who.now, who.actor, 'updated', { id: [id, newId] }, who.source);
         changes.push(`${id} "${task.title}" -> ${newId}`);
+        renamed.push(newId);
       }
+      // Every task that names the old id may have meant a renumbered copy: one line per such task and new id.
+      for (const newId of renamed) references.push(...referencesTo(files, id, newId, keeper));
     }
   }
-  return changes;
+  return { changes, references };
 }
 
 // Copy the attachment files of renumbered tasks to their new folders (before the store is written: a crash leaves a spare copy).

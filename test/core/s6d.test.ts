@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { acquireLock } from '../../src/core/lock.ts';
 import { archiveTasks, attachFile, createTask, doctor, getTask, listTasks } from '../../src/core/index.ts';
 import { as, CLI_SOURCE, cleanupTemp, cli, newStore, readStore, rejectsWith, tempDir, writeRaw } from '../helpers.ts';
@@ -50,7 +50,7 @@ describe('A3 doctor --restore-backup keeps what the other files know', () => {
     const s = await storeWith(3);
     writeRaw(path.join(s.dir, 'active.json'), '{');
     const r = await doctor(as(s), { restore_backup: true });
-    expect(checkOf(r, 'after restore')?.message).toContain('may have created a task numbered 3');
+    expect(checkOf(r, 'after restore')?.message).toContain('may have created LB-3;');
     expect(checkOf(r, 'after restore')?.message).toContain('next_id 3 -> 4');
     expect((await createTask(as(s), { title: 'other', status: 'todo' })).data.id).toBe('LB-4');
   });
@@ -108,6 +108,105 @@ describe('A3 doctor --restore-backup keeps what the other files know', () => {
     // The put-aside folder is not a task folder: the next check is clean.
     expect(checkOf(await doctor(as(s), {}), 'attachment files')?.ok).toBe(true);
   });
+
+  it('the other file does not load (chmod 000): nothing is restored or written, a later restore still keeps next_id up', async () => {
+    const s = await storeWith(3);
+    const active = path.join(s.dir, 'active.json');
+    const archive = path.join(s.dir, 'archive.json');
+    writeRaw(active, '{');
+    fs.chmodSync(archive, 0o000);
+    try {
+      const r = await doctor(as(s), { restore_backup: true });
+      expect(checkOf(r, 'active.json')).toMatchObject({ ok: false, fixed: false });
+      expect(checkOf(r, 'active.json')?.message).toContain('not restored, nothing was written: archive.json must load first');
+      expect(checkOf(r, 'archive.json')?.message).toContain('fix: chmod u+rw');
+      expect(r.data.healthy).toBe(false);
+    } finally {
+      fs.chmodSync(archive, 0o444);
+    }
+    expect(fs.readFileSync(active, 'utf8')).toBe('{');
+    expect(fs.readdirSync(s.dir).some((f) => f.includes('.invalid-'))).toBe(false);
+    expect((await doctor(as(s), {})).data.healthy).toBe(false);
+    await doctor(as(s), { restore_backup: true });
+    expect((await createTask(as(s), { title: 'other', status: 'todo' })).data.id).toBe('LB-4');
+  });
+
+  it('the lock lost before the commit (LOCK_LOST "nothing was written"): the damaged file is still there, nothing was restored', async () => {
+    const s = await storeWith(3);
+    const active = path.join(s.dir, 'active.json');
+    writeRaw(active, '{');
+    const err = await rejectsWith(doctor(as(s, 'tester', { lockMaxHoldMs: 0 }), { restore_backup: true }), 'LOCK_LOST');
+    expect(err.message).toContain('nothing was written');
+    expect(fs.readFileSync(active, 'utf8')).toBe('{');
+    expect(fs.readdirSync(s.dir).some((f) => f.includes('.invalid-'))).toBe(false);
+    expect((await doctor(as(s), {})).data.healthy).toBe(false);
+    await doctor(as(s), { restore_backup: true });
+    expect((await createTask(as(s), { title: 'other', status: 'todo' })).data.id).toBe('LB-4');
+  });
+
+  it('hashing slow attachments does not push the restore past the lock deadline: it is written before the report-only checks', async () => {
+    const s = await newStore();
+    await createTask(as(s), { title: 't1', status: 'todo' });
+    const src = path.join(tempDir(), 'big.txt');
+    fs.writeFileSync(src, 'report');
+    await attachFile(as(s), { id: 'LB-1', path: src });
+    await createTask(as(s), { title: 't2', status: 'todo' });
+    await createTask(as(s), { title: 't3', status: 'todo' });
+    writeRaw(path.join(s.dir, 'active.json'), '{');
+    // Every read of an attachment takes 600 ms (a slow disk, a large file); the write deadline is 300 ms after the acquire.
+    const read = fs.readFileSync;
+    const slow = vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(file).includes(`${path.sep}attachments${path.sep}`)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);
+      return (read as (...args: unknown[]) => unknown)(file, ...rest);
+    }) as typeof fs.readFileSync);
+    let r;
+    try {
+      r = await doctor(as(s, 'tester', { lockMaxHoldMs: 300 }), { restore_backup: true });
+    } finally {
+      slow.mockRestore();
+    }
+    expect(checkOf(r, 'attachment content')?.ok).toBe(true);
+    expect(checkOf(r, 'after restore')?.message).toContain('next_id 3 -> 4');
+    expect((await createTask(as(s), { title: 'other', status: 'todo' })).data.id).toBe('LB-4');
+  });
+
+  it('a kept damaged file (*.invalid-*) whose ids are above next_id is reported, and --fix lifts next_id over them', async () => {
+    const s = await storeWith(2);
+    // What a restore whose floor never reached the disk leaves: the damaged text shows next_id 9 and LB-8.
+    fs.writeFileSync(path.join(s.dir, 'active.json.invalid-2026-01-01T00-00-00-000Z'), '{"next_id": 9, "tasks": [{"id": "LB-8"');
+    const report = await doctor(as(s), {});
+    expect(checkOf(report, 'next_id')).toMatchObject({ ok: false, fixed: false });
+    expect(checkOf(report, 'next_id')?.message).toContain('next_id 3 is below 9: ids up to LB-8 were used (active.json.invalid-2026-01-01T00-00-00-000Z)');
+    const fixed = await doctor(as(s), { fix: true });
+    expect(checkOf(fixed, 'next_id')?.message).toContain('set to 9');
+    expect((await createTask(as(s), { title: 'other', status: 'todo' })).data.id).toBe('LB-9');
+    expect(checkOf(await doctor(as(s), {}), 'next_id')?.ok).toBe(true);
+  });
+
+  it('a .bak edited by hand is restored with its checksum rewritten: the checksum line says so, the board is healthy', async () => {
+    const s = await storeWith(2);
+    const bak = path.join(s.dir, 'active.json.bak');
+    writeRaw(bak, fs.readFileSync(bak, 'utf8').replace('"t1"', '"t1 edited"'));
+    writeRaw(path.join(s.dir, 'active.json'), '{');
+    const r = await doctor(as(s), { restore_backup: true });
+    expect(checkOf(r, 'active.json checksum')).toMatchObject({ ok: false, fixed: true, message: 'content_sha256 mismatch (hand edit): accepted and rewritten' });
+    expect(r.data.healthy).toBe(true);
+    expect((await doctor(as(s), {})).data.healthy).toBe(true);
+  });
+
+  it('a blind restore keeps next_id above every id the board still names (an attachment folder) and names each id it skips', async () => {
+    const s = await storeWith(3);
+    // Files of a task the lost writes made: LB-6's folder is there, its task is not.
+    fs.mkdirSync(path.join(s.dir, 'attachments', 'LB-6'), { recursive: true });
+    fs.writeFileSync(path.join(s.dir, 'attachments', 'LB-6', 'notes.txt'), 'x');
+    writeRaw(path.join(s.dir, 'active.json'), '{');
+    const r = await doctor(as(s), { restore_backup: true });
+    const msg = checkOf(r, 'after restore')?.message ?? '';
+    expect(msg).toContain('may have created LB-3, LB-4, LB-5, LB-6;');
+    expect(msg).toContain('an import there may have created more');
+    expect(msg).toContain('next_id 3 -> 7');
+    expect((await createTask(as(s), { title: 'other', status: 'todo' })).data.id).toBe('LB-7');
+  });
 });
 
 // Turn LB-3 into a second LB-2 (what a git merge of two branches that each created a task leaves), next_id back to 3.
@@ -160,6 +259,39 @@ describe('A8 one id on two tasks in a file', () => {
     expect((await createTask(as(s), { title: 'next', status: 'todo' })).data.id).toBe('LB-4');
   });
 
+  it('the copy created later gets the new id even when it comes first in the file (a merge may put it there)', async () => {
+    const s = await storeWith(3);
+    const data = readStore(s.dir, 'active');
+    const [first, second, third] = data.tasks as Array<Record<string, unknown>>;
+    Object.assign(second as object, { title: 'from-A', created_at: '2026-01-01T00:00:00.000Z' });
+    Object.assign(third as object, { id: 'LB-2', title: 'from-B', created_at: '2026-01-02T00:00:00.000Z' });
+    data.tasks = [first, third, second] as typeof data.tasks;
+    data.next_id = 3;
+    writeRaw(path.join(s.dir, 'active.json'), JSON.stringify(data, null, 2));
+    const fixed = await doctor(as(s), { fix: true });
+    expect(checkOf(fixed, 'duplicate ids')?.message).toContain('LB-2 "from-B" -> LB-3');
+    expect((await getTask(as(s), { id: 'LB-2' })).data.title).toBe('from-A');
+    expect((await getTask(as(s), { id: 'LB-3' })).data.title).toBe('from-B');
+  });
+
+  it('subtasks and links that name the repeated id are named with the command to move them; they keep the first copy', async () => {
+    const s = await storeWith(4);
+    const data = readStore(s.dir, 'active');
+    for (const t of data.tasks as Array<Record<string, unknown>>) {
+      if (t.id === 'LB-3') t.id = 'LB-2';
+      if (t.id === 'LB-4') t.parent = 'LB-2';
+      if (t.id === 'LB-1') t.links = [{ kind: 'task', ref: 'LB-2' }];
+    }
+    data.next_id = 5;
+    writeRaw(path.join(s.dir, 'active.json'), JSON.stringify(data, null, 2));
+    const fixed = await doctor(as(s), { fix: true });
+    const msg = checkOf(fixed, 'duplicate ids')?.message ?? '';
+    expect(msg).toContain('LB-2 "t3" -> LB-5');
+    expect(msg).toContain('LB-4 (parent LB-2; if it meant the renumbered one: laneboard update LB-4 --parent LB-5)');
+    expect(msg).toContain('LB-1 (link task=LB-2; if it meant the renumbered one: laneboard update LB-1 --remove-link task=LB-2 --add-link task=LB-5)');
+    expect((await getTask(as(s), { id: 'LB-4' })).data.parent).toBe('LB-2');
+  });
+
   it('a byte order mark (Notepad) is read past; git conflict markers get "resolve the merge conflict", the restore last', async () => {
     const s = await storeWith(1);
     const file = path.join(s.dir, 'active.json');
@@ -189,6 +321,34 @@ describe('A9 the store lock', () => {
     expect(r.data.id).toBe('LB-2');
     expect(r.warnings.join('\n')).toContain(`removed a stale store lock ${lockPath}`);
   }, 30_000);
+
+  it('a lock from the future is removed only after 10 s unchanged: every touch restarts the window (a live holder is never taken)', async () => {
+    const s = await storeWith(1);
+    const lockPath = path.join(s.dir, 'lock');
+    fs.mkdirSync(lockPath);
+    const base = Date.now() + 3600_000;
+    let touches = 0;
+    let lastTouch = 0;
+    const touch = (): void => {
+      touches += 1;
+      const at = new Date(base + touches * 1000);
+      fs.utimesSync(lockPath, at, at);
+      lastTouch = Date.now();
+    };
+    touch();
+    // Touched every 3 s (well inside the window, same inode) three more times, then left alone like a dead holder's lock.
+    const timer = setInterval(() => (touches < 4 ? touch() : clearInterval(timer)), 3000);
+    try {
+      const r = await createTask(as(s, 'tester', { lockWaitMs: 25_000 }), { title: 'after the touches stopped', status: 'todo' });
+      expect(r.data.id).toBe('LB-2');
+      expect(r.warnings.join('\n')).toContain(`removed a stale store lock ${lockPath}`);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(touches).toBe(4);
+    // Not before the whole window passed since the last touch.
+    expect(Date.now() - lastTouch).toBeGreaterThanOrEqual(9_900);
+  }, 40_000);
 
   it('LOCK_TIMEOUT names the lock and its time; for a lock from the future the fix is rmdir <lock>', async () => {
     const s = await storeWith(1);

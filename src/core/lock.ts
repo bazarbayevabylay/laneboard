@@ -56,7 +56,7 @@ function lockFs(state: { keepDir: boolean }): typeof fs {
   };
 }
 
-// What identifies one lock directory: its inode and mtime (a live holder moves the mtime every LOCK_UPDATE_MS).
+// What identifies one lock directory: its inode and mtime (a new lock has a new inode; a heartbeat or a touch moves the mtime).
 interface LockStamp {
   ino: number;
   mtimeMs: number;
@@ -74,8 +74,10 @@ function lockStamp(lockPath: string): LockStamp | undefined {
 }
 
 // A lock whose mtime lies in the future (the clock went back, another host's clock) never looks stale to proper-lockfile until the
-// clock catches up. Watched here: unchanged for LOCK_STALE_MS of our own waiting, its holder is dead (a live one moves the mtime
-// every LOCK_UPDATE_MS), so it is removed like any stale lock.
+// clock catches up. Watched here: unchanged (same inode and mtime) for LOCK_STALE_MS of our own waiting, it is removed like any stale
+// lock. A live laneboard holder is safe without a heartbeat (its bodies are synchronous, W2): it writes only within
+// LOCK_MAX_HOLD_MS (5 s) of the acquire, so it is done long before the 10 s window ends; a holder that touches the lock (the heartbeat
+// between awaits, another tool) restarts the window.
 interface FutureWatch {
   stamp: LockStamp;
   since: number;

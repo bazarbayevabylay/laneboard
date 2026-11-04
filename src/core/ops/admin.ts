@@ -15,8 +15,24 @@ import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
 import { actorSourceOf, parseInput, unique } from './common.ts';
-import { attachmentContent, describeRepeats, copyAttachments, fieldCheck, orphanFiles, parentCheck, readFailure, recoverAfterRestore, removeMovedSources, renumberRepeats, restoreFromBackup, statusCheck } from './doctor-checks.ts';
-import type { AttachmentMoves, CheckResult } from './doctor-checks.ts';
+import {
+  attachmentContent,
+  copyAttachments,
+  describeRepeats,
+  fieldCheck,
+  isRestorePlan,
+  keepDamagedFiles,
+  keptDamagedFloor,
+  orphanFiles,
+  parentCheck,
+  planRestore,
+  readFailure,
+  recoverAfterRestore,
+  removeMovedSources,
+  renumberRepeats,
+  statusCheck,
+} from './doctor-checks.ts';
+import type { AttachmentMoves, CheckResult, RestorePlan } from './doctor-checks.ts';
 import type { OpContext, OpResult } from './common.ts';
 
 export const InitInput = z.strictObject({
@@ -395,8 +411,9 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     }
     const files: LoadedFile[] = [];
     const force = new Set<FileKind>();
-    // Damaged files swapped for their .bak in this run, with the damaged text.
-    const broken = new Map<FileKind, string | undefined>();
+    // Restores this run will write (with the commit below, never before it), and files that do not load and are not restored.
+    const restores: Array<{ plan: RestorePlan; line: number; error: string }> = [];
+    const notLoaded: string[] = [];
     for (const kind of FILE_KINDS) {
       const shaWarnings: string[] = [];
       let file: LoadedFile | undefined;
@@ -409,36 +426,64 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
         if (readFailure(storeFilePath(dir, kind)) !== undefined) {
           const refused = p.restore_backup ? '; not restored: it may be the newest version, fix the read error first' : '';
           add(`${kind}.json`, { ok: false, message: `${message}${loadFailureHint(err, true)}${refused}` });
+          notLoaded.push(`${kind}.json`);
           continue;
         }
         if (!p.restore_backup) {
           add(`${kind}.json`, { ok: false, message: `${message}${loadFailureHint(err, false)}` });
+          notLoaded.push(`${kind}.json`);
           continue;
         }
-        const restored = restoreFromBackup(dir, kind, now, lock);
-        add(`${kind}.json`, restored);
-        if (restored.fixed !== true) continue;
-        broken.set(kind, restored.broken);
-        file = readStoreFile(dir, kind, shaWarnings, { allowDuplicateIds: true });
+        const plan = planRestore(dir, kind, now);
+        if (!isRestorePlan(plan)) {
+          add(`${kind}.json`, plan);
+          notLoaded.push(`${kind}.json`);
+          continue;
+        }
+        // The line says "restored" now and is taken back below if the restore cannot be written.
+        restores.push({ plan, line: checks.length, error: message });
+        add(`${kind}.json`, { ok: false, fixed: true, message: plan.message });
+        file = plan.file;
       }
       files.push(file);
-      if (file.version > STORE_VERSION) add(`${kind}.json schema`, { ok: false, message: `${file.data.schema} is newer than ${STORE_SCHEMA}; upgrade laneboard` });
+      if (file.version > STORE_VERSION) {
+        add(`${kind}.json schema`, { ok: false, message: `${file.data.schema} is newer than ${STORE_SCHEMA}; upgrade laneboard` });
+        notLoaded.push(`${kind}.json (newer schema)`);
+      }
       if (contentSha(file.data.tasks) !== file.data.content_sha256) {
-        if (fix) force.add(kind);
+        // A restored file is rewritten anyway, with its checksum.
+        const accepted = fix || restores.some((r) => r.plan.kind === kind);
+        if (accepted) force.add(kind);
         add(`${kind}.json checksum`, {
           ok: false,
-          fixed: fix,
-          message: fix ? 'content_sha256 mismatch (hand edit): accepted and rewritten' : 'content_sha256 mismatch: the file was edited by hand; --fix accepts the edit',
+          fixed: accepted,
+          message: accepted ? 'content_sha256 mismatch (hand edit): accepted and rewritten' : 'content_sha256 mismatch: the file was edited by hand; --fix accepts the edit',
         });
       }
     }
-    const active = files.find((f) => f.kind === 'active');
-    const archive = files.find((f) => f.kind === 'archive');
-    if (!active || !archive || files.some((f) => f.version > STORE_VERSION)) return;
+    // A restore without what it implies (next_id floor, returned tasks) gives ids twice (A3): restore only when both files load.
+    // Nothing has been written yet.
+    if (notLoaded.length) {
+      for (const r of restores) {
+        checks[r.line] = {
+          name: `${r.plan.kind}.json`,
+          ok: false,
+          fixed: false,
+          message: `${r.error}; not restored, nothing was written: ${notLoaded.join(', ')} must load first (its line says how), then run laneboard doctor --restore-backup again`,
+        };
+      }
+      return;
+    }
+    const active = files.find((f) => f.kind === 'active') as LoadedFile;
+    const archive = files.find((f) => f.kind === 'archive') as LoadedFile;
     const data = { active: active.data, archive: archive.data };
 
-    // A restore is written even without --fix: it returns what only a .bak holds and keeps next_id above every id used (A3).
-    if (broken.size) add('after restore', recoverAfterRestore(dir, data, broken));
+    // A restore is written even without --fix, in one commit with what it returns and the next_id floor (A3).
+    if (restores.length) {
+      for (const r of restores) force.add(r.plan.kind);
+      const broken = new Map(restores.map((r) => [r.plan.kind, r.plan.current?.toString('utf8')]));
+      add('after restore', recoverAfterRestore(dir, data, broken, config.prefix));
+    }
 
     const archivedIds = new Set(archive.data.tasks.map((t) => t.id));
     const duplicates = unique(active.data.tasks.filter((t) => archivedIds.has(t.id)).map((t) => t.id));
@@ -451,11 +496,15 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
       });
     } else add('duplicates', { ok: true, message: 'no id in both files' });
 
+    // next_id above every id on the board and every id a damaged file kept by a restore still shows (a floor that never got written).
     const max = maxIdNumber(active.data.tasks, archive.data.tasks);
+    const kept = keptDamagedFloor(dir);
+    const needed = Math.max(max + 1, kept.floor);
     const nextId = active.data.next_id ?? 0;
-    if (nextId <= max) {
-      if (fix) active.data.next_id = max + 1;
-      add('next_id', { ok: false, fixed: fix, message: `next_id ${nextId} is not above the highest id number ${max}${fix ? `; set to ${max + 1}` : '; --fix sets it above'}` });
+    if (nextId < needed) {
+      if (fix) active.data.next_id = needed;
+      const why = needed > max + 1 ? `below ${needed}: ids up to ${config.prefix}-${needed - 1} were used (${kept.name})` : `not above the highest id number ${max}`;
+      add('next_id', { ok: false, fixed: fix, message: `next_id ${nextId} is ${why}${fix ? `; set to ${needed}` : '; --fix sets it above'}` });
     } else add('next_id', { ok: true, message: `next_id ${nextId} > highest id number ${max}` });
 
     // Two tasks with one id in a file (a git merge of the board, a hand edit): commands reach only the first one (A8).
@@ -465,7 +514,10 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     else if (!fix) add('duplicate ids', { ok: false, message: `one id on two tasks: ${repeats.join('; ')}; --fix gives the copy created later a new id` });
     else {
       const renamed = renumberRepeats(dir, data, config, { now, actor: ctx.actor ?? 'doctor', source: actorSourceOf(ctx) }, moves);
-      add('duplicate ids', { ok: false, fixed: true, message: `gave the later copy a new id: ${renamed.join(', ')}; links and subtasks naming the old id keep the first copy` });
+      const refs = renamed.references.length
+        ? `; these name the old id and now reach the first copy, check which one each meant: ${renamed.references.join(', ')}`
+        : '; no task names the old id';
+      add('duplicate ids', { ok: false, fixed: true, message: `gave the later copy a new id: ${renamed.changes.join(', ')}${refs}` });
     }
 
     // Every repair below deletes, moves or rewrites files: only while the lock is surely still ours.
@@ -488,17 +540,20 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     if (missing.length) add('attachment metadata', { ok: false, message: `metadata without file: ${missing.join(', ')}; remove each with laneboard attach <id> --remove <name>` });
     else add('attachment metadata', { ok: true, message: 'every attachment has its file' });
 
+    // Written before the slow report-only checks below, so hashing large attachments never pushes the commit past the lock deadline.
+    if (fix || restores.length) {
+      copyAttachments(dir, moves);
+      lock.assertHeld();
+      keepDamagedFiles(dir, restores.map((r) => r.plan));
+      commitFiles(dir, files, { now, lock, force });
+      removeMovedSources(moves);
+    }
+
     // Report only (A10): what a person decides, not doctor.
     add('attachment content', attachmentContent(dir, tasks));
     add('statuses', statusCheck(config, active.data.tasks));
     add('parents', parentCheck(active.data.tasks, archive.data.tasks));
     add('fields', fieldCheck(config, tasks));
-
-    if (fix || broken.size) {
-      copyAttachments(dir, moves);
-      commitFiles(dir, files, { now, lock, force });
-      removeMovedSources(moves);
-    }
   });
   return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings };
 }

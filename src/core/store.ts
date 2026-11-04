@@ -291,6 +291,11 @@ export function readStoreFile(storeDir: string, kind: FileKind, warnings: string
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new LaneboardError('STORE_INVALID', `${label} is missing in ${storeDir}`);
     throw unreadableStoreFile(file, label, err);
   }
+  return parseStoreFile(raw, file, kind, label, warnings, opts);
+}
+
+// A store file from its text (`file` and `label` name it in errors): doctor builds the restored file from the .bak's text this way.
+export function parseStoreFile(raw: string, file: string, kind: FileKind, label: string, warnings: string[], opts: StoreReadOptions = {}): LoadedFile {
   let json: unknown;
   try {
     // An editor may save a byte order mark (Windows Notepad); JSON.parse refuses it, the content is fine.
