@@ -315,24 +315,50 @@ describe('review S6h r2: the main checkout, a fix that never guesses, the shared
     const f = await json(r.main, ['finish', 'LB-1', '--status', 'review', '--result', 'done', '--as', 'dev-1']);
     expect(f.code).toBe(0);
     const relink = 'laneboard finish LB-1 --status review --commit <HEAD of your worktree> --result "<your result>" --as dev-1';
-    const unlink = `laneboard update LB-1 --remove-link commit=${mainHead} --as dev-1`;
     expect(worktreeWarnings(f.doc)).toEqual([
       `the linked commit ${mainHead.slice(0, 12)} is HEAD of ${r.main} (main), the main checkout, and other worktrees of this repository have commits since you claimed LB-1: ` +
-        `${wt2} (other) ${other.slice(0, 12)}, ${r.wt} (feat) ${work.slice(0, 12)}; if your work is in one of them, link the HEAD of yours (listed above): ${relink}, then drop the link of this one: ${unlink} ` +
+        `${wt2} (other) ${other.slice(0, 12)}, ${r.wt} (feat) ${work.slice(0, 12)}; if your work is in one of them, link the HEAD of yours (listed above): ${relink}; the link of this one stays: drop it by hand once you have checked which commit holds your work ` +
         '(next time run finish in that folder or pass --commit <sha>; MCP task_finish: cwd "<that folder>" or commit "<sha>")',
     ]);
     // No sha of another worktree in any command: the warning never picks one for the agent.
     expect(worktreeWarnings(f.doc)[0]).not.toContain(`commit=${other}`);
     expect(worktreeWarnings(f.doc)[0]).not.toContain('--add-link');
+    // The fix removes no link (run blindly, it must not leave the task without one).
+    expect(worktreeWarnings(f.doc)[0]).not.toContain('--remove-link');
     // Run as is, the placeholder is refused and nothing changes.
     const blind = await json(r.main, ['finish', 'LB-1', '--status', 'review', '--commit', '<HEAD of your worktree>', '--result', 'done', '--as', 'dev-1']);
     expect(blind.code).toBe(2);
     expect(blind.doc.error.code).toBe('INVALID_VALUE');
     expect(stored(r.s, 'LB-1').links).toEqual([{ kind: 'commit', ref: mainHead }]);
-    // With the agent's own sha: its commit linked, then the main checkout's HEAD unlinked.
+    // With the agent's own sha: its commit linked, the main checkout's HEAD stays linked.
     expect((await json(r.main, ['finish', 'LB-1', '--status', 'review', '--commit', work, '--result', 'done', '--as', 'dev-1'])).code).toBe(0);
-    expect((await json(r.main, unlink.split(' ').slice(1))).code).toBe(0);
-    expect(stored(r.s, 'LB-1').links).toEqual([{ kind: 'commit', ref: work }]);
+    expect(stored(r.s, 'LB-1').links).toEqual([{ kind: 'commit', ref: mainHead }, { kind: 'commit', ref: work }]);
+  });
+
+  it('the fix with 2 worktrees names the status finish set (done)', async () => {
+    const r = await repoWithWorktree();
+    const wt2 = path.join(tempDir(), 'wt2');
+    r.git(['worktree', 'add', '-q', wt2, '-b', 'other']);
+    await claimed(r);
+    r.wtGit(['commit', '-q', '--allow-empty', '-m', 'work'], inSeconds(60));
+    gitIn(wt2)(['commit', '-q', '--allow-empty', '-m', 'work of another agent'], inSeconds(120));
+    const f = await json(r.main, ['finish', 'LB-1', '--status', 'done', '--result', 'done', '--as', 'dev-1']);
+    expect(worktreeWarnings(f.doc)[0]).toContain('laneboard finish LB-1 --status done --commit <HEAD of your worktree>');
+  });
+
+  it('board in a subfolder of the main checkout, a worktree under it: the same project, no warning', async () => {
+    const main = tempDir();
+    const git = gitIn(main);
+    git(['init', '-q', '-b', 'main']);
+    git(['commit', '-q', '--allow-empty', '-m', 'first'], LONG_AGO);
+    const pkg = path.join(main, 'pkg');
+    fs.mkdirSync(pkg);
+    const env = { HOME: tempDir() };
+    expect((await json(pkg, ['init', '--name', 'p', '--prefix', 'PK', '--description', 'p', '--no-gitignore'], env)).code).toBe(0);
+    git(['worktree', 'add', '-q', 'pkg/wt', '-b', 'feat']);
+    const l = await json(path.join(pkg, 'wt'), ['list'], env);
+    expect(l.code).toBe(0);
+    expect(l.doc.warnings).toEqual([]);
   });
 
   it('setup --remove in a worktree keeps the shared exclude block while the setup of the main checkout stands; the last --remove takes it out', async () => {

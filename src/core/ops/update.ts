@@ -451,8 +451,8 @@ const WORKTREES_SHOWN = 3;
 // server started in the project root) without commit or cwd, and other worktrees of the repository have another HEAD committed since
 // the actor's work began (any, when that is unknown). It names the folder, its HEAD and those worktrees (newest first). The fix never
 // guesses (it may be run blindly, rule 13): one such worktree gets the exact relink command; with several only the agent knows which
-// one holds its work, so the command takes the sha of it as a placeholder (refused as is: --commit takes hex only) and the link of
-// this HEAD is removed only by a second command, after that. Finish from a linked worktree (also of a bare repository, which has no
+// one holds its work, so the command takes the sha of it as a placeholder (refused as is: --commit takes hex only), and
+// the link of this HEAD stays: the fix never removes a link (the owner or the agent drops it by hand after checking). Finish from a linked worktree (also of a bare repository, which has no
 // main checkout) links that worktree's HEAD and gets none. `status`: the task's status after finish, for the command.
 async function worktreeWarning(cwd: string, id: string, linked: string, workStart: string | undefined, actor: string, status: string): Promise<string | undefined> {
   const trees = await readWorktrees(cwd);
@@ -471,8 +471,8 @@ async function worktreeWarning(cwd: string, id: string, linked: string, workStar
   const fix =
     only !== undefined
       ? `if your work is in one of them, link its commit instead: laneboard update ${id} --remove-link commit=${linked} --add-link commit=${only.head} --as ${actor}`
-      : `if your work is in one of them, link the HEAD of yours (listed above): laneboard finish ${id} --status ${status} --commit <HEAD of your worktree> --result "<your result>" --as ${actor}, ` +
-        `then drop the link of this one: laneboard update ${id} --remove-link commit=${linked} --as ${actor}`;
+      : `if your work is in one of them, link the HEAD of yours (listed above): laneboard finish ${id} --status ${status} --commit <HEAD of your worktree> --result "<your result>" --as ${actor}; ` +
+        `the link of this one stays: drop it by hand once you have checked which commit holds your work`;
   return (
     `the linked commit ${linked.slice(0, 12)} is HEAD of ${trees.here} (${branch}), the main checkout, and ${which}: ${named.join(', ')}; ${fix} ` +
     `(next time run finish in that folder or pass --commit <sha>; MCP task_finish: cwd "<that folder>" or commit "<sha>")`
