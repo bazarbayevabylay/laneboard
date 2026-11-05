@@ -1,8 +1,8 @@
 // Public API of laneboard core: the only module facades (CLI, MCP, board, import) import (C2).
 export { ERRORS, ERROR_CODES, LaneboardError, toErrorObject, toLaneboardError } from './errors.ts';
 export type { BadInput, ErrorCode, ErrorObject, ErrorSpec, FixEdit } from './errors.ts';
-export { ACTOR_RE, ACTOR_SOURCES, CONFIG_SCHEMA, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
-export type { ConfigT, FieldType, LinkKind, LinkT, Scope, TaskEventT, TaskT } from './schema.ts';
+export { ACTOR_RE, ACTOR_SOURCES, CONFIG_SCHEMA, CONFIG_SCHEMA_V2, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
+export type { ConfigT, FieldType, LinkKind, LinkT, ReviewConfigT, Scope, TaskEventT, TaskT } from './schema.ts';
 export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MARKERS, resolveStore, samePath, separateProjectMarker, STORE_DIR_NAME } from './store.ts';
 export { forgetBoard, isLiveBoard, listBoards, liveBoards, readRegistry, registerStore, registryFile, resolveBoard, storeState } from './boards.ts';
 export type { BoardEntry, BoardInfo, BoardsResult, LiveBoard, MissingBoard } from './boards.ts';
@@ -16,7 +16,7 @@ export { shellQuote } from './shell.ts';
 export { LOCK_STALE_MS, LOCK_WAIT_MS } from './lock.ts';
 export { transact } from './transact.ts';
 export type { FaultPoint, Faults, State, TransactOptions } from './transact.ts';
-export { COMMENT_LINE_MAX, DEFAULT_LIST_LIMIT, fieldsLine, finalStatuses, lastComment, MAX_COMMENT_CHARS, parseLinkArg, suggestClosest, WAITING_OWNER_LABEL, writeReply } from './ops/common.ts';
+export { COMMENT_LINE_MAX, DEFAULT_LIST_LIMIT, fieldsLine, finalStatuses, lastComment, MAX_COMMENT_CHARS, parseLinkArg, reviewers, reviewStatuses, suggestClosest, WAITING_OWNER_LABEL, writeReply } from './ops/common.ts';
 export type { FieldInfo, LastComment, OpContext, OpResult, TaskView, WriteFacts, WriteReply } from './ops/common.ts';
 export { CreateInput, createTask } from './ops/create.ts';
 export type { CreateInputT } from './ops/create.ts';

@@ -62,7 +62,7 @@ describe('config validation', () => {
     fs.writeFileSync(file, JSON.stringify({ ...config, limits: { ...config.limits, event_per_task: 5 } }));
     const err = await rejectsWith(listTasks(as(s), {}), 'STORE_INVALID');
     expect(err.message).toContain('config.json limits');
-    fs.writeFileSync(file, JSON.stringify({ ...config, schema: 'laneboard/config@2' }));
+    fs.writeFileSync(file, JSON.stringify({ ...config, schema: 'laneboard/config@3' }));
     await rejectsWith(listTasks(as(s), {}), 'STORE_TOO_NEW');
   });
 
