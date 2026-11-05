@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { z } from 'zod';
 import { LaneboardError } from './errors.ts';
 import { shellQuote } from './shell.ts';
-import { CONFIG_SCHEMA, CONFIG_VERSION, Config } from './schema.ts';
+import { CONFIG_SCHEMA, CONFIG_SCHEMA_V2, CONFIG_V2_KEYS, CONFIG_VERSION, CONFIG_VERSION_MAX, Config, ConfigV2, ReviewConfig } from './schema.ts';
 import type { ConfigT } from './schema.ts';
 
 export const DEFAULT_PREFIX = 'LB';
@@ -101,13 +101,78 @@ export function schemaVersion(value: unknown): number {
   return m ? Number(m[1]) : 0;
 }
 
-// Check a full config object; returns it or throws STORE_INVALID / STORE_TOO_NEW.
-export function validateConfig(json: unknown, label: string): ConfigT {
-  const version = schemaVersion((json as { schema?: unknown } | null)?.schema);
-  if (version > CONFIG_VERSION) {
-    throw new LaneboardError('STORE_TOO_NEW', `${label} is ${String((json as { schema: unknown }).schema)}; this laneboard supports ${CONFIG_SCHEMA}`);
+// A JSON object (not an array, not null)?
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Keys of a config object that config@2 does not know (kept from a newer laneboard: written back as they are, with a warning).
+function unknownKeys(json: object): string[] {
+  return Object.keys(json).filter((k) => !Object.hasOwn(ConfigV2.shape, k));
+}
+
+// The schema a config is written with: config@2 when it holds a config@2 key or a key kept from a newer laneboard, else config@1,
+// which 0.3.1 reads (owner TG 8723: a board without the new keys stays as it was; turning them all off writes config@1 again).
+export function configSchemaFor(config: ConfigT): string {
+  const v2 = CONFIG_V2_KEYS.some((k) => config[k] !== undefined) || unknownKeys(config).length > 0;
+  return v2 ? CONFIG_SCHEMA_V2 : CONFIG_SCHEMA;
+}
+
+// The checks of a board (config.review) that do not fit its statuses, or undefined: each one a status of the board, listed once,
+// neither the first (new tasks start there) nor the final one (a checker's finish ends there), and checkers listed once.
+export function reviewProblem(config: Pick<ConfigT, 'statuses' | 'review'>): string | undefined {
+  const review = config.review;
+  if (review === undefined) return undefined;
+  const first = config.statuses[0];
+  const final = config.statuses.at(-1);
+  const seen = new Set<string>();
+  for (const status of review.statuses) {
+    if (!config.statuses.includes(status)) return `review status "${status}" is not a status of this board (${config.statuses.join(', ')})`;
+    if (status === first) return `review status "${status}" is the starting status, where new tasks begin`;
+    if (status === final) return `review status "${status}" is the final status, where a check ends`;
+    if (seen.has(status)) return `review status "${status}" is listed twice`;
+    seen.add(status);
   }
-  const parsed = Config.safeParse(json);
+  const by = review.by ?? [];
+  const twice = by.find((name, i) => by.indexOf(name) !== i);
+  return twice === undefined ? undefined : `reviewer "${twice}" is listed twice`;
+}
+
+// Statuses a check can be: those between the first and the final one.
+export function middleStatuses(statuses: readonly string[]): string[] {
+  return statuses.slice(1, -1);
+}
+
+// Check a full config object; returns it or throws STORE_INVALID / STORE_TOO_NEW. config@1 has exactly the 0.3.1 keys; config@2 may
+// add the optional review and create_by, and keeps keys of a newer laneboard as they are with a warning in `warnings` (so a key added
+// after 0.4.0 needs no config@3: S6j, PM).
+export function validateConfig(json: unknown, label: string, warnings?: string[]): ConfigT {
+  const version = schemaVersion((json as { schema?: unknown } | null)?.schema);
+  if (version > CONFIG_VERSION_MAX) {
+    throw new LaneboardError('STORE_TOO_NEW', `${label} is ${String((json as { schema: unknown }).schema)}; this laneboard supports ${CONFIG_SCHEMA} and ${CONFIG_SCHEMA_V2}`);
+  }
+  if (version <= CONFIG_VERSION && json !== null && typeof json === 'object') {
+    const v2Key = CONFIG_V2_KEYS.find((k) => Object.hasOwn(json, k));
+    if (v2Key !== undefined) {
+      throw new LaneboardError('STORE_INVALID', `${label} ${v2Key}: a key of ${CONFIG_SCHEMA_V2}, but the file says ${CONFIG_SCHEMA}`, {
+        fix: `set "schema": "${CONFIG_SCHEMA_V2}" in ${label} (laneboard 0.3.1 cannot read it then), or remove ${v2Key}`,
+      });
+    }
+  }
+  let known = json;
+  if (version === CONFIG_VERSION_MAX && json !== null && typeof json === 'object' && !Array.isArray(json)) {
+    const top = unknownKeys(json);
+    known = Object.fromEntries(Object.entries(json).filter(([k]) => !top.includes(k)));
+    // Inside review too (review r1): a later key there (say, a checker per step) is kept and not read, as at the top level.
+    const review = (known as { review?: unknown }).review;
+    const nested = isPlainObject(review) ? Object.keys(review).filter((k) => !Object.hasOwn(ReviewConfig.shape, k)) : [];
+    if (isPlainObject(review) && nested.length) {
+      known = { ...(known as Record<string, unknown>), review: Object.fromEntries(Object.entries(review).filter(([k]) => !nested.includes(k))) };
+    }
+    const extra = [...top, ...nested.map((k) => `review.${k}`)];
+    if (extra.length) warnings?.push(`${label} has keys this laneboard does not know (${extra.join(', ')}), likely from a newer laneboard; they are kept as they are`);
+  }
+  const parsed = (version === CONFIG_VERSION_MAX ? ConfigV2 : Config).safeParse(known);
   if (!parsed.success) {
     throw new LaneboardError('STORE_INVALID', describeIssue(parsed.error, label), {
       fix: `edit ${label} to match schema/config.json (unknown keys are rejected)`,
@@ -120,6 +185,13 @@ export function validateConfig(json: unknown, label: string): ConfigT {
       throw new LaneboardError('STORE_INVALID', `${label} statuses: duplicate "${status}"`, { fix: `remove the duplicate status from ${label}` });
     }
     seen.add(status);
+  }
+  const problem = reviewProblem(config);
+  if (problem !== undefined) {
+    const middle = middleStatuses(config.statuses);
+    throw new LaneboardError('STORE_INVALID', `${label} ${problem}`, {
+      fix: `edit review.statuses in ${label}: statuses between the first and the final one${middle.length ? ` (${middle.join(', ')})` : ''}, each once; or remove review`,
+    });
   }
   return config;
 }
@@ -158,8 +230,8 @@ export function unreadableStoreFile(file: string, label: string, err: unknown): 
   return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix: `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor` });
 }
 
-// Read and validate config.json fresh from disk.
-export function loadConfig(storeDir: string): ConfigT {
+// Read and validate config.json fresh from disk; `warnings` gets the note about keys kept from a newer laneboard.
+export function loadConfig(storeDir: string, warnings?: string[]): ConfigT {
   const file = configPath(storeDir);
   let raw: string;
   try {
@@ -178,5 +250,5 @@ export function loadConfig(storeDir: string): ConfigT {
   } catch (err) {
     throw new LaneboardError('STORE_INVALID', `config.json is not valid JSON: ${(err as Error).message}`, { fix: `fix the JSON syntax in ${file}` });
   }
-  return validateConfig(json, 'config.json');
+  return validateConfig(json, 'config.json', warnings);
 }

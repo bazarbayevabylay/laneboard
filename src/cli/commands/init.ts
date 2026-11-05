@@ -1,5 +1,7 @@
 // laneboard init
 import { initStore, initTarget } from '../../core/index.ts';
+import type { ConfigT } from '../../core/index.ts';
+import { HARNESS_NAMES } from '../../setup/index.ts';
 import { shellQuote } from '../format.ts';
 import { commaList, flag, str } from './args.ts';
 import type { CommandDef } from './types.ts';
@@ -8,6 +10,21 @@ import type { CommandDef } from './types.ts';
 // keeps --dir: without it the next command would find another store (LANEBOARD_DIR of a parent folder, a walk-up).
 function nextStep(target: string, byDir: boolean): string {
   return byDir ? `laneboard prime --dir ${shellQuote(target)}` : 'laneboard prime';
+}
+
+// The command that connects the agent's harness to the new board (hooks, MCP, the instruction block), before prime (A-U5): an agent
+// that runs `next` alone would work on a board its harness does not know.
+function setupCommand(target: string, byDir: boolean): string {
+  return `laneboard setup <${HARNESS_NAMES.join('|')}>${byDir ? ` --dir ${shellQuote(target)}` : ''}`;
+}
+
+// The checks line of a new board (P1, A-U5): init turns none on (config@2 only by the owner's choice, TG 8723), so it names the
+// command that does, with a middle status of the board (review when there is one); nothing for a board of two statuses.
+function checksHint(config: ConfigT, target: string, byDir: boolean): string {
+  const middle = config.statuses.slice(1, -1);
+  if (middle.length === 0) return '';
+  const status = middle.includes('review') ? 'review' : '<status>';
+  return `checks: none, an assignee's finish closes its task; to hand in for a check first: laneboard config --review-statuses ${status} [--reviewers <names>]${byDir ? ` --dir ${shellQuote(target)}` : ''}\n`;
 }
 
 // The command that changes the prefix of the new (still empty) board, with --dir when the board was made by --dir.
@@ -55,6 +72,8 @@ export const init: CommandDef = {
       human:
         `initialized ${r.data.store} (${cfg.name ?? '-'}, prefix ${cfg.prefix}; statuses: ${cfg.statuses.join(', ')})\n  ${cfg.description ?? ''}\n` +
         `ids: ${cfg.prefix}-1, ${cfg.prefix}-2, ...; another prefix while the board has no task: ${prefixCommand(target, c.discovery.dir !== undefined)}\n` +
+        checksHint(cfg, target, c.discovery.dir !== undefined) +
+        `setup: ${setupCommand(target, c.discovery.dir !== undefined)} connects your agent (hooks, MCP), once per project\n` +
         `next: ${next} (agent rules, this board and the command that creates your task)`,
     };
   },

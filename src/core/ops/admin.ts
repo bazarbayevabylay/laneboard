@@ -2,19 +2,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { buildConfig, configPath, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, serializeConfig, validateConfig } from '../config.ts';
+import { buildConfig, configPath, configSchemaFor, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, middleStatuses, reviewProblem, serializeConfig, validateConfig } from '../config.ts';
 import { ERRORS, LaneboardError } from '../errors.ts';
 import { shellQuote } from '../shell.ts';
 import { ensureDir, listOrphanTmp, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { checkPrefixFree, prefixTaken, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FIELD_KEY_RE, FIELD_TYPES, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
-import type { ConfigT, FieldDefT, FieldType, FileKind, TaskT } from '../schema.ts';
+import type { ConfigT, FieldDefT, FieldType, FileKind, ReviewConfigT, TaskT } from '../schema.ts';
 import { contentSha, dedupeFiles, emptyStoreFile, maxIdNumber, readStoreFile, samePath, serializeStoreFile, STORE_DIR_NAME, storeFilePath } from '../store.ts';
 import type { LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { actorSourceOf, fieldInfo, fieldsLine, matchesType, parseInput, suggestClosest, unique } from './common.ts';
+import { actorSourceOf, checkActor, fieldInfo, fieldsLine, matchesType, parseInput, suggestClosest, unique } from './common.ts';
 import {
   attachmentContent,
   copyAttachments,
@@ -219,6 +219,13 @@ export const ConfigureInput = z.strictObject({
   fields: z.array(z.string()).optional(),
   // Declared fields to remove (`config --drop-field`); no active task may hold a value of one.
   drop_fields: z.array(z.string()).optional(),
+  // The checks of the board in order (`config --review-statuses a,b`, P1): statuses between the first and the final one; null turns
+  // checks off (`none`). Writes config@2 (0.3.1 cannot read it); with no config@2 key left, config@1 again.
+  review_statuses: z.array(z.string()).min(1).nullable().optional(),
+  // Who passes a handed-in task on and accepts it (`config --reviewers a,b`); null: anybody but its assignee (`none`). Needs checks.
+  reviewers: z.array(z.string()).min(1).nullable().optional(),
+  // Who creates tasks on this board (`config --creators a,b`, P2: checked from S6m on); null: anybody (`none`).
+  creators: z.array(z.string()).min(1).nullable().optional(),
 });
 export type ConfigureInputT = z.infer<typeof ConfigureInput>;
 
@@ -230,6 +237,10 @@ export interface ConfigureResult {
   statuses: string[];
   // Declared task fields (config.fields): type and optional description per key.
   fields: Record<string, FieldDefT>;
+  // The checks and checkers (config@2 review), only when the board has them.
+  review?: { statuses: string[]; by: string[] };
+  // Who creates tasks (config@2 create_by), only when the board limits it.
+  create_by?: string[];
   // Whether config.json was rewritten.
   changed: boolean;
 }
@@ -421,6 +432,42 @@ function archivedFieldWarnings(uses: readonly FieldUse[]): string[] {
   );
 }
 
+// The checks after `config --review-statuses` / `--reviewers`: null statuses turn them off; reviewers need checks (now or already on).
+function nextReview(current: ReviewConfigT | undefined, statuses: string[] | null | undefined, by: string[] | null | undefined): ReviewConfigT | undefined {
+  if (statuses === null) return undefined;
+  const base = statuses === undefined ? current : { ...current, statuses: [...statuses], by: current?.by ?? [] };
+  if (base === undefined) {
+    if (by === null || by === undefined) return undefined;
+    throw new LaneboardError('INVALID_VALUE', 'reviewers check tasks in the checks of the board, and it has none', {
+      input: { field: 'reviewers', value: by.join(',') },
+      fix: `laneboard config --review-statuses <status between the first and the final one> --reviewers ${by.join(',')}`,
+    });
+  }
+  // `...base` keeps keys of a newer laneboard inside review (review r1): they are not read here, only written back.
+  return by === undefined ? { ...base, statuses: base.statuses, by: base.by ?? [] } : { ...base, statuses: base.statuses, by: by === null ? [] : unique(by) };
+}
+
+// INVALID_VALUE when the checks do not fit the statuses (a status missing, the first or the final one, listed twice); the fix keeps
+// the checks that still fit, or turns them off.
+function checkReview(config: ConfigT, statusesGiven: boolean): void {
+  const problem = reviewProblem(config);
+  if (problem === undefined) return;
+  const middle = middleStatuses(config.statuses);
+  const kept = unique((config.review?.statuses ?? []).filter((st) => middle.includes(st)));
+  const statusesPart = statusesGiven ? ` --statuses ${config.statuses.join(',')}` : '';
+  throw new LaneboardError('INVALID_VALUE', `${problem}; a check is a status between the first and the final one${middle.length ? ` (${middle.join(', ')})` : ''}`, {
+    input: { field: 'review_statuses', value: (config.review?.statuses ?? []).join(',') },
+    fix: `laneboard config${statusesPart} --review-statuses ${kept.length ? kept.join(',') : 'none'}`,
+  });
+}
+
+// The warning of a config that changed its schema version: config@2 is not readable by laneboard 0.3.1 (STORE_TOO_NEW there).
+function schemaChanged(schema: string): string {
+  return schema.endsWith('@1')
+    ? `config.json is ${schema} again (no checks, no creators): laneboard 0.3.1 reads this board again`
+    : `config.json is now ${schema}: laneboard 0.3.1 refuses this board (STORE_TOO_NEW) until it is updated (npm i -g laneboard@latest); turn the new keys off to go back`;
+}
+
 // Show or change the board name, description, prefix, statuses and fields (`laneboard config`); the prefix changes only while the board
 // has no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it; a field is
 // dropped, or gets a new type, only when no active task holds a value it would leave undeclared or of another type. Name,
@@ -430,7 +477,8 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
   const warnings: string[] = [];
   const registers = p.name !== undefined || p.description !== undefined || p.prefix !== undefined;
   const fieldsChange = p.fields !== undefined || p.drop_fields !== undefined;
-  const change = registers || p.statuses !== undefined || fieldsChange;
+  const reviewChange = p.review_statuses !== undefined || p.reviewers !== undefined;
+  const change = registers || p.statuses !== undefined || fieldsChange || reviewChange || p.creators !== undefined;
   if (change && ctx.store.readOnly) {
     throw new LaneboardError('STORE_READ_ONLY', `${ctx.store.dir} was opened with --board, which is read-only`, { fix: 'change your own board without --board' });
   }
@@ -441,13 +489,17 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
   const specs = (p.fields ?? []).map(parseFieldSpec);
   const drops = unique(p.drop_fields ?? []);
   checkFieldOptions(specs, drops);
-  const read = (): ConfigT => loadConfig(ctx.store.dir);
+  for (const name of p.reviewers ?? []) checkActor(name, 'reviewers');
+  for (const name of p.creators ?? []) checkActor(name, 'creators');
+  const read = (): ConfigT => loadConfig(ctx.store.dir, warnings);
   const result = (config: ConfigT, changed: boolean): ConfigureResult => ({
     name: config.name ?? null,
     description: config.description ?? null,
     prefix: config.prefix,
     statuses: [...config.statuses],
     fields: { ...config.fields },
+    ...(config.review !== undefined ? { review: { statuses: [...config.review.statuses], by: [...(config.review.by ?? [])] } } : {}),
+    ...(config.create_by !== undefined ? { create_by: [...config.create_by] } : {}),
     changed,
   });
   if (!change) return { data: result(read(), false), warnings };
@@ -480,30 +532,41 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
         // Archived tasks are read-only and do not block, as for a dropped status; doctor checks the fields of active tasks only.
         warnings.push(...archivedFieldWarnings(fieldUses(before.fields, specs, drops, archived)));
       }
-      const next = validateConfig(
-        {
-          ...before,
-          ...(name !== undefined ? { name } : {}),
-          ...(description !== undefined ? { description } : {}),
-          ...(prefix !== undefined ? { prefix } : {}),
-          ...(statuses !== undefined ? { statuses } : {}),
-          ...(fieldsChange ? { fields: nextFields(before.fields, specs, drops) } : {}),
-        },
-        'config.json',
-      );
+      const merged: ConfigT = {
+        ...before,
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(prefix !== undefined ? { prefix } : {}),
+        ...(statuses !== undefined ? { statuses } : {}),
+        ...(fieldsChange ? { fields: nextFields(before.fields, specs, drops) } : {}),
+      };
+      if (reviewChange) {
+        const review = nextReview(before.review, p.review_statuses, p.reviewers);
+        if (review === undefined) delete merged.review;
+        else merged.review = review;
+      }
+      if (p.creators === null) delete merged.create_by;
+      else if (p.creators !== undefined) merged.create_by = unique(p.creators);
+      checkReview(merged, p.statuses !== undefined);
+      // config@2 only while a config@2 key is on (owner TG 8723); turning them off writes config@1 again, which 0.3.1 reads.
+      const next = validateConfig({ ...merged, schema: configSchemaFor(merged) }, 'config.json');
       if (serializeConfig(next) === serializeConfig(before)) return result(before, false);
       lock.assertHeld();
       writeFileAtomic(configPath(ctx.store.dir), serializeConfig(next), 0o644);
       const final = finalChanged(before.statuses, next.statuses, active);
       if (final !== undefined) warnings.push(final);
+      if (next.schema !== before.schema) warnings.push(schemaChanged(next.schema));
       return result(next, true);
     });
   // The registry holds no statuses: a status change alone leaves it alone.
-  if (!registers) return { data: await write(), warnings };
+  if (!registers) {
+    const data = await write();
+    return { data, warnings: unique(warnings) };
+  }
   if (ctx.home === undefined) {
     const data = await write();
     warnings.push(`HOME is not set, so the machine registry (laneboard boards) was not updated${prefix !== undefined ? ' and the prefix was not checked against other boards' : ''}`);
-    return { data, warnings };
+    return { data, warnings: unique(warnings) };
   }
   // Like init, the registry lock is held around the prefix check and the write, so two boards cannot take one prefix. An unchanged
   // prefix is checked too: a copied project folder must not register a second board with the same ids (review S5c MINOR); the board
@@ -520,7 +583,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
     const entry = { path: ctx.store.dir, prefix: written.prefix, name: written.name, description: written.description, registered_at: new Date().toISOString() };
     return { entries: upsertEntry(entries, entry), result: written };
   });
-  return { data, warnings };
+  return { data, warnings: unique(warnings) };
 }
 
 export interface MigrateResult {
@@ -584,7 +647,8 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     const now = new Date().toISOString();
     let config: ConfigT;
     try {
-      config = loadConfig(dir);
+      // Keys kept from a newer laneboard (config@2) are a warning of this check, not a failure.
+      config = loadConfig(dir, warnings);
       add('config', { ok: true, message: 'valid' });
     } catch (err) {
       add('config', { ok: false, message: (err as Error).message });

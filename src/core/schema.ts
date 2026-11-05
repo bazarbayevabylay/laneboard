@@ -3,8 +3,12 @@ import { z } from 'zod';
 
 export const STORE_SCHEMA = 'laneboard/store@1';
 export const STORE_VERSION = 1;
+// config@1 is what every board without the optional keys of config@2 keeps (0.3.1 reads it); config@2 is written only when the owner
+// turns one of them on (review, create_by), so a board without them stays readable by 0.3.1 (ADR §24, owner TG 8723).
 export const CONFIG_SCHEMA = 'laneboard/config@1';
 export const CONFIG_VERSION = 1;
+export const CONFIG_SCHEMA_V2 = 'laneboard/config@2';
+export const CONFIG_VERSION_MAX = 2;
 
 export const ID_RE = /^[A-Z][A-Z0-9]{0,9}-[1-9][0-9]*$/;
 export const PREFIX_RE = /^[A-Z][A-Z0-9]{0,9}$/;
@@ -123,19 +127,37 @@ export const Config = z
   })
   .meta({ title: 'laneboard config (.laneboard/config.json)' });
 
+// Checks of a board (P1, S6j): the statuses a handed-in task passes through in order, and who may pass or accept it (empty or
+// absent: anybody but the assignee). The assignee's finish hands in to the first one; a checker's finish passes the task on to the
+// next one, from the last one to the final status (accepted).
+export const ReviewConfig = z.strictObject({
+  statuses: z.array(z.string().regex(STATUS_RE)).min(1),
+  by: z.array(Actor).optional(),
+});
+
+// The config@2 keys, each optional (owner TG 8723): review (P1) and create_by (who creates tasks, P2; checked from S6m on).
+export const CONFIG_V2_KEYS = ['review', 'create_by'] as const;
+
+// config@2: config@1 plus the optional keys; its JSON Schema is schema/config.json (a config@1 file is the same without them).
+export const ConfigV2 = Config.extend({
+  review: ReviewConfig.optional(),
+  create_by: z.array(Actor).min(1).optional(),
+}).meta({ title: 'laneboard config (.laneboard/config.json)' });
+
 export type LinkT = z.infer<typeof Link>;
 export type AttachmentT = z.infer<typeof Attachment>;
 export type TaskEventT = z.infer<typeof TaskEvent>;
 export type TaskT = z.infer<typeof Task>;
 export type StoreFileT = z.infer<typeof StoreFile>;
 export type FieldDefT = z.infer<typeof FieldDef>;
-export type ConfigT = z.infer<typeof Config>;
+export type ConfigT = z.infer<typeof ConfigV2>;
+export type ReviewConfigT = z.infer<typeof ReviewConfig>;
 
 // JSON Schema documents generated from the zod schemas, keyed by output file name.
 export function jsonSchemas(): Record<string, unknown> {
   return {
     'task.json': z.toJSONSchema(Task, { target: 'draft-2020-12' }),
     'store.json': z.toJSONSchema(StoreFile, { target: 'draft-2020-12' }),
-    'config.json': z.toJSONSchema(Config, { target: 'draft-2020-12' }),
+    'config.json': z.toJSONSchema(ConfigV2, { target: 'draft-2020-12' }),
   };
 }

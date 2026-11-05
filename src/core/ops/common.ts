@@ -169,6 +169,17 @@ export function finalStatuses(statuses: readonly string[]): string[] {
   return last === undefined ? [] : [last];
 }
 
+// The check statuses of a board in order (config review.statuses, P1); empty without checks, and then finish, update and the marks
+// work as in 0.3.1 (ADR §22).
+export function reviewStatuses(config: ConfigT): string[] {
+  return [...(config.review?.statuses ?? [])];
+}
+
+// Who passes a handed-in task on or accepts it on a board with checks (config review.by); empty: anybody but its assignee.
+export function reviewers(config: ConfigT): string[] {
+  return [...(config.review?.by ?? [])];
+}
+
 // The event that gave the task its current assignee (the newest `assigned` event, else `created`); undefined for an unassigned task
 // or when that event was dropped by the events limit.
 export function assignmentEvent(task: TaskT): TaskEventT | undefined {
@@ -612,6 +623,9 @@ export interface WriteFacts {
   resumed_from?: string;
   commit?: string | null;
   accepted?: true;
+  // On a board with checks (P1): finish by a checker passed the task on to the next check, and the status it came from (also of an acceptance).
+  passed?: true;
+  from?: string;
 }
 
 // Explicit mapping of a task view to the short write reply; `attached`: the write added an attachment (attach appends it last).
@@ -622,6 +636,8 @@ export function writeReply(task: TaskView, attached = false, facts: WriteFacts =
   if (facts.resumed_from !== undefined) reply.resumed_from = facts.resumed_from;
   if (facts.commit !== undefined) reply.commit = facts.commit;
   if (facts.accepted === true) reply.accepted = true;
+  if (facts.passed === true) reply.passed = true;
+  if (facts.from !== undefined) reply.from = facts.from;
   return reply;
 }
 
