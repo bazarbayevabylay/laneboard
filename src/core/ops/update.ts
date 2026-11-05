@@ -460,12 +460,18 @@ export function reviewRefusalText(config: ConfigT, refusal: ReviewRefusal, to: s
   return `${checks}: the author of the work hands it in to ${review[0] ?? ''} with finish, a checker passes it on and accepts it`;
 }
 
+// Is `task` waiting for a check: handed in or passed on, or unassigned and waiting by its events (the author handed it in, then
+// unassigned it: review r2). One condition for checkerFinish and prime's queue (waitsForCheck).
+function awaitsCheck(task: TaskT): boolean {
+  return handedIn(task) || (task.assignee === null && waitingByEvents(task));
+}
+
 // Does `task` wait in a check that `actor` may make (prime's queue for checkers, B-U6): it is in a check status, handed in or passed
 // on (an unassigned one by its events, as checkerFinish), `actor` is in review.by (when set), is not the author of the work (workedOn)
 // and did not pass it on into this status itself (its finish there changes nothing).
 export function waitsForCheck(config: ConfigT, task: TaskT, actor: string): boolean {
   if (!reviewStatuses(config).includes(task.status)) return false;
-  if (!handedIn(task) && !(task.assignee === null && waitingByEvents(task))) return false;
+  if (!awaitsCheck(task)) return false;
   const by = reviewers(config);
   return (by.length === 0 || by.includes(actor)) && !workedOn(task, actor) && passedBy(task) !== actor;
 }
@@ -698,8 +704,7 @@ function checkerFinish(
   const by = reviewers(s.config);
   if (by.length > 0 && !by.includes(actor)) throw refused(notChecker(id, task.assignee, actor, by));
   // An unassigned task waits for the check by its events (the author handed it in, then unassigned it: review r2).
-  const waiting = handedIn(task) || (task.assignee === null && waitingByEvents(task));
-  if (!waiting) throw refused(notHandedInForCheck(id, holder, task.status, actor, review[0] ?? ''));
+  if (!awaitsCheck(task)) throw refused(notHandedInForCheck(id, holder, task.status, actor, review[0] ?? ''));
   if (passedBy(task) === actor && (p.status === undefined || p.status === task.status)) {
     warnings.push(`no changes: ${id} is already ${task.status}, where you passed it on (finish repeated); to pass it on yourself again, name the status: laneboard finish ${id} --status ${next} --result "<result of your check>"; ${notRecorded}`);
     return { done: false, passed: false };

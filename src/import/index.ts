@@ -1,6 +1,6 @@
 // `laneboard import markdown|json|checklist`: read source files, map them by the options, hand them to the core import op (one write, idempotent).
 import path from 'node:path';
-import { finalStatuses, importTasks, LaneboardError, loadConfig, shellQuote } from '../core/index.ts';
+import { finalStatuses, importTasks, LaneboardError, loadConfig, shellQuote, workStatusBeforeChecks } from '../core/index.ts';
 import type { ImportResult, OpContext } from '../core/index.ts';
 import { mapChecklist, mapRecords } from './mapping.ts';
 import type { Mapped, MappingOptions, MappingProblem } from './mapping.ts';
@@ -42,7 +42,8 @@ export interface ImportData extends ImportResult {
 }
 
 // How to resolve the problems the core listed, with this command's flags (only the kinds that occurred).
-function problemsFix(details: Record<string, unknown>, format: ImportFormat): string {
+// `checkedRerun`: for a checklist, the same import with --done-status the work status, when a checked item is refused by the checks.
+function problemsFix(details: Record<string, unknown>, format: ImportFormat, checkedRerun?: string): string {
   const has = (key: string): boolean => Array.isArray(details[key]) && (details[key] as unknown[]).length > 0;
   const steps: string[] = [];
   if (has('unknown_fields')) {
@@ -54,6 +55,9 @@ function problemsFix(details: Record<string, unknown>, format: ImportFormat): st
         ? 'pass --status (open items) and --done-status (checked items) with statuses from details.statuses'
         : 'for each value in details.unknown_statuses: pass --status-map <value>=<status from details.statuses>',
     );
+  }
+  if (checkedRerun !== undefined && Array.isArray(details.invalid) && (details.invalid as Array<{ field?: string }>).some((p) => p.field === 'status')) {
+    steps.push(`a checked item cannot skip the checks: import checked items before them with ${checkedRerun}`);
   }
   if (has('invalid')) steps.push(format === 'checklist' ? 'correct each item in details.invalid in its file (source is <file>#<item text>)' : 'correct each value in details.invalid in its source file');
   return `${steps.join('; ')}; then run the same import again (--dry-run checks without writing)`;
@@ -82,14 +86,14 @@ function checklistHint(ctx: OpContext, root: string, o: ImportOptions, checklist
 }
 
 // Hand mapped tasks to the core; the fix of a core problem list names this command's flags.
-async function importMapped(ctx: OpContext, mapped: Mapped, format: ImportFormat, dryRun: boolean): Promise<{ data: ImportResult; warnings: string[] }> {
+async function importMapped(ctx: OpContext, mapped: Mapped, format: ImportFormat, dryRun: boolean, checkedRerun?: string): Promise<{ data: ImportResult; warnings: string[] }> {
   if (mapped.problems.length) throw mappingError(mapped.problems);
   try {
     return await importTasks(ctx, { tasks: mapped.tasks, dry_run: dryRun });
   } catch (err) {
     // The core lists unknown keys and statuses; the fix names this command's flags for them.
     if (err instanceof LaneboardError && err.details && 'unknown_fields' in err.details) {
-      throw new LaneboardError(err.code, err.message, { ...(err.allowed ? { allowed: err.allowed } : {}), details: err.details, fix: problemsFix(err.details, format) });
+      throw new LaneboardError(err.code, err.message, { ...(err.allowed ? { allowed: err.allowed } : {}), details: err.details, fix: problemsFix(err.details, format, checkedRerun) });
     }
     throw err;
   }
@@ -100,14 +104,18 @@ export async function runImport(ctx: OpContext, o: ImportOptions | ChecklistImpo
   const root = path.dirname(path.resolve(ctx.store.dir));
   const records = await readSources(o.format, o.target, root, o.exclude);
   let mapped: Mapped;
+  let checkedRerun: string | undefined;
   if (o.format === 'checklist') {
     // A checked item takes the board's final status unless --done-status names another.
     const doneStatus = o.doneStatus ?? finalStatuses(loadConfig(ctx.store.dir).statuses).at(-1) ?? o.status;
     mapped = mapChecklist(records, { status: o.status, doneStatus, headingLabels: o.headingLabels });
+    const config = loadConfig(ctx.store.dir);
+    const work = workStatusBeforeChecks(config) ?? config.statuses[0] ?? o.status;
+    checkedRerun = ['laneboard import checklist', shellQuote(o.shown ?? o.target), '--status', shellQuote(o.status), '--done-status', shellQuote(work), ...(o.headingLabels ? ['--heading-labels'] : []), ...o.exclude.flatMap((e) => ['--exclude', shellQuote(e)]), ...(o.dryRun ? ['--dry-run'] : [])].join(' ');
   } else {
     mapped = mapRecords(records, { ...o, actor: ctx.actor ?? 'import', now: new Date().toISOString() });
   }
-  const result = await importMapped(ctx, mapped, o.format, o.dryRun);
+  const result = await importMapped(ctx, mapped, o.format, o.dryRun, checkedRerun);
   const warnings = [...result.warnings];
   if (mapped.ignored.length) {
     const why = o.format === 'checklist' ? 'no checklist items' : 'no YAML frontmatter';

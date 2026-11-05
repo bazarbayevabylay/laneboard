@@ -176,6 +176,19 @@ describe('S6j tail: create and import right past the checks follow the author ru
     expect(await ids(s)).toEqual(['API-1']);
     expect((await run(s, 'orch', ['import', 'checklist', 'TODO.md', '--status', 'ready'])).doc.data.created).toHaveLength(2);
   });
+
+  it('import checklist: a refused checked item gets a fix with --done-status the work status, and that fix runs (review r1)', async () => {
+    const s = await board();
+    fs.writeFileSync(path.join(s.root, 'TODO.md'), '# T\n- [x] shipped\n- [ ] open\n');
+    const refused = await run(s, 'dev-b', ['import', 'checklist', 'TODO.md', '--status', 'ready']);
+    expect(refused.code).toBe(2);
+    const fix: string = refused.doc.error.fix;
+    expect(fix).toContain('laneboard import checklist TODO.md --status ready --done-status dev');
+    const argv = (fix.match(/laneboard (import checklist [^;]*?)(?=;|$)/)?.[1] ?? '').split(' ');
+    const done = await run(s, 'dev-b', argv);
+    expect(done.code).toBe(0);
+    expect(done.doc.data.created).toHaveLength(2);
+  });
 });
 
 describe('B-U6 and P1 (6): prime on a board with checks', () => {

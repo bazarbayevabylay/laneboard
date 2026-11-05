@@ -23,7 +23,7 @@ export type { CreateInputT } from './ops/create.ts';
 export { boardsOverview, EventsInput, GetInput, inRegistry, ListInput, STALE_AFTER_MS, SummaryInput, ViewInput, VIEW_FINAL_MAX, getTask, listEvents, listTasks, taskSummary, viewBoard } from './ops/read.ts';
 export type { EventItem, EventsInputT, EventsResult, GetInputT, ListBoard, ListContext, ListInputT, ListItem, ListResult, OverviewBoard, OverviewCard, SummaryInputT, SummaryResult, SummaryRoles, TaskDetail, TaskRef, ViewCard, ViewInputT, ViewResult } from './ops/read.ts';
 export type { LinkedTask } from './ops/links.ts';
-export { ClaimInput, CommentInput, FinishInput, UpdateInput, claimTask, commentTask, finishTask, handedIn, updateTask } from './ops/update.ts';
+export { ClaimInput, CommentInput, FinishInput, UpdateInput, claimTask, commentTask, finishTask, handedIn, updateTask, workStatusBeforeChecks } from './ops/update.ts';
 export type { ClaimInputT, CommentInputT, FinishInputT, UpdateInputT } from './ops/update.ts';
 export { AttachInput, attachFile } from './ops/attach.ts';
 export type { AttachInputT } from './ops/attach.ts';

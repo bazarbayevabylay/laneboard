@@ -90,7 +90,7 @@ function taskWriteParams(input: z.ZodObject): z.ZodObject {
 export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   createTask: {
     name: 'task_create',
-    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields; parent: id of a task on this board (a subtask). A board with create_by (task_prime: roles.creators) lets only those names create tasks and subtasks: anybody else gets INVALID_VALUE, ask them (fix). On a board with checks (roles.checks) a task is not created right into a later check or the final status by its assignee or a non-checker: create it before the checks, then hand it in with task_finish. Returns its id, rev, status, assignee (full: the whole task).',
+    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields; parent: id of a task on this board (a subtask). A board with create_by (task_prime: roles.creators) lets only those names create tasks and subtasks: anybody else gets INVALID_VALUE, ask them (fix). On a board with checks (roles.checks) the author of the work (its assignee) never creates it right into a later check, and the final status is set only by a checker (roles.checkers, anybody when empty) that is not its assignee: create it before the checks, then hand it in with task_finish. Returns its id, rev, status, assignee (full: the whole task).',
     params: taskWriteParams(CreateInput.omit({ field_args: true })),
     write: true,
     taskReply: true,
@@ -118,7 +118,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   claimTask: {
     name: 'task_claim',
     description:
-      'Take a task: assignee := actor, optionally set status (the working one, so the task does not stay in the first; on a board with checks the one before them, task_prime: roles.work_status). Held by someone else: ALREADY_CLAIMED, do not take it over. On a board with checks claim never sets a later check or the final status (INVALID_VALUE): hand in with task_finish. resume: true takes over a task of another session of your session default name (your own work before a /clear or a restart, listed by laneboard prime) - only one you did yourself that matches the current request; ALREADY_CLAIMED names it in fix when that session wrote nothing for 15 min, and a resume of a session active less than that warns.',
+      'Take a task: assignee := actor, optionally set status (the working one, so the task does not stay in the first; on a board with checks the one before them, task_prime: roles.work_status). Held by someone else: ALREADY_CLAIMED, do not take it over. On a board with checks claim by the author of the work never sets a later check, and no claim sets the final status (INVALID_VALUE): hand in with task_finish. resume: true takes over a task of another session of your session default name (your own work before a /clear or a restart, listed by laneboard prime) - only one you did yourself that matches the current request; ALREADY_CLAIMED names it in fix when that session wrote nothing for 15 min, and a resume of a session active less than that warns.',
     params: taskWriteParams(ClaimInput),
     write: true,
     taskReply: true,
