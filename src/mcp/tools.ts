@@ -96,7 +96,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   claimTask: {
     name: 'task_claim',
     description:
-      'Take a task: assignee := actor, optionally set status. Held by someone else: ALREADY_CLAIMED, do not take it over. resume: true takes over a task of another session of your session default name (your own work before /clear, listed by laneboard prime) - only one you did yourself that matches the current request.',
+      'Take a task: assignee := actor, optionally set status (the working one, so the task does not stay in the first). Held by someone else: ALREADY_CLAIMED, do not take it over. resume: true takes over a task of another session of your session default name (your own work before a /clear or a restart, listed by laneboard prime) - only one you did yourself that matches the current request; ALREADY_CLAIMED names it in fix when that session wrote nothing for 15 min, and a resume of a session active less than that warns.',
     params: taskWriteParams(ClaimInput),
     write: true,
     taskReply: true,

@@ -114,8 +114,8 @@ export const prime: CommandDef = {
   usage: 'prime [--hook | --edit-hook] [--all-boards]',
   summary:
     'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the ways to start one: ' +
-      'claim a task from the request, resume your own task from before /clear (claim --resume), take a free task, create one. ' +
-    '--hook: plain text for a SessionStart hook, never fails; the resume way only after /clear (source "clear" in the hook input on stdin). ' +
+      'claim a task from the request, resume your own task of an earlier session, after /clear or a restart (claim --resume), take a free task, create one. ' +
+    '--hook: plain text for a SessionStart hook, never fails; the resume way in a new session, not on "resume" or "compact" (the source in the hook input on stdin). ' +
     '--edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing. ' +
     '--all-boards (orchestrators): then every board of this machine with its tasks not in the final status, waiting on the owner, handed in and stale first.',
   options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' }, 'all-boards': { type: 'boolean' } },
@@ -138,9 +138,12 @@ export const prime: CommandDef = {
     // looks at anybody's work in progress then (a session without a task is not reminded while another one has one).
     if (edit) return editHook(c.op, agentSource === 'default' ? undefined : agent, c.io.cwd, c.io.env.HOME || undefined);
     const rules = agentRules();
-    // In the SessionStart hook the tasks of earlier sessions are offered only after /clear: a fresh session (startup) has no earlier
-    // work of its own, so a parallel live session's task is not offered to it (owner's decision, S3b). Plain prime keeps the section.
-    const resumeShown = !hook || sessionStartSource(c.io) === 'clear';
+    // The SessionStart hook offers the tasks of earlier sessions in every new session: after /clear, and at startup too, since a solo
+    // agent's restart is a new session with a new id (P5, S6l; S3b offered them after /clear only). Not on "resume" or "compact": the
+    // session id stays, so its own tasks are its own, and the rest is a parallel session's. A parallel live session's task stays in
+    // the list with its age; its claim --resume warns (core claimTask), the list says "resume only your own".
+    const source = hook ? sessionStartSource(c.io) : undefined;
+    const resumeShown = source !== 'resume' && source !== 'compact';
     let summary: SummaryResult | undefined;
     let ctx: OpContext | undefined;
     let problem: string | undefined;

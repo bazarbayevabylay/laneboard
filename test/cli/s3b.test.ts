@@ -1,6 +1,7 @@
 // S3b: review S3 (prime keeps its commands at the real path length, resume decided by the events, the setup block names finish,
-// finish checks the owner first) and the owner's decisions (finish --status <any but the first>, warnings when the linked commit
-// may not hold the work, no --resume offer in ALREADY_CLAIMED, the resume section of prime --hook only after /clear).
+// finish checks the owner first), the owner's decisions (finish --status <any but the first>, warnings when the linked commit
+// may not hold the work) and the orchestrator's S3b choices (no --resume offer in ALREADY_CLAIMED, the resume section of
+// prime --hook only after /clear), reversed in S6l, P5.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -154,7 +155,7 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
                 const dirArg = withDir && !dirOnce ? ` --dir ${storeDir}` : '';
                 if (own === 0) {
                   expect(lines, where).toContain(`  laneboard create "<short title of your work>" --status todo --assignee ${name}${dirArg} --json`);
-                  const claim = `laneboard claim <ID>${dirArg} --json`;
+                  const claim = `laneboard claim <ID> --status in_progress${dirArg} --json`;
                   expect(lines.some((l) => l.endsWith(`The request names a task id: ${claim}`) || l === `Given a task id instead: ${claim}`), where).toBe(true);
                 } else {
                   expect(lines, where).toContain('  LB-1  [todo]  rev 1  Own task 1 with a title of ordinary length');
@@ -165,7 +166,7 @@ describe('review S3 MAJOR 1: prime keeps the status and field lines, the command
                   expect(shown, where).toBeGreaterThanOrEqual(Math.min(free, PRIME_MIN_FREE));
                   const footer = `... ${free - shown} more: laneboard list --unassigned --status todo --status in_progress --status review${dirArg} --json`;
                   if (shown < free) expect(lines, where).toContain(footer);
-                  if (own) expect(lines, where).toContain(`Free tasks (no assignee); take one: laneboard claim <ID>${dirArg} --json`);
+                  if (own) expect(lines, where).toContain(`Free tasks (no assignee); take one: laneboard claim <ID> --status in_progress${dirArg} --json`);
                 }
                 if (withDir && !dirOnce) expect(text, where).not.toContain('This board was named by --dir');
                 // Only the board line and long task titles may be cut.
@@ -192,7 +193,8 @@ describe('review S3 MAJOR 2: claim --resume decides by the events, not by the fo
     expect(stored(s, 'LB-1').events[0]).toMatchObject({ actor: `${BASE}:reviewer`, actor_source: 'explicit' });
     const prime = (await run(['prime'], SESSION_B)).stdout;
     expect(prime).not.toContain('Your earlier sessions');
-    expect(prime).not.toContain('--resume');
+    // S6l: rule 7 names --resume; no resume command is offered.
+    expect(prime).not.toContain('claim <ID> --resume');
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
     const r = JSON.parse((await run(['claim', 'LB-1', '--resume', '--json'], SESSION_B)).stdout);
     expect(r.error.code).toBe('ALREADY_CLAIMED');
@@ -376,7 +378,9 @@ describe('git checkout facts as git gives them, checked against git status', () 
   });
 });
 
-describe('owner, S3b: claim --resume is offered only by the resume section, and prime --hook shows it only after /clear', () => {
+// Rewritten in S6l (P5, reverses the orchestrator's S3b choice): the hook shows the section in every new session (startup too: a restart),
+// not on resume or compact; ALREADY_CLAIMED on an earlier session's task names --resume (in the fix once that session is silent).
+describe('S6l: prime --hook shows the resume section in a new session, ALREADY_CLAIMED names --resume', () => {
   async function earlierTask(): Promise<TestStore> {
     const s = await newStore();
     await cli(['create', 'Fix cart total', '--status', 'in_progress', '--json'], { cwd: s.root, env: SESSION_A });
@@ -384,16 +388,18 @@ describe('owner, S3b: claim --resume is offered only by the resume section, and 
     return s;
   }
 
-  it('prime --hook: the section and the resume way for source "clear" only; plain prime keeps them with the age', async () => {
+  it('prime --hook: the section and the resume way on every source but resume and compact; plain prime keeps them with the age', async () => {
     const s = await earlierTask();
     const hook = async (stdin: string) => (await cli(['prime', '--hook'], { cwd: s.root, env: SESSION_B, stdin })).stdout;
-    const clear = await hook('{"session_id":"bbbb2222","source":"clear"}');
-    expect(clear).toContain('2. Your own task from before /clear (below) fits the request: laneboard claim <ID> --resume --json\n');
-    expect(clear).toContain('Your earlier sessions, unfinished (a parallel session of yours has the same name: resume only your own):\n  LB-1  [in_progress]  <1m ago  session aaaa1111  Fix cart total');
-    for (const stdin of ['{"session_id":"bbbb2222","source":"startup"}', '{"source":"compact"}', '{"source":"resume"}', '', 'not json', '[]']) {
+    for (const stdin of ['{"session_id":"bbbb2222","source":"clear"}', '{"session_id":"bbbb2222","source":"startup"}', '{"source":"fork"}', '', 'not json', '[]']) {
+      const out = await hook(stdin);
+      expect(out, stdin).toContain('2. Your own earlier-session task (below) fits the request: laneboard claim <ID> --resume --json\n');
+      expect(out, stdin).toContain('Your earlier sessions, unfinished (a parallel session has the same name: resume only your own):\n  LB-1  [in_progress]  <1m ago  session aaaa1111  Fix cart total');
+    }
+    for (const stdin of ['{"source":"compact"}', '{"source":"resume"}']) {
       const out = await hook(stdin);
       expect(out, stdin).not.toContain('Your earlier sessions');
-      expect(out, stdin).not.toContain('--resume');
+      expect(out, stdin).not.toContain('claim <ID> --resume');
       expect(out, stdin).toContain('laneboard create "<short title of your work>"');
     }
     const plain = (await cli(['prime'], { cwd: s.root, env: SESSION_B })).stdout;
@@ -413,7 +419,7 @@ describe('owner, S3b: claim --resume is offered only by the resume section, and 
       // Reading a terminal would wait for Ctrl+D: it must not happen (and what it would give is not used).
       readStdin: () => {
         read = true;
-        return '{"source":"clear"}';
+        return '{"source":"compact"}';
       },
       stdout: (t) => {
         out += t;
@@ -423,17 +429,18 @@ describe('owner, S3b: claim --resume is offered only by the resume section, and 
     expect(code).toBe(0);
     expect(read).toBe(false);
     expect(out).toContain('laneboard create "<short title of your work>"');
-    expect(out).not.toContain('Your earlier sessions');
+    // S6l: an unknown source is a new session, so the section is there (stdin "compact" would have hidden it).
+    expect(out).toContain('Your earlier sessions');
   });
 
-  it('ALREADY_CLAIMED on an earlier session task names no --resume (claim and finish)', async () => {
+  it('ALREADY_CLAIMED on an earlier session task that wrote <15 min ago: the comment fix, --resume in the message (claim and finish)', async () => {
     const s = await earlierTask();
     for (const argv of [['claim', 'LB-1'], ['finish', 'LB-1', '--result', 'x']]) {
       const e = JSON.parse((await cli([...argv, '--json'], { cwd: s.root, env: SESSION_B })).stdout).error;
       expect(e.code).toBe('ALREADY_CLAIMED');
-      expect(`${e.message} ${e.fix}`).not.toContain('--resume');
-      // Rewritten in S4 (LB-9): finish by somebody else names acceptance; claim keeps the old text. S4b: acceptance by the data.
-      expect(e.message).toBe(argv[0] === 'claim' ? `task LB-1 is already claimed by ${NAME_A}; do not take it over: reassignment is the orchestrator's decision` : `task LB-1 is claimed by ${NAME_A} and is in_progress, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish LB-1 --status <one of: in_progress, review>); do not take it over: ask ${NAME_A} to hand it in, or close it as the orchestrator: laneboard update LB-1 --status done --as ${NAME_B}`);
+      expect(e.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B}`);
+      const then = argv[0] === 'claim' ? '' : ', then finish it again';
+      expect(e.message).toBe(`task LB-1 is held by ${NAME_A}, another session of your default name that wrote <1 min ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim LB-1 --resume${then}`);
     }
   });
 });

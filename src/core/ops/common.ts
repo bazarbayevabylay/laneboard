@@ -207,6 +207,27 @@ export function heldByEarlierSession(task: TaskT, sessionBase: string | undefine
   return e !== undefined && e.actor === holder && e.actor_source === 'default';
 }
 
+// An earlier session of the default name that wrote nothing on the board for this long is taken for closed (a /clear or a restart):
+// its task's ALREADY_CLAIMED then offers `claim --resume` as the fix; a younger one may be a parallel session at work (P5, S6l).
+export const EARLIER_SESSION_SILENT_MS = 15 * 60_000;
+
+// Milliseconds since `holder` last wrote on the board: its newest event on any of `tasks` (a session at work writes to its other
+// tasks too, e.g. a subtask of the one asked about); Infinity when no event of it is left.
+export function silentFor(tasks: readonly TaskT[], holder: string, now: string): number {
+  let last = -Infinity;
+  for (const task of tasks) {
+    for (const e of task.events) {
+      if (e.actor === holder) last = Math.max(last, Date.parse(e.at));
+    }
+  }
+  return Math.max(0, Date.parse(now) - last);
+}
+
+// Whole minutes of `ms` for a message: "<1 min" under a minute.
+export function minutesText(ms: number): string {
+  return ms < 60_000 ? '<1 min' : `${Math.floor(ms / 60_000)} min`;
+}
+
 // Status must be one of config.statuses.
 export function checkStatus(config: ConfigT, status: string): void {
   if (config.statuses.includes(status)) return;

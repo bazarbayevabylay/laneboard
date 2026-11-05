@@ -172,7 +172,7 @@ describe('nested agent folders', () => {
     expect(init).toMatchObject({ ok: true, store: own, prefix: 'THIR', data: { next: `laneboard prime --dir ${own}` } });
     const prime = await cli(['prime', '--dir', own, '--as', 'dev'], { cwd: third, env });
     expect(prime.stdout).toContain(`\n  laneboard create "<short title of your work>" --status todo --assignee dev --as dev --dir ${own} --json\n`);
-    expect(prime.stdout).toContain(`Given a task id instead: laneboard claim <ID> --as dev --dir ${own} --json`);
+    expect(prime.stdout).toContain(`Given a task id instead: laneboard claim <ID> --status in_progress --as dev --dir ${own} --json`);
     const made = JSON.parse((await cli(['create', 'b work', '--status', 'todo', '--assignee', 'dev', '--as', 'dev', '--dir', own, '--json'], { cwd: third, env })).stdout);
     expect(made).toMatchObject({ ok: true, store: own, prefix: 'THIR', data: { id: 'THIR-1' }, warnings: [] });
     expect(readStore(store, 'active').tasks).toEqual([]);

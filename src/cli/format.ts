@@ -271,6 +271,20 @@ function asOption(d: PrimeData): string {
   return d.agent_source === 'default' ? '' : ` --as ${shellQuote(d.agent)}`;
 }
 
+// The claim command prime prints: `--status` of the working status, so a task taken from the first status does not stay there
+// (A-U3: a plain claim of one's own task changes nothing); `dir` is passed on as --dir.
+function claimCommand(d: PrimeData, dir: string): string {
+  const work = workStatus(d);
+  return `laneboard claim <ID>${work === undefined ? '' : ` --status ${shellQuote(work)}`}${asOption(d)}${dir} --json`;
+}
+
+// The status work goes on in: the second configured status, unless it is the final one (a board of two statuses has none).
+// Review statuses (P1) will name the one before the first of them.
+function workStatus(d: PrimeData): string | undefined {
+  const second = d.statuses[1]?.status;
+  return second === undefined || second === d.final_status ? undefined : second;
+}
+
 // A task line of prime: id, status, rev, title.
 function taskLine(t: ListItem, titleMax = Infinity): string {
   return `\n  ${t.id}  [${t.status}]  rev ${t.rev}  ${fit(t.title, titleMax)}`;
@@ -308,15 +322,15 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
   // The default name is used without --as, so commands copied from here stay "default" in the task events.
   const as = d.agent_source === 'default' ? '' : ` --as ${name}`;
   const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${as}${dir} --json`;
-  const claim = `laneboard claim <ID>${asOption(d)}${dir} --json`;
+  const claim = claimCommand(d, dir);
   const keepName = 'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).';
   if (!choices.resume && !choices.free) {
     if (d.agent === null) return ['You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:', create, keepName].join('\n');
     return ['You have no task in progress. Create one now:', create, `Given a task id instead: ${claim}`].join('\n');
   }
   const ways = [`The request names a task id: ${claim}`];
-  if (choices.resume) ways.push(`Your own task from before /clear (below) fits the request: laneboard claim <ID> --resume${dir} --json`);
-  if (choices.free) ways.push(`A free task below fits the request: ${claim}`);
+  if (choices.resume) ways.push(`Your own earlier-session task (below) fits the request: laneboard claim <ID> --resume${dir} --json`);
+  if (choices.free) ways.push('A free task below fits the request: as in 1.');
   ways.push('Otherwise create one:');
   const intro =
     d.agent === null
@@ -430,20 +444,20 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
     .join('\n');
   // A parallel session of the same user has the same base: the header says so next to the list (the command is in the ways above).
   const resumeHead = resume
-    ? '\nYour earlier sessions, unfinished (a parallel session of yours has the same name: resume only your own):'
+    ? '\nYour earlier sessions, unfinished (a parallel session has the same name: resume only your own):'
     : '';
   const titleMax = squeeze.shortTitles ? SHORT_TITLE : Infinity;
   const line = (t: ListItem): string => taskLine(t, titleMax);
   // The holder differs only in its session part: `<base>:<session>`.
   const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${fit(t.title, titleMax)}`;
   // Without a task in progress the numbered ways above carry the claim command, so the header gives no second order.
-  const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: laneboard claim <ID>${asOption(d)}${dir} --json`;
+  const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: ${claimCommand(d, dir)}`;
   const storeHead = storeDir !== undefined && squeeze.dirOnce ? `Store: --dir ${named} (prefix ${d.prefix ?? '-'})` : `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;
   const warning = d.store_warning ? `\nwarning: ${d.store_warning}` : '';
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), ${statusCounts(d)}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
   // What each list keeps whatever comes before it: the first own task, the newest earlier-session task (the one a session after
-  // /clear most likely resumes), the first free tasks; each with its footer.
+  // /clear or a restart most likely resumes), the first free tasks; each with its footer.
   const freeKeep = free ? freeHead.length + sectionMin(d.unassigned, d.unassigned_total, freeMore, PRIME_MIN_FREE, line) : 0;
   const resumeKeep = resume ? resumeHead.length + sectionMin(d.resumable, d.resumable.length, resumeMore, 1, resumeLine) : 0;
   const ownKeep = listed ? sectionMin(d.tasks, d.tasks.length, more, 1, line) : 0;
