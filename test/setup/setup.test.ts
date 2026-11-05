@@ -151,7 +151,7 @@ describe('setup details', () => {
             hooks: [{ type: 'command', command: "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'" }],
           },
         ],
-        PostToolUse: [{ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }],
+        PostToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }],
       },
     });
     // Outside a git repository Claude Code reads the local file from this folder: the machine path and the name stay out of commits.
@@ -410,7 +410,7 @@ describe('setup backups and exact edits', () => {
     plant(s, { 'p:.claude/settings.json': original, 'p:.git': 'gitdir: /elsewhere/.git/worktrees/x\n', 'h:.gitconfig': '[user]\n  name = "Test Person"\n' });
     await ok(s, ['setup', 'claude-code']);
     const hook = JSON.stringify({ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'" }] }, null, 2);
-    const edit = JSON.stringify({ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }, null, 2);
+    const edit = JSON.stringify({ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0' }] }, null, 2);
     const indent = (text: string): string => text.split('\n').join('\n      ');
     const inserted = `,\n  "hooks": {\n    "SessionStart": [\n      ${indent(hook)}\n    ],\n    "PostToolUse": [\n      ${indent(edit)}\n    ]\n  }`;
     const file = path.join(s.cwd, '.claude', 'settings.json');
@@ -693,11 +693,12 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect(fs.existsSync(rootLocal)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')).env).toEqual({ LANEBOARD_DIR: path.join(root, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
     expect(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8')).toContain('(LANEBOARD_DIR is set for this project in .claude/settings.json)');
-    expect(fs.existsSync(path.join(root, '.git', 'info', 'exclude'))).toBe(false);
+    // S6f (A22): the exclude block stays at the root, for the backups and folder markers setup leaves there.
+    expect(fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8')).toContain('.laneboard-created');
     expect((await cli(['setup', 'claude-code'], { cwd: nested, env })).code).toBe(0);
     expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(nested, '.laneboard'));
     // A third run at the root keeps the layout (idempotent).
-    expect(JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout).data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+    expect(JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout).data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged', 'unchanged']);
   });
 
   it("the root's local pin in a nested board missing from the registry (made before it or under another HOME): the conflict fix still ends in one round", async () => {
@@ -773,8 +774,9 @@ describe('Claude Code store pin and default name (S2c)', () => {
     const original = fs.readFileSync(exclude, 'utf8');
     const r = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: proj, env: { HOME: home, USER: 'tester' } })).stdout);
     expect(r.data.files.find((f: { path: string }) => f.path === '.git/info/exclude')?.result).toBe('updated');
-    // The backup sits inside .git, so there is no "add it to .gitignore" advice for it.
-    expect(r.warnings.filter((w: string) => w.includes('exclude.laneboard.bak'))).toEqual(['wrote .git/info/exclude.laneboard.bak (your file before setup; setup --remove restores it)']);
+    // S6f (A22, newcomer F11): git's default exclude (comments only) gets no backup, so no warning about one.
+    expect(r.warnings.filter((w: string) => w.includes('exclude.laneboard.bak'))).toEqual([]);
+    expect(fs.existsSync(`${exclude}.laneboard.bak`)).toBe(false);
     const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: proj, env: gitEnv, encoding: 'utf8' });
     expect(status).toContain('.claude/settings.json');
     expect(status).not.toContain('settings.local.json');

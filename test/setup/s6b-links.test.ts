@@ -199,10 +199,13 @@ describe("a link into the repository's .git folder is refused", () => {
     ['CLAUDE.md -> .git/config', 'CLAUDE.md', '.git/config'],
     ['CLAUDE.md -> .git/info/exclude', 'CLAUDE.md', '.git/info/exclude'],
     ['.claude -> .git', '.claude', '.git'],
+    // A .git folder below the project (a nested repository), not only the project's own (S6f, review S6b r3).
+    ['CLAUDE.md -> sub/.git/config', 'CLAUDE.md', 'sub/.git/config'],
   ])('%s: SETUP_CONFLICT (exit 6), .git keeps every byte', async (_name, link, to) => {
     const s = sandbox();
     execFileSync('git', ['init', '-q'], { cwd: s.cwd });
     put(path.join(s.cwd, '.git', 'info', 'exclude'), '# git ls-files --others --exclude-from=.git/info/exclude\n');
+    if (!fs.existsSync(path.join(s.cwd, to))) put(path.join(s.cwd, to), '[core]\n\tbare = false\n');
     fs.symlinkSync(to, path.join(s.cwd, link));
     const before = state(s);
     const err = await fails(s, ['setup', 'claude-code']);

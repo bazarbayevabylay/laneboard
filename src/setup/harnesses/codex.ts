@@ -6,6 +6,7 @@ import { blockEdit, MD_MARKERS } from '../md-block.ts';
 import { tomlTableEdit } from '../toml-block.ts';
 import { CODEX_ENV_VARS, instructionLines, MCP_ARGS, MCP_COMMAND } from './common.ts';
 import type { Harness } from './common.ts';
+import { gitExclude } from './git-exclude.ts';
 
 export const codex: Harness = {
   name: 'codex',
@@ -17,6 +18,8 @@ export const codex: Harness = {
       moved: (c) => (c.env.CODEX_HOME ? path.join(path.resolve(c.cwd, c.env.CODEX_HOME), 'config.toml') : undefined),
     },
     { path: 'AGENTS.md', scope: 'project', edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, 'inline')) },
+    // Backups and folder markers stay out of git.
+    gitExclude,
   ],
   notes: ['the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project'],
 };

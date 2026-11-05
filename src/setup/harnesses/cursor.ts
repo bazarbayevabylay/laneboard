@@ -3,12 +3,15 @@ import { jsonEdit } from '../json-key.ts';
 import { blockEdit, MD_MARKERS } from '../md-block.ts';
 import { instructionLines, MCP_COMMAND, pinnedMcpArgs } from './common.ts';
 import type { Harness } from './common.ts';
+import { gitExclude } from './git-exclude.ts';
 
 export const cursor: Harness = {
   name: 'cursor',
   files: [
     { path: '.cursor/mcp.json', scope: 'project', edit: (f, c) => jsonEdit(f, { kind: 'key', path: ['mcpServers', 'laneboard'], value: { type: 'stdio', command: MCP_COMMAND, args: pinnedMcpArgs(c.storeDir) } }) },
     { path: 'AGENTS.md', scope: 'project', edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, 'inline')) },
+    // Backups and folder markers stay out of git.
+    gitExclude,
   ],
   notes: ['open the project in Cursor and enable the "laneboard" MCP server in its settings if it is off'],
 };

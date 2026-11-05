@@ -4,7 +4,7 @@ export type { BadInput, ErrorCode, ErrorObject, ErrorSpec, FixEdit } from './err
 export { ACTOR_RE, ACTOR_SOURCES, CONFIG_SCHEMA, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
 export type { ConfigT, FieldType, LinkKind, LinkT, Scope, TaskEventT, TaskT } from './schema.ts';
 export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MARKERS, resolveStore, samePath, separateProjectMarker, STORE_DIR_NAME } from './store.ts';
-export { isLiveBoard, listBoards, liveBoards, readRegistry, registerStore, registryFile, resolveBoard } from './boards.ts';
+export { forgetBoard, isLiveBoard, listBoards, liveBoards, readRegistry, registerStore, registryFile, resolveBoard, storeState } from './boards.ts';
 export type { BoardEntry, BoardInfo, BoardsResult, LiveBoard, MissingBoard } from './boards.ts';
 export { actorPart, agentUser, defaultAgentBase, defaultAgentName, isEarlierSessionName, resolveActor } from './agent-name.ts';
 export { GIT_TIMEOUT_MS, readCheckout } from './git.ts';
