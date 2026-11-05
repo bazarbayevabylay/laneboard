@@ -1,4 +1,5 @@
-// MCP over stdio with the real SDK client: exactly 11 tools (C3; delete and redact are CLI-only, S6e), instructions = agent rules, every tool called,
+// MCP over stdio with the real SDK client: exactly 12 tools (C3; delete and redact are CLI-only, S6e; task_prime, S6o), instructions = MCP preamble
+// and agent rules, every tool called,
 // CLI/MCP parity on cloned stores (same data, same error objects), fresh reads per call (W3).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -6,14 +7,14 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterAll, describe, expect, it } from 'vitest';
-import { agentRules, archiveTasks, claimTask, createTask, ERRORS, OPS, registerStore } from '../../src/core/index.ts';
-import { TOOL_LIST, TOOLS } from '../../src/mcp/tools.ts';
+import { agentRules, archiveTasks, claimTask, createTask, OPS, registerStore } from '../../src/core/index.ts';
+import { MCP_RULES_PREAMBLE, TOOL_LIST, TOOLS } from '../../src/mcp/tools.ts';
 import { as, cleanupTemp, cli, CLI_SOURCE, newStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
 
-const TOOL_NAMES = ['task_create', 'task_get', 'task_list', 'task_update', 'task_claim', 'task_comment', 'task_finish', 'task_attach', 'task_archive', 'task_restore', 'task_events'];
+const TOOL_NAMES = ['task_create', 'task_get', 'task_list', 'task_update', 'task_claim', 'task_comment', 'task_finish', 'task_attach', 'task_archive', 'task_restore', 'task_events', 'task_prime'];
 
 interface Mcp {
   client: Client;
@@ -132,14 +133,14 @@ const CASES: ParityCase[] = [
 let base: (TestStore & { file: string }) | undefined;
 
 describe('MCP server over stdio (SDK client)', () => {
-  it('C3: every core op is a tool or CLI-only; exactly 11 tools (delete and redact are for people: CLI only)', () => {
+  it('C3: every core op is a tool or CLI-only; exactly 12 tools (delete and redact are for people: CLI only)', () => {
     expect(Object.keys(TOOLS).sort()).toEqual(Object.keys(OPS).sort());
     expect(TOOL_LIST.map((t) => t.def.name)).toEqual(TOOL_NAMES);
     expect(TOOLS.deleteTask).toBe('cli-only');
     expect(TOOLS.redactTask).toBe('cli-only');
   });
 
-  it('lists exactly 11 tools with strict schemas; instructions are the agent rules (<= 4096 chars)', async () => {
+  it('lists exactly 12 tools with strict schemas; instructions are the MCP preamble and the agent rules (<= 4096 chars)', async () => {
     const s = await newStore();
     const mcp = await startMcp(s.root);
     try {
@@ -148,14 +149,15 @@ describe('MCP server over stdio (SDK client)', () => {
       for (const t of tools) {
         expect(t.inputSchema.additionalProperties, t.name).toBe(false);
         expect(t.description?.length ?? 0, t.name).toBeGreaterThan(10);
-        // Write tools take an optional actor (else LANEBOARD_AGENT, else the session default name); reads take none.
+        // Write tools take an optional actor (else the server's `mcp --as`, else LANEBOARD_AGENT, else the session default name); reads take none, but task_prime
+        // (whose tasks to list).
         const required = (t.inputSchema.required ?? []) as string[];
         expect(required.includes('actor'), t.name).toBe(false);
-        expect('actor' in (t.inputSchema.properties ?? {}), t.name).toBe(t.annotations?.readOnlyHint === false);
+        expect('actor' in (t.inputSchema.properties ?? {}), t.name).toBe(t.annotations?.readOnlyHint === false || t.name === 'task_prime');
         expect('field_args' in (t.inputSchema.properties ?? {}), t.name).toBe(false);
       }
       const instructions = mcp.client.getInstructions() ?? '';
-      expect(instructions).toBe(agentRules());
+      expect(instructions).toBe(`${MCP_RULES_PREAMBLE}\n\n${agentRules()}`);
       expect(instructions.length).toBeLessThanOrEqual(4096);
     } finally {
       await mcp.close();
@@ -168,7 +170,7 @@ describe('MCP server over stdio (SDK client)', () => {
     try {
       const { tools } = await mcp.client.listTools();
       const params = (name: string): string[] => Object.keys(tools.find((t) => t.name === name)?.inputSchema.properties ?? {});
-      expect(tools).toHaveLength(11);
+      expect(tools).toHaveLength(12);
       expect(params('task_create')).toContain('parent');
       expect(params('task_list')).toContain('parent');
       expect(params('task_update')).toEqual(expect.arrayContaining(['parent', 'append_description']));
@@ -197,7 +199,7 @@ describe('MCP server over stdio (SDK client)', () => {
     const mcp = await startMcp(own.root, { HOME: home });
     try {
       const { tools } = await mcp.client.listTools();
-      expect(tools).toHaveLength(11);
+      expect(tools).toHaveLength(12);
       expect(Object.keys(tools.find((t) => t.name === 'task_list')?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['all_boards', 'open', 'parent']));
       const all = await mcp.call('task_list', { all_boards: true, open: true });
       expect(all.isError).toBe(false);
@@ -219,7 +221,7 @@ describe('MCP server over stdio (SDK client)', () => {
     }
   });
 
-  it('calls each of the 11 tools in one session; results carry the CLI data as structuredContent and text', async () => {
+  it('calls each of the 12 tools in one session; results carry the CLI data as structuredContent and text', async () => {
     base ??= await baseStore();
     const root = cloneRoot(base.root);
     const mcp = await startMcp(root);
@@ -239,6 +241,7 @@ describe('MCP server over stdio (SDK client)', () => {
       expect(await call('task_get', { id: 'LB-4' })).toMatchObject({ id: 'LB-4', archived: false });
       expect(await call('task_list', { scope: 'all' })).toMatchObject({ total: 4, scope: 'all' });
       expect(await call('task_claim', { id: 'LB-4', actor: 'm' })).toMatchObject({ assignee: 'm', rev: 2 });
+      expect(await call('task_prime', { actor: 'm' })).toMatchObject({ agent: 'm', prefix: 'LB', tasks: [{ id: 'LB-4' }] });
       expect(await call('task_update', { id: 'LB-4', status: 'in_progress', expected_rev: 2, actor: 'm' })).toMatchObject({ status: 'in_progress', rev: 3 });
       expect(await call('task_comment', { id: 'LB-4', text: '- item one', actor: 'm' })).toMatchObject({ rev: 4 });
       // S3: the server folder is no git checkout, so no commit is linked.
@@ -329,7 +332,7 @@ describe('MCP server over stdio (SDK client)', () => {
     }
   });
 
-  it('W3: a long-lived server sees a CLI write on the next call; no store -> STORE_NOT_FOUND with fix', async () => {
+  it('W3: a long-lived server sees a CLI write on the next call; no store -> STORE_NOT_FOUND with a fix for the client config', async () => {
     const s = await newStore();
     const mcp = await startMcp(s.root);
     try {
@@ -339,11 +342,12 @@ describe('MCP server over stdio (SDK client)', () => {
     } finally {
       await mcp.close();
     }
-    const empty = await startMcp(tempDir());
+    const empty = await startMcp(tempDir(), { HOME: tempDir() });
     try {
       const r = await empty.call('task_list', {});
       expect(r.isError).toBe(true);
-      expect(r.structured).toMatchObject({ code: 'STORE_NOT_FOUND', fix: ERRORS.STORE_NOT_FOUND.fix });
+      expect(r.structured).toMatchObject({ code: 'STORE_NOT_FOUND', details: { boards: [] } });
+      expect(r.structured.fix).toContain('["mcp", "--dir", "<path>"]');
     } finally {
       await empty.close();
     }
