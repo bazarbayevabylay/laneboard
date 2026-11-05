@@ -1,6 +1,7 @@
 // Map source records to import tasks by the options: which key is the title, status, assignee…, how statuses are renamed,
 // which keys become fields or are dropped, and how a JSON history becomes events. Structural problems are collected, not thrown one by one.
 // A checklist maps item by item: checked -> the done status, indent -> parent, heading -> label (when asked).
+import crypto from 'node:crypto';
 import { ACTOR_RE, MAX_COMMENT_CHARS } from '../core/index.ts';
 import type { ImportTaskT } from '../core/index.ts';
 import type { ChecklistItem, SourceRecord } from './sources.ts';
@@ -40,6 +41,8 @@ export interface Mapped {
   checklists: Array<{ source: string; checkboxes: number }>;
   // History texts cut to the comment limit.
   truncated: number;
+  // --heading-labels: headings that give no label (labels are a-z0-9._-).
+  unlabeled: string[];
 }
 
 export interface ChecklistOptions {
@@ -56,7 +59,7 @@ const TITLE_MAX = 200;
 
 // Empty result of a mapping.
 function emptyMapped(): Mapped {
-  return { tasks: [], problems: [], ignored: [], checklists: [], truncated: 0 };
+  return { tasks: [], problems: [], ignored: [], checklists: [], truncated: 0, unlabeled: [] };
 }
 
 // A record that is not a task: listed as ignored, and as a checklist when it holds checkbox items.
@@ -76,17 +79,30 @@ export function headingLabel(heading: string): string | undefined {
   return slug === '' ? undefined : slug;
 }
 
-// The idempotency key of an item: file and item text; the n-th item with the same text in the file gets " (n)".
-function itemSource(file: string, text: string, seen: Map<string, number>): string {
-  const n = (seen.get(text) ?? 0) + 1;
-  seen.set(text, n);
-  return `${file}#${text}${n > 1 ? ` (${n})` : ''}`;
+// Longest item text kept whole in the key, in code points; a longer one is cut and marked with its hash (link ref and source are at most 2000).
+const KEY_TEXT_MAX = 500;
+
+// The item text in the key: whole, or its first KEY_TEXT_MAX code points + "…#" + 12 hex of its sha256 (a whole text is never that long).
+function keyText(text: string): string {
+  const chars = Array.from(text);
+  if (chars.length <= KEY_TEXT_MAX) return text;
+  return `${chars.slice(0, KEY_TEXT_MAX).join('')}…#${crypto.createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
+}
+
+// The idempotency key of an item: file#text; a key already taken in the file (a repeated text, or an item literally "foo (2)")
+// gets the first free " (n)", n >= 2, so no item shares a key and the same file gives the same keys on every run.
+function itemSource(file: string, text: string, used: Set<string>): string {
+  const base = `${file}#${keyText(text)}`;
+  let key = base;
+  for (let n = 2; used.has(key); n++) key = `${base} (${n})`;
+  used.add(key);
+  return key;
 }
 
 // One checklist file as tasks: each item is a task; an item indented under another is its child (parent_source); a heading starts anew.
-function checklistTasks(file: string, items: readonly ChecklistItem[], o: ChecklistOptions): ImportTaskT[] {
+function checklistTasks(file: string, items: readonly ChecklistItem[], o: ChecklistOptions, unlabeled: string[]): ImportTaskT[] {
   const tasks: ImportTaskT[] = [];
-  const seen = new Map<string, number>();
+  const used = new Set<string>();
   // Open items above the current one, shallowest first: the parent is the nearest one with a smaller indent.
   let stack: Array<{ indent: number; source: string }> = [];
   let heading: string | undefined;
@@ -94,7 +110,7 @@ function checklistTasks(file: string, items: readonly ChecklistItem[], o: Checkl
     if (item.heading !== heading) stack = [];
     heading = item.heading;
     while (stack.length && (stack.at(-1)?.indent ?? 0) >= item.indent) stack.pop();
-    const source = itemSource(file, item.text, seen);
+    const source = itemSource(file, item.text, used);
     const chars = Array.from(item.text);
     const long = chars.length > TITLE_MAX;
     const task: ImportTaskT = { source, title: long ? `${chars.slice(0, TITLE_MAX - 1).join('')}…` : item.text, status: item.checked ? o.doneStatus : o.status };
@@ -104,6 +120,7 @@ function checklistTasks(file: string, items: readonly ChecklistItem[], o: Checkl
     if (parent) task.parent_source = parent.source;
     const label = o.headingLabels ? headingLabel(item.heading) : undefined;
     if (label !== undefined) task.labels = [label];
+    else if (o.headingLabels && item.heading !== '' && !unlabeled.includes(item.heading)) unlabeled.push(item.heading);
     tasks.push(task);
     stack.push({ indent: item.indent, source });
   }
@@ -115,7 +132,7 @@ export function mapChecklist(records: readonly SourceRecord[], o: ChecklistOptio
   const out = emptyMapped();
   for (const r of records) {
     if (r.kind === 'not-task') noteIgnored(out, r);
-    else if (r.kind === 'checklist') out.tasks.push(...checklistTasks(r.source, r.items, o));
+    else if (r.kind === 'checklist') out.tasks.push(...checklistTasks(r.source, r.items, o, out.unlabeled));
     else out.problems.push({ source: r.source, field: 'file', message: r.kind === 'broken' ? r.reason : 'not a checklist file' });
   }
   return out;

@@ -116,6 +116,7 @@ export async function runImport(ctx: OpContext, o: ImportOptions | ChecklistImpo
   const hint = o.format === 'markdown' ? checklistHint(ctx, root, o, mapped.checklists) : undefined;
   if (hint !== undefined) warnings.push(hint);
   if (mapped.truncated) warnings.push(`${mapped.truncated} history text(s) were cut to the comment limit`);
+  if (mapped.unlabeled.length) warnings.push(`--heading-labels: no label for heading(s) ${mapped.unlabeled.map((h) => JSON.stringify(h)).join(', ')} (labels use a-z 0-9 . _ -); add labels later with laneboard update <id> --add-label <label>`);
   if (!records.length) warnings.push(`no ${o.format === 'json' ? '.json' : '.md'} files found in ${o.target}`);
   return { data: { format: o.format, ...result.data, ignored: mapped.ignored }, warnings };
 }

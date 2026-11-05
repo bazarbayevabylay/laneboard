@@ -157,12 +157,19 @@ function plan(
   const known = importedSources([active, archive]);
   const fresh: ImportTaskT[] = [];
   const skipped: ImportResult['skipped'] = [];
-  for (const t of unique(tasks, (x) => x.source)) {
+  const problems: Problems = { fields: new Map(), statuses: new Map(), invalid: [] };
+  // One source is one task: a repeated source is a problem, never a task dropped without a word.
+  const seen = new Set<string>();
+  for (const t of tasks) {
+    if (seen.has(t.source)) {
+      problems.invalid.push({ source: t.source, field: 'source', message: 'two tasks of this import have the same source' });
+      continue;
+    }
+    seen.add(t.source);
     const before = known.get(t.source);
     if (before !== undefined) skipped.push({ id: before.id, source: t.source });
     else fresh.push(t);
   }
-  const problems: Problems = { fields: new Map(), statuses: new Map(), invalid: [] };
   for (const t of fresh) checkTask(config, t, problems);
   const parents = resolveParents(fresh, known, problems);
   const err = problemsError(config, problems);

@@ -36,8 +36,12 @@ const EXTENSION: Record<ImportFormat, string> = { markdown: '.md', json: '.json'
 const CHECKBOX_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+\[([ xX])\][ \t]+(\S.*)$/;
 // An ATX heading: `## Backend` (closing #s dropped).
 const HEADING_RE = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
-// A fenced code block opens or closes: items inside it are not items.
-const FENCE_RE = /^ {0,3}(?:```|~~~)/;
+// A code fence line (CommonMark 4.5): indent, a run of 3+ backticks or tildes, the rest; items inside a fenced block are not items.
+const FENCE_RE = /^([ \t]*)(`{3,}|~{3,})(.*)$/;
+// Any list item, with or without a checkbox: its content column holds a fence that belongs to the item.
+const LIST_ITEM_RE = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)\S/;
+// An HTML comment opens at the start of a line (CommonMark HTML block 2): lines up to `-->` are not items.
+const COMMENT_OPEN_RE = /^[ \t]*<!--/;
 
 // Leading columns of an indent: a tab counts 4.
 function columns(indent: string): number {
@@ -46,23 +50,48 @@ function columns(indent: string): number {
   return n;
 }
 
-// Checklist items of a Markdown text in order, with the nearest heading above each; code blocks are skipped.
+// Checklist items of a Markdown text in order, with the nearest heading above each; fenced code and HTML comments are skipped.
 export function checklistItems(text: string): ChecklistItem[] {
   const items: ChecklistItem[] = [];
   let heading = '';
-  let fenced = false;
+  // The open fence: its character run (a closing fence uses the same character, at least as long) and the column it is measured from.
+  let fence: { run: string; base: number } | undefined;
+  let comment = false;
+  // Content columns of the list items above (innermost last): a fence up to 3 columns past the innermost one belongs to it.
+  let lists: number[] = [];
   const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n');
   lines.forEach((raw, i) => {
-    if (FENCE_RE.test(raw)) {
-      fenced = !fenced;
+    if (comment) {
+      if (raw.includes('-->')) comment = false;
       return;
     }
-    if (fenced) return;
+    const f = FENCE_RE.exec(raw);
+    if (fence) {
+      const run = f?.[2] ?? '';
+      if (f && run[0] === fence.run[0] && run.length >= fence.run.length && (f[3] ?? '').trim() === '' && columns(f[1] ?? '') - fence.base <= 3) fence = undefined;
+      return;
+    }
+    if (raw.trim() === '') return;
+    const indent = columns(/^[ \t]*/.exec(raw)?.[0] ?? '');
+    lists = lists.filter((col) => col <= indent);
+    const base = lists.at(-1) ?? 0;
+    // A backtick fence's info string has no backticks (else it is inline code).
+    if (f && indent - base <= 3 && !((f[2] ?? '').startsWith('`') && (f[3] ?? '').includes('`'))) {
+      fence = { run: f[2] ?? '', base };
+      return;
+    }
+    if (COMMENT_OPEN_RE.test(raw)) {
+      comment = !raw.slice(raw.indexOf('<!--') + 4).includes('-->');
+      return;
+    }
     const h = HEADING_RE.exec(raw);
     if (h) {
       heading = (h[1] ?? '').trim();
+      lists = [];
       return;
     }
+    const li = LIST_ITEM_RE.exec(raw);
+    if (li) lists.push(columns(li[1] ?? '') + (li[2] ?? '').length + columns(li[3] ?? ''));
     const m = CHECKBOX_RE.exec(raw);
     if (!m) return;
     const itemText = (m[3] ?? '').replace(/\s+/g, ' ').trim();

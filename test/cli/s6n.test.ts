@@ -4,7 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { cleanupTemp, cli, readStore, REPO, tempDir } from '../helpers.ts';
+import { importTasks } from '../../src/core/index.ts';
+import { as, cleanupTemp, cli, newStore, readStore, REPO, tempDir } from '../helpers.ts';
 import type { CliRun } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -187,5 +188,70 @@ describe('import checklist (P6)', () => {
     fs.writeFileSync(path.join(b.root, 'EMPTY.md'), '# nothing\n');
     const empty = await b.json(['import', 'checklist', 'EMPTY.md', '--status', 'todo', '--as', 'c']);
     expect(empty).toMatchObject({ code: 0, data: { created: [], ignored: [{ source: 'EMPTY.md', reason: 'no checklist items (- [ ] / - [x])' }] } });
+  });
+
+  // Review r2 (MINOR 1): an item literally "foo (2)" and a repeated "foo" no longer share a key; nothing is dropped, a re-run skips all.
+  it('foo, foo (2), foo -> 3 tasks with 3 keys; a re-run creates nothing', async () => {
+    const b = await board('- [ ] foo\n- [ ] foo (2)\n- [ ] foo\n- [ ] foo (2)\n');
+    const r = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--as', 'c']);
+    expect(r.code, JSON.stringify(r.error)).toBe(0);
+    expect(r.data.created.map((c: { source: string }) => c.source)).toEqual(['TODO.md#foo', 'TODO.md#foo (2)', 'TODO.md#foo (3)', 'TODO.md#foo (2) (2)']);
+    expect(readStore(b.dir, 'active').tasks).toHaveLength(4);
+    const again = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--as', 'c']);
+    expect(again.data).toMatchObject({ created: [], skipped: [{}, {}, {}, {}] });
+  });
+
+  // The core never drops a task with a repeated source without a word: the import stops and names it.
+  it('core import: two tasks with one source -> INVALID_VALUE, nothing written', async () => {
+    const s = await newStore({ prefix: 'DUP' });
+    const tasks = [{ source: 'a.md', title: 'one', status: 'todo' }, { source: 'a.md', title: 'two', status: 'todo' }];
+    await expect(importTasks(as(s, 'c'), { tasks })).rejects.toMatchObject({ code: 'INVALID_VALUE', details: { invalid: [{ source: 'a.md', field: 'source', message: 'two tasks of this import have the same source' }] } });
+    expect(readStore(s.dir, 'active').tasks).toHaveLength(0);
+  });
+
+  // Review r2 (MINOR 2): a very long item does not stop the import; its key is the text's start + hash, and a re-run finds it.
+  it('a 2500-character item and a 600-character one sharing their first 500 -> 2 tasks, keys within the link limit; a re-run skips both', async () => {
+    const long = 'a'.repeat(2500);
+    const other = `${'a'.repeat(500)}${'b'.repeat(100)}`;
+    const b = await board(`- [ ] ${long}\n- [ ] ${other}\n- [ ] short\n`);
+    const r = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--as', 'c']);
+    expect(r.code, JSON.stringify(r.error)).toBe(0);
+    const keys = r.data.created.map((c: { source: string }) => c.source) as string[];
+    expect(keys).toHaveLength(3);
+    expect(keys[0]).toMatch(new RegExp(`^TODO\\.md#a{500}…#[0-9a-f]{12}$`));
+    expect(keys[1]).toMatch(new RegExp(`^TODO\\.md#a{500}…#[0-9a-f]{12}$`));
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[2]).toBe('TODO.md#short');
+    const task = readStore(b.dir, 'active').tasks[0] as unknown as { description: string };
+    expect(task.description).toBe(long);
+    const again = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--as', 'c']);
+    expect(again.data).toMatchObject({ created: [], skipped: [{ id: 'MONO-1' }, { id: 'MONO-2' }, { id: 'MONO-3' }] });
+  });
+
+  // Review r2 (MINOR 3): fences close only on their own character and length; a fence inside a list item; HTML comments.
+  it('~~~ holding ``` closes on ~~~, ```` closes on ```` (not ```), and the items after each count', async () => {
+    const b = await board('~~~\n```\n- [ ] in tilde code\n~~~\n- [ ] real item\n````\n```\n- [ ] in long fence\n````\n- [ ] real 2\n');
+    const r = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--dry-run']);
+    expect(r.data.created.map((c: { title: string }) => c.title)).toEqual(['real item', 'real 2']);
+  });
+
+  it('a fence indented 4 inside a nested item is code: its checkbox is no task, the items around it are', async () => {
+    const b = await board('- [ ] top\n  - [ ] sub\n    ```md\n    - [ ] inside code\n    ```\n  - [ ] after\n');
+    const r = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--dry-run']);
+    expect(r.data.created.map((c: { title: string }) => c.title)).toEqual(['top', 'sub', 'after']);
+  });
+
+  it('checkboxes in an HTML comment (one line or several) are no tasks', async () => {
+    const b = await board('<!-- - [ ] one line -->\n<!--\n- [ ] commented out\n-->\n- [ ] kept\n');
+    const r = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--dry-run']);
+    expect(r.data.created.map((c: { title: string }) => c.title)).toEqual(['kept']);
+  });
+
+  it('--heading-labels: a heading that gives no label (Cyrillic) is named in a warning', async () => {
+    const b = await board('## Бэкенд\n- [ ] x\n## Web\n- [ ] y\n');
+    const r = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--heading-labels', '--as', 'c']);
+    expect(r.code).toBe(0);
+    expect(r.warnings.find((w: string) => w.startsWith('--heading-labels'))).toContain('"Бэкенд"');
+    expect(byTitle(b).get('y')).toMatchObject({ labels: ['web'] });
   });
 });
