@@ -149,7 +149,7 @@ describe('MCP server over stdio (SDK client)', () => {
       for (const t of tools) {
         expect(t.inputSchema.additionalProperties, t.name).toBe(false);
         expect(t.description?.length ?? 0, t.name).toBeGreaterThan(10);
-        // Write tools take an optional actor (else LANEBOARD_AGENT, else the session default name); reads take none, but task_prime
+        // Write tools take an optional actor (else the server's `mcp --as`, else LANEBOARD_AGENT, else the session default name); reads take none, but task_prime
         // (whose tasks to list).
         const required = (t.inputSchema.required ?? []) as string[];
         expect(required.includes('actor'), t.name).toBe(false);

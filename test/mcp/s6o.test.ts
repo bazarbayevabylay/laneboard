@@ -134,6 +134,20 @@ describe('S6o: `laneboard mcp --as` (C-U6)', () => {
     }
   });
 
+  it('an empty actor is no name: the server\'s --as names the write, not LANEBOARD_AGENT', async () => {
+    const home = tempDir();
+    const b = await webBoard(home);
+    const mcp = await startMcp(b.sub, ['mcp', '--as', 'codex-1'], { HOME: home, LANEBOARD_AGENT: 'from-env' });
+    try {
+      const made = await mcp.call('task_create', { title: 'Empty actor', status: 'todo', actor: '', full: true });
+      expect(made.structured).toMatchObject({ created_by: 'codex-1', updated_by: 'codex-1' });
+      const events = (await mcp.call('task_events', { task: made.structured.id as string })).structured.items as Array<{ actor: string }>;
+      expect(events.map((e) => e.actor)).toEqual(['codex-1']);
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('a bad --as fails at start with INVALID_VALUE (exit 2), before serving', async () => {
     const r = await cli(['mcp', '--as', 'bad name', '--json'], { cwd: tempDir(), env: {} });
     expect(r.code).toBe(2);

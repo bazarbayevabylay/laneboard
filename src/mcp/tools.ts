@@ -326,9 +326,9 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     if (typeof args !== 'object' || Array.isArray(args)) throw new LaneboardError('USAGE', 'arguments must be an object');
     const { actor: who, full: wantFull, input } = splitArgs(entry.def, args as Record<string, unknown>);
     store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd, home: env.env.HOME || undefined });
-    // Same order as the CLI: the actor parameter (the server's --as standing in for a missing one), LANEBOARD_AGENT, then the
+    // Same order as the CLI: the actor parameter (the server's --as standing in for a missing or empty one), LANEBOARD_AGENT, then the
     // session's default name (recorded as such on events).
-    const named: ResolvedActor = entry.def.write || entry.def.prime ? resolveActor(who ?? env.agent, env.env) : {};
+    const named: ResolvedActor = entry.def.write || entry.def.prime ? resolveActor(who || env.agent, env.env) : {};
     const ctx: OpContext = { store, ...named, cwd: env.cwd, home: env.env.HOME || undefined, lockWaitMs: env.lockWaitMs };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     // task_prime asks for the summary of the caller's own tasks, as `laneboard prime` does with its name.
