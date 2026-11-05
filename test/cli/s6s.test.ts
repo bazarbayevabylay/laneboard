@@ -284,3 +284,122 @@ describe('SETUP_CONFLICT follows the file Claude Code reads', () => {
     expect(read(path.join(wt, '.claude', 'settings.json')).env.LANEBOARD_DIR).toBe(path.join(wt, '.laneboard'));
   });
 });
+
+// Review r1 (S6s): another board appears in the repository after setup in a package wrote the root local pin. The pin no longer
+// applies there (ADR §14: a re-run takes our env out of the file that no longer applies), so re-running setup, setup in the new board's
+// folder and --remove all take it out, unless setup stands at the root itself.
+describe('another board appears in the repository after setup in a package', () => {
+  // The monorepo after setup in packages/web (env in the root local file), then a board of its own in packages/b.
+  async function withLaterBoard(): Promise<Mono & { b: string; bStore: string }> {
+    const m = await monorepo();
+    expect((await json(m.web, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    expect(read(m.rootLocal).env.LANEBOARD_DIR).toBe(m.store);
+    const b = path.join(m.root, 'packages', 'b');
+    fs.mkdirSync(b, { recursive: true });
+    const bStore = path.join(b, '.laneboard');
+    expect((await json(b, ['init', '--dir', bStore, '--name', 'b', '--prefix', 'BB', '--description', 'b'], m.env)).code).toBe(0);
+    return { ...m, b, bStore };
+  }
+
+  const leftWarning = (m: Mono): string =>
+    `${m.rootLocal} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code there pins it again`;
+
+  it('setup again in the package takes the pin out of the root local file and keeps its env in its settings.json; then setup in b works', async () => {
+    const m = await withLaterBoard();
+    const r = await json(m.web, ['setup', 'claude-code'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(r.doc.data.files.map((f: { path: string; result: string }) => [f.path, f.result])).toContainEqual([m.rootLocal, 'deleted']);
+    expect(r.doc.warnings).toContain(leftWarning(m));
+    expect(fs.existsSync(m.rootLocal)).toBe(false);
+    expect(read(m.webSettings).env.LANEBOARD_DIR).toBe(m.store);
+    const again = await json(m.web, ['setup', 'claude-code'], m.env);
+    expect(again.doc.data.files.map((f: { path: string }) => f.path)).not.toContain(m.rootLocal);
+    const inB = await json(m.b, ['setup', 'claude-code'], m.env);
+    expect(inB.code, JSON.stringify(inB.doc)).toBe(0);
+    expect(read(path.join(m.b, '.claude', 'settings.json')).env.LANEBOARD_DIR).toBe(m.bStore);
+    expect(fs.existsSync(m.rootLocal)).toBe(false);
+  });
+
+  it('setup in b right away: no SETUP_CONFLICT (no fix sending setup to the root), the left pin goes, sessions in b get no root LANEBOARD_DIR', async () => {
+    const m = await withLaterBoard();
+    const r = await json(m.b, ['setup', 'claude-code'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(r.doc.data.store).toBe(m.bStore);
+    expect(r.doc.warnings).toContain(leftWarning(m));
+    expect(fs.existsSync(m.rootLocal)).toBe(false);
+    expect(read(path.join(m.b, '.claude', 'settings.json')).env.LANEBOARD_DIR).toBe(m.bStore);
+    // Nothing setup wrote at the root but the exclude block.
+    expect(fs.existsSync(path.join(m.root, 'CLAUDE.md'))).toBe(false);
+    expect(fs.existsSync(path.join(m.root, '.mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(m.root, '.claude'))).toBe(false);
+  });
+
+  it('--remove in the package takes the pin out of the root local file, with no warning that setup at the root uses it', async () => {
+    const m = await withLaterBoard();
+    const r = await json(m.web, ['setup', 'claude-code', '--remove'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(r.doc.data.files.map((f: { path: string; result: string }) => [f.path, f.result])).toContainEqual([m.rootLocal, 'deleted']);
+    expect(fs.existsSync(m.rootLocal)).toBe(false);
+    expect(fs.existsSync(path.join(m.root, '.claude'))).toBe(false);
+    expect(r.doc.warnings.filter((w: string) => w.includes('still uses it'))).toEqual([]);
+    expect(fs.readFileSync(path.join(m.root, '.git', 'info', 'exclude'), 'utf8')).not.toContain('laneboard');
+    expect(m.git(['status', '--porcelain', '--untracked-files=all']).split('\n').filter((l) => l !== '' && !l.includes('packages/b/.laneboard'))).toEqual([]);
+  });
+
+  it('control: while setup stands at the root, the package leaves the root local file alone and b is still refused (that pin is the root setup\'s)', async () => {
+    const m = await monorepo();
+    expect((await json(m.root, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    expect((await json(m.web, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    const local = fs.readFileSync(m.rootLocal, 'utf8');
+    const b = path.join(m.root, 'packages', 'b');
+    fs.mkdirSync(b, { recursive: true });
+    expect((await json(b, ['init', '--dir', path.join(b, '.laneboard'), '--description', 'b'], m.env)).code).toBe(0);
+    const r = await json(m.web, ['setup', 'claude-code'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(local);
+    const inB = await json(b, ['setup', 'claude-code'], m.env);
+    expect(inB.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${m.root} && laneboard setup claude-code && cd ${b} && laneboard setup claude-code` });
+  });
+
+  it("control: the user's own LANEBOARD_DIR (one key) in the root local file stays", async () => {
+    const m = await withLaterBoard();
+    fs.writeFileSync(m.rootLocal, JSON.stringify({ env: { LANEBOARD_DIR: m.store } }));
+    expect((await json(m.web, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    expect((await json(m.web, ['setup', 'claude-code', '--remove'], m.env)).code).toBe(0);
+    expect(read(m.rootLocal)).toEqual({ env: { LANEBOARD_DIR: m.store } });
+  });
+
+  it('control: a pin of both keys to a store outside the repository in the root local file is not a left pin: SETUP_CONFLICT, kept', async () => {
+    const m = await withLaterBoard();
+    const elsewhere = path.join(tempDir(), '.laneboard');
+    fs.writeFileSync(m.rootLocal, JSON.stringify({ env: { LANEBOARD_DIR: elsewhere, LANEBOARD_DEFAULT_AGENT: 'claude-code@x' } }));
+    const before = fs.readFileSync(m.rootLocal, 'utf8');
+    const r = await json(m.b, ['setup', 'claude-code'], m.env);
+    expect(r.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: m.rootLocal, value: elsewhere } });
+    expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(before);
+  });
+
+  it('control: with no other board the root pin still applies to the other packages: a package pinned elsewhere is refused, the pin stays', async () => {
+    const m = await monorepo();
+    expect((await json(m.web, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    const before = fs.readFileSync(m.rootLocal, 'utf8');
+    const api = path.join(m.root, 'packages', 'api');
+    fs.mkdirSync(api, { recursive: true });
+    const r = await json(api, ['setup', 'claude-code', '--dir', path.join(tempDir(), '.laneboard')], m.env);
+    expect(r.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: m.rootLocal, value: m.store } });
+    expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(before);
+  });
+
+  it('a board inside the repository is seen when setup runs through a link to the repository (paths compared with links resolved)', async () => {
+    const m = await monorepo();
+    const b = path.join(m.root, 'packages', 'b');
+    fs.mkdirSync(b, { recursive: true });
+    expect((await json(b, ['init', '--dir', path.join(b, '.laneboard'), '--description', 'b'], m.env)).code).toBe(0);
+    const link = path.join(tempDir(), 'mono-link');
+    fs.symlinkSync(m.root, link);
+    const r = await json(path.join(link, 'packages', 'web'), ['setup', 'claude-code'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(fs.existsSync(m.rootLocal)).toBe(false);
+    expect(read(m.webSettings).env.LANEBOARD_DIR).toBe(path.join(link, '.laneboard'));
+  });
+});
