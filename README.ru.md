@@ -1,0 +1,356 @@
+# laneboard
+
+laneboard — доска задач и CLI, с которыми AI-агенты сами ведут свои задачи: заводят, берут, комментируют и закрывают.
+Человек видит те же задачи и может вмешаться в любой момент.
+
+Работает с Claude Code, Codex, Cursor, Gemini CLI, OpenCode и любым другим MCP-клиентом. Без сервера и базы данных:
+хранилище — два JSON-файла в папке проекта.
+
+| Что | Где |
+|---|---|
+| Гайд для агентов (на английском): установка, цикл задачи, ошибки, настройка, импорт | [docs/agent-guide.md](docs/agent-guide.md) (в пакете) |
+| Что изменилось в каждой версии | [CHANGELOG.md](CHANGELOG.md) (в пакете) |
+| Архитектурное решение и спецификация | [ADR-0001 на GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) |
+| Английская версия этого файла | [README.md](README.md) |
+| Лицензия | MIT, [LICENSE](LICENSE) |
+
+Каждый блок `sh` этого файла выполняется в тестах laneboard по порядку, в новом проекте: команды и коды выхода настоящие.
+
+## Установка
+
+Нужен Node.js 22 или новее, macOS или Linux. CLI ставится один раз на машину.
+Windows не поддерживается: npm отказывается ставить пакет с ошибкой `EBADPLATFORM`.
+На Node.js старее каждая команда печатает одну строку предупреждения (с `--json` — в `warnings`): поставьте Node.js 22 и CLI заново.
+
+Проверка версии — `node --version`. Если nvm по умолчанию даёт версию старее, поставьте 22 и сделайте её умолчанием (агенты в новых
+терминалах берут именно её): `nvm install 22 && nvm alias default 22 && nvm use 22`. Глобальный пакет ставится в ту версию Node.js,
+что активна сейчас: после смены версии CLI ставят заново.
+
+<!-- guide:skip installs globally -->
+```sh
+npm i -g laneboard
+```
+
+Без реестра npm — из git: склонировать, собрать и поставить из папки или из архива.
+
+<!-- guide:skip installs globally -->
+```sh
+git clone https://github.com/bazarbayevabylay/laneboard.git
+cd laneboard && npm ci && npm run build
+npm i -g .
+```
+
+| Способ | Что получится |
+|---|---|
+| `npm i -g .` | ссылка на папку клона: `git pull && npm ci && npm run build` обновляет CLI |
+| `npm pack && npm i -g ./laneboard-*.tgz` | копия из архива: папку клона потом можно удалить |
+
+Проверка: команда печатает версию (`-v` — тоже). `laneboard` без аргументов печатает справку.
+
+```sh
+laneboard --version
+```
+
+## Быстрый старт
+
+Две команды в корне проекта. `init` создаёт доску `./.laneboard` и заносит её в реестр машины, `setup` подключает харнес,
+дальше агент работает сам.
+
+У доски есть имя и описание в одну строку: чей проект и что за работа. Префикс id выводится из имени, до 4 символов:
+инициалы слов (`my-web-app` -> `MWA-1`) или начало одного слова (`laneboard` -> `LANE-1`), число в конце сохраняется.
+Свой префикс — `init --prefix WEB`; пока на доске нет ни одной задачи, его меняет `laneboard config --prefix WEB`. Префикс не должен
+совпадать с префиксом другой доски на машине (это проверяют `init`, `config` и `setup`).
+
+```sh
+laneboard init --name web --description "Интернет-магазин ACME: витрина и корзина"
+laneboard setup claude-code
+```
+
+Так выглядит работа агента — те же команды он выполняет сам:
+
+```sh
+laneboard create "Починить редирект после входа" --status todo --assignee dev-1 --as dev-1 --json
+laneboard claim WEB-1 --status in_progress --as dev-1 --json
+laneboard comment WEB-1 "Причина: редирект теряет query string" --as dev-1 --json
+laneboard update WEB-1 --append-description "Шаги: войти со страницы /cart" --as dev-1 --json
+laneboard finish WEB-1 --result "Исправлено, тест на редирект добавлен" --as dev-1 --json
+laneboard list --scope all --json
+```
+
+У `create` статус обязателен (значения по умолчанию нет): без `--status` в ошибке `fix` — та же команда с первым статусом из конфига.
+Заголовок — аргумент, а не опция: `create --title X` — ошибка, её `fix` — правильная команда.
+Ответ каждой записи короткий: `id`, новый `rev`, `status`, `assignee` (после `attach` ещё `attachment`, после `finish` — `commit`);
+задача целиком — `laneboard get WEB-1` или `--full` у записи. Человеку удобнее без `--json`: `list`, `get`, `events`, `view`.
+
+## Подключение харнеса
+
+`laneboard setup <харнес>` в корне проекта регистрирует MCP-сервер `laneboard`, добавляет блок инструкций из трёх строк и привязывает
+проект к его доске. В один проект можно подключить несколько харнесов. Повторный запуск отвечает `unchanged`; `--dry-run` ничего не пишет.
+
+```sh
+laneboard setup codex
+```
+
+| Харнес | Запись MCP | Инструкции | Привязка к доске |
+|---|---|---|---|
+| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` и `env.LANEBOARD_DEFAULT_AGENT` в `.claude/settings.local.json` (его исключает из git `.git/info/exclude`); в папке со своей доской внутри другого git-репозитория или в корне репозитория, где есть другие доски, — в коммитящийся `.claude/settings.json` (Claude Code читает локальный файл только в корне репозитория, и привязка там дошла бы до всех досок) — не коммитьте этот путь машины или держите одну доску на репозиторий; плюс хуки SessionStart и PostToolUse в `.claude/settings.json` |
+| codex | `~/.codex/config.toml` (глобальный; `CODEX_HOME` его переносит) | `AGENTS.md` | `LANEBOARD_DIR=<доска>` в инструкциях; запись передаёт `LANEBOARD_DIR` дальше |
+| cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <доска>` в записи, `LANEBOARD_DIR=<доска>` в инструкциях |
+| gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <доска>` в записи, `LANEBOARD_DIR=<доска>` в инструкциях |
+| opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <доска>` в записи, `LANEBOARD_DIR=<доска>` в инструкциях |
+
+- Хуки Claude Code: SessionStart печатает правила, доску и ваши задачи (`laneboard prime --hook`); после `Edit`, `Write`,
+  `MultiEdit` или `NotebookEdit` без задачи в работе — одна строка-напоминание. Правки через Bash хук не видит.
+- Доску, пришедшую вместе с клоном репозитория, хук не показывает агенту, пока её не зарегистрирует `laneboard setup claude-code`.
+- Плагин Claude Code вместо `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, затем
+  `/plugin install laneboard@laneboard`. Выберите что-то одно: оба регистрируют тот же сервер и те же хуки.
+- По символической ссылке внутри проекта `setup` идёт (`CLAUDE.md -> AGENTS.md` кладёт блок в `AGENTS.md`). Ссылка за пределы
+  проекта, битая или в `.git` — отказ (`SETUP_CONFLICT`), ничего не записано.
+- Ваш текст между `<!-- laneboard:start -->` и `<!-- laneboard:end -->` никогда не удаляется: `setup` отказывает и называет строки.
+- В `.git/info/exclude` появляется блок laneboard: локальные настройки, копии `*.laneboard.bak` и метки `.laneboard-created` не попадают в git.
+
+## Любой MCP-клиент
+
+laneboard работает с любым клиентом, который запускает stdio MCP-серверы. Передайте серверу доску и имя по умолчанию:
+
+```json
+{ "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
+```
+
+- Первым вызовите `task_prime`: он отдаёт правила для MCP, статусы по порядку, объявленные поля, ваши и свободные задачи.
+- Без `--dir` сервер ищет доску от папки, в которой его запустил клиент. Не нашёл — на каждый вызов отвечает
+  `STORE_NOT_FOUND`: его `fix` говорит, какие `args` задать, а `details.boards` перечисляет доски машины.
+- Имя в записях: `actor` инструмента, иначе `mcp --as`, иначе `LANEBOARD_AGENT`, иначе имя сессии по умолчанию.
+- Клиент не находит `laneboard`? Укажите в `command` абсолютный путь из `command -v laneboard`; с nvm этот путь меняется
+  вместе с версией Node.js, после смены версии его нужно обновить.
+- 12 инструментов: `task_prime`, `task_create`, `task_get`, `task_list`, `task_update`, `task_claim`, `task_comment`, `task_finish`,
+  `task_attach`, `task_archive`, `task_restore`, `task_events`. `init`, `config`, `setup`, `delete`, `redact`, `import` и `doctor` — только в CLI.
+
+```sh
+laneboard mcp --dir .laneboard --as codex-1 < /dev/null
+```
+
+## Имена агентов
+
+Каждая запись подписана именем: `--as` (в MCP — `actor`), иначе `LANEBOARD_AGENT`, иначе имя сессии по умолчанию.
+В имени — буквы, цифры и `. _ : @ -`. Имена агенты выбирают сами, поэтому любое правило «кто что может» защищает от ошибки
+агента, а не от враждебного агента.
+
+| Что | Как |
+|---|---|
+| Имя по умолчанию в Claude Code | `claude-code@<основа>:<первые 8 символов id сессии>`; основа — глобальный git `user.name` (`~/.gitconfig`, читается без запуска git), иначе пользователь ОС; её пишет `setup`, id сессии даёт Claude Code |
+| Две параллельные сессии | два имени, поэтому `claim` второй сессии даёт `ALREADY_CLAIMED` |
+| Откуда имя у записи | в каждом событии поле `actor_source`: `explicit` или `default`; `get` помечает `(default name)` |
+| Сабагенты одной сессии | делят её имя по умолчанию, поэтому каждый передаёт своё `--as`; `prime` под именем по умолчанию об этом напоминает |
+| После `/clear` или перезапуска | новый id сессии — новое имя. Хук SessionStart (кроме resume и сжатия контекста) показывает незаконченные задачи прежних сессий с той же основой и их возраст; `claim <ID> --resume` забирает такую. `ALREADY_CLAIMED` на такой задаче предлагает `--resume`, если та сессия ничего не писала 15 минут, иначе — комментарий; `--resume` у живой сессии срабатывает с предупреждением |
+| Codex, Cursor, Gemini CLI, OpenCode | имени по умолчанию нет (нет id сессии): нужно `--as` |
+
+```sh
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "Без имени" --status todo --assignee claude-code@ann:a1b2c3d4 --json
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard prime
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard claim WEB-2 --resume --json
+```
+
+## Сдача работы
+
+`finish` — одна запись: итог-комментарий (`result: true` в его событии), ссылка на текущий git-коммит (`commit=<HEAD>`;
+`--no-commit` её пропускает, вне git её нет), затем статус. Сначала закоммитьте: незакоммиченные изменения или HEAD старше `claim`
+дают предупреждение. Git спрашивается с лимитом 2 секунды; без git задача всё равно закрывается.
+
+- `--status` — любой статус, кроме первого. `finish` исполнителя в нефинальный статус сдаёт задачу (`handed_in: true`).
+  Чужую задачу `finish` только принимает, в финальный статус и только после того, как исполнитель её сдал (`accepted: true`).
+- Повторная сдача в тот же статус с новым итогом: итог записывается; тот же итог ещё раз ничего не меняет.
+- Git worktree: доска основного checkout находится сама, и `finish` там привязывает HEAD этого worktree.
+  `finish` в основном checkout, когда в других worktree есть коммиты новее, предупреждает с `fix`; `--commit <sha>` называет коммит
+  (MCP: `cwd` — абсолютный путь вашего worktree, или `commit`).
+- Подзадачи: `create ... --parent WEB-1` (задача той же доски); `get` показывает `children`, `list --parent WEB-1` — прямых детей.
+- `update --append-description` дописывает абзац без `--expected-rev`; `--description` заменяет текст, старый остаётся в его событии.
+- `--expected-rev` нужен только для правок поверх прочитанного (описание, поля); для статуса, комментария, `claim` и `finish` — никогда.
+
+## Оркестраторам
+
+### Проверки в N шагов, проверяющие, авторы задач
+
+Необязательные ключи доски; доска без них работает, как описано выше. Включённый ключ записывает `config.json` как `laneboard/config@2`
+(laneboard 0.3.x такую доску не открывает); `none` выключает каждый обратно.
+
+```sh
+laneboard config --review-statuses review --reviewers lead --json
+laneboard create "Добавить ограничение частоты запросов" --status todo --assignee dev-1 --as lead --json
+laneboard claim WEB-3 --status in_progress --as dev-1 --json
+laneboard finish WEB-3 --result "Ограничитель добавлен, 5 запросов в минуту" --as dev-1 --json
+laneboard finish WEB-3 --status done --result "Принимаю сам" --as dev-1 --json  # exit 2
+laneboard finish WEB-3 --result "Проверено с токеном администратора" --as lead --json
+laneboard config --review-statuses none --reviewers none --json
+```
+
+- `--review-statuses code_review,qa`: проверки по порядку (между первым и финальным статусом). `finish` исполнителя сдаёт задачу
+  на первую проверку; `finish` проверяющего передаёт её на следующую, а с последней принимает в финальный статус.
+- `--reviewers rev,orch`: кто проверяет (по умолчанию — кто угодно, кроме автора работы). Автор никогда не передаёт дальше и не принимает свою работу.
+- `--creators orch`: только эти имена заводят задачи, подзадачи и импорт; остальные получают `INVALID_VALUE` с `fix`: попросить задачу.
+- Возврат на доработку: проверяющий пишет комментарий с причиной, затем `update <ID> --status <рабочий статус>`; `prime` исполнителя показывает этот комментарий.
+- Сабагенты узнают свою роль из `laneboard prime`: проверки, проверяющие, раздел «Waiting for your check» с командой `finish`.
+- Доски, созданные до 0.4.0, работают как раньше; проверки включаются только вручную через `laneboard config`.
+
+### Передача взятой задачи
+
+`claim` никогда не забирает задачу у другого имени. Оркестратор переназначает её и пишет почему:
+
+```sh
+laneboard create "Профилировать экспорт" --status todo --as dev-1 --json
+laneboard claim WEB-4 --status in_progress --as dev-1 --json
+laneboard claim WEB-4 --as dev-2 --json  # exit 4
+laneboard update WEB-4 --assignee dev-2 --as lead --json
+laneboard comment WEB-4 "dev-1 остановился; задачу берёт dev-2" --as lead --json
+```
+
+### Все доски сразу
+
+`list --all-boards` сводит задачи всех досок машины (`--open` — без финальных статусов). `prime --all-boards` дописывает раздел
+до 3000 символов: по строке счётчиков на доску, затем срочные задачи всех досок (`waiting-owner`, сданные, «залипшие» —
+в работе без изменений 4 часа); если класс обрезан — `+N more: <команда>`. Задачу, которая ждёт владельца, помечают меткой
+`waiting-owner` и комментарием с вопросом.
+
+```sh
+laneboard list --all-boards --open --json
+laneboard prime --all-boards --as lead
+```
+
+## Статусы, поля и метки
+
+- Статусы — колонки доски по порядку; последний — финальный. Их задаёт `init --statuses todo,in_progress,review,done` (это и есть
+  список по умолчанию), а `laneboard config --statuses a,b,c` потом меняет весь список (не меньше 2). Статус, в котором есть активные
+  задачи, убирается только после их перевода. Агенты статусы не меняют.
+- Поля — дополнительные ключи с типом: `laneboard config --field <ключ>:<тип>[:<описание>]` объявляет или меняет поле (`string`, `number`,
+  `boolean`, `string[]`, `json`), `--drop-field <ключ>` убирает его, когда ни у одной активной задачи нет значения. Числовые поля
+  принимают только десятичную запись (`-?digits[.digits]`): `0x10`, `1e3` и `Infinity` отклоняются.
+- Метки: строчные латинские буквы, цифры и `. _ -`, начинаются с буквы или цифры, до 40 символов (`ui-bug`, `zone-api`).
+  `zone:api` отклоняется, `fix` содержит нормализованную метку.
+
+```sh
+laneboard config --field priority:number:"0 — самый важный" --field area:string --json
+laneboard create "Починить сумму в корзине" --status todo --label ui-bug --field priority=1 --field area=cart --as dev-1 --json
+laneboard create "Метка с двоеточием" --status todo --label zone:api --as dev-1 --json  # exit 2
+```
+
+## Монорепозиторий и несколько досок
+
+По умолчанию — одна доска на git-репозиторий: пакет со своим `AGENTS.md` или `CLAUDE.md` берёт доску из корня репозитория,
+без предупреждения. Внутри git другой проект отмечает только `.git` (вложенный репозиторий, submodule) или своя доска.
+
+- `setup` в пакете привязывает его к доске корня. Claude Code: путь доски уходит в `.claude/settings.local.json` корня
+  (git его не видит); пакет коммитит только хуки. Старая привязка в `.claude/settings.json` переносится с предупреждением: закоммитьте это изменение.
+  Исключение: пакет со своей доской или любая папка репозитория, в корне которого есть другие доски, держит привязку в
+  коммитящемся `.claude/settings.json` (локальный файл корня привязал бы все доски репозитория). Не коммитьте `env` этого файла
+  (путь машины) или держите одну доску на репозиторий.
+- Пакет со своей доской: `laneboard init --dir packages/<имя>/.laneboard`; простой `init` в пакете репозитория, у которого доска
+  выше, отклоняется с `fix`.
+- Какую доску берёт команда: `--dir <путь>`, иначе `LANEBOARD_DIR`, иначе `.laneboard/` в текущей папке или выше (в связанном git
+  worktree — доска его основного checkout). Ответ каждой команды называет `store` и `prefix`. Не уверены, какая доска ваша: `laneboard boards --json`.
+- `--board <префикс|имя|путь>` открывает другую доску только на чтение (`view`, `list`, `get`, `events`, `board`); запись через него — `STORE_READ_ONLY`.
+- Задачу другой доски связывают через `--link task=BILL-1` (`update --add-link`); `get` показывает её статус.
+
+```sh
+mkdir -p packages/billing
+laneboard init --dir packages/billing/.laneboard --name billing --description "Пакет оплаты: счета и платежи"
+laneboard create "Округление в счёте" --status todo --dir packages/billing/.laneboard --as dev-1 --json
+laneboard boards --json
+laneboard list --board BILL --json
+```
+
+## Просмотр досок
+
+`laneboard view` рисует доску в терминале: колонка на статус, в карточке id, заголовок, исполнитель и время в статусе, под каждой —
+последний комментарий (`> текст`; итог `finish` — `= текст`). Фильтры: `--assignee`, `--label`, `--text`; `view --watch` перерисовывает
+доску после каждой записи. `laneboard boards` перечисляет доски машины (`~/.laneboard/boards.json`); путь, где доски больше нет, — `missing`.
+
+```sh
+laneboard view
+laneboard view --assignee dev-1
+```
+
+### Доска в браузере
+
+Доска в браузере только для просмотра — так задумано: задачи меняют агенты, CLI и MCP. `laneboard board` в папке проекта
+печатает `http://127.0.0.1:7420/` и работает до Ctrl+C.
+
+| Что | Как |
+|---|---|
+| Порт | `--port N`, иначе `board.port` из `config.json` (7420); занят — `PORT_IN_USE`, `--port 0` берёт свободный |
+| Доски | каждая доска машины — вкладка; `--board <префикс\|имя\|путь>` открывает первой другую |
+| Доступ | только с этой машины (127.0.0.1), новый токен на каждый запуск |
+| Обновление | запись видна за 1–2 с; раз в минуту страница перечитывает данные |
+
+Те же данные по HTTP (скрипт проверки, тест): возьмите токен из `<meta name="laneboard-token" content="...">` страницы
+`/` и передайте заголовком `X-Laneboard-Token`. Маршруты только `GET`: `/api/boards`, `/api/board` (`?board=`, `assignee`, `label`,
+`text`), `/api/tasks` (`scope`, `status`, `limit`, `offset`), `/api/tasks/<id>`; `/api/events` передаёт изменения потоком (токен — `?token=`).
+
+## Хранилище и безопасность
+
+Всё лежит в `.laneboard/` проекта: `config.json` (настройки), `active.json`, `archive.json`, их `.bak` (предыдущая
+версия), `attachments/<id>/` и каталог `lock` — только пока идёт запись. Каждая запись берёт блокировку, читает свежие данные, проверяет
+и атомарно заменяет файл, поэтому много агентов пишут одновременно без потерь; устаревший `--expected-rev` даёт `REV_CONFLICT`.
+
+- Не коммитьте `.laneboard/`: `init` кладёт туда `.gitignore`. Доска в git не поддерживается: слияние может дать двум задачам один id;
+  `laneboard doctor --fix` даёт поздней копии новый id и называет задачи, которые ссылаются на старый.
+- Одна машина. Блокировка — каталог, поэтому сетевые диски и папки, синхронизируемые между машинами (Dropbox, iCloud), не поддерживаются.
+- Диск заполнен: команда падает с `INTERNAL` и «free disk space»; доска и её `.bak` остаются целыми. Права файлов — по вашему umask.
+- `laneboard doctor` проверяет и выходит с кодом 6, пока проблема осталась; `--fix` чинит что может (файлы вложений без метаданных уходят
+  в `attachments/.orphaned/`, не удаляются); `--restore-backup` возвращает версию из `.bak`. Блокировка со временем из будущего
+  снимается после 10 с без изменений.
+- `laneboard delete <ID> --confirm <ID>` — для людей: в архиве остаётся след (id, заголовок, кто и когда). Вставили секрет:
+  `laneboard redact <ID> --text-file <файл>` убирает его из задачи и из `.bak`; сначала redact, потом delete.
+- Вложения с именами как у ключей и секретов (`.env*`, `*.pem`, `id_rsa*`, `*credentials*`, `.npmrc` и другие, `attachments.deny_names`)
+  отклоняются; `*credentials*` может отклонить и безобидное имя — переименуйте файл.
+
+```sh
+laneboard doctor
+```
+
+## Перенос папки или машины
+
+Папку проекта перенесли: запустите `laneboard setup <харнес>` в новой папке (он заново привязывает), затем `laneboard boards --forget <старый путь>/.laneboard`.
+Другая машина: скопируйте проект вместе с `.laneboard/`, поставьте CLI и запустите там `laneboard setup <харнес>`: путь доски в
+файлах проекта — путь этой машины.
+
+## Перенос существующих задач
+
+`laneboard import markdown <папка>` (файлы с YAML-frontmatter), `import json <папка|файл>` (файлы задач с историей) и
+`import checklist TODO.md --status todo` (список дел в Markdown: пункт — задача, `[x]` — финальный статус, пункт с отступом — подзадача).
+Неизвестный ключ или статус останавливает импорт со списком всех значений; `--dry-run` ничего не пишет; повторный запуск пропускает уже перенесённое.
+Опции и примеры — [docs/agent-guide.md](docs/agent-guide.md#4-migrate-import-existing-tasks).
+
+```sh
+printf '# TODO\n- [x] Настроить схему\n- [ ] Переключатель тёмной темы\n  - [ ] Сохранять выбор после перезагрузки\n' > TODO.md
+laneboard import checklist TODO.md --status todo --as dev-1 --json
+```
+
+## Удаление
+
+`setup <харнес> --remove` убирает только то, что записал `setup`, и возвращает файлам байты, которые были до него. Codex оставляет
+глобальную запись, пока её использует другой проект машины; `setup codex --remove --global` удаляет её всё равно.
+
+```sh
+laneboard setup codex --remove
+laneboard setup claude-code --remove
+```
+
+Затем, если laneboard больше не нужен: удалите папку `.laneboard/` проекта и сам CLI (`npm uninstall -g laneboard`).
+
+## Переход с 0.3.x
+
+- Доски 0.3.x открываются как есть: хранилище и `config.json` сохраняют формат; новые ключи конфига (проверки, проверяющие, авторы)
+  необязательны, и `config@2` пишется, только когда вы включаете один из них. 0.3.x читает любую доску без них.
+- MCP: `task_delete` больше нет (удаление — для людей, только в CLI); появился `task_prime`.
+- Запустите `laneboard setup <харнес>` заново в каждом проекте: блок инструкций, matcher хука и привязка Claude Code обновятся на месте.
+- Новые умолчания `deny_names` действуют для досок, созданных 0.4.0; старая доска сохраняет свой список.
+
+## Ограничения
+
+| Что | Почему |
+|---|---|
+| Только macOS и Linux | атомарный rename и блокировка проверены там; Windows нет в CI |
+| Одна машина, локальные диски | блокировка — каталог в файловой системе |
+| До ~10 000 задач на доске | каждая команда читает файл целиком; старые задачи стоит архивировать |
+| Путь доски этой машины в файлах проекта | его пишет `setup`; на другой машине запустите `setup` заново |
+| Доска в браузере только для просмотра | задачи меняют агенты, CLI и MCP |
