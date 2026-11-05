@@ -157,7 +157,7 @@ describe('import markdown', () => {
 
   it('input errors: unknown format, missing --status-key, json-only options with markdown', async () => {
     const p = await project('markdown', MD_FIELDS);
-    expect((await p.run(['import', 'yaml', 'tasks', '--status-key', 'stage'])).json.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['markdown', 'json'] });
+    expect((await p.run(['import', 'yaml', 'tasks', '--status-key', 'stage'])).json.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['markdown', 'json', 'checklist'] });
     expect((await p.run(['import', 'markdown', 'tasks'])).json.error).toMatchObject({ code: 'USAGE', message: '--status-key is required (the source key that holds the status)' });
     expect((await p.run(['import', 'markdown', 'tasks', '--status-key', 'stage', '--history-key', 'h'])).json.error.code).toBe('USAGE');
     expect((await p.run(['import', 'markdown', 'nowhere', '--status-key', 'stage'])).json.error.code).toBe('INVALID_VALUE');
