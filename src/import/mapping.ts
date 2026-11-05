@@ -1,8 +1,10 @@
 // Map source records to import tasks by the options: which key is the title, status, assignee…, how statuses are renamed,
 // which keys become fields or are dropped, and how a JSON history becomes events. Structural problems are collected, not thrown one by one.
+// A checklist maps item by item: checked -> the done status, indent -> parent, heading -> label (when asked).
+import crypto from 'node:crypto';
 import { ACTOR_RE, MAX_COMMENT_CHARS } from '../core/index.ts';
 import type { ImportTaskT } from '../core/index.ts';
-import type { SourceRecord } from './sources.ts';
+import type { ChecklistItem, SourceRecord } from './sources.ts';
 
 export interface MappingOptions {
   titleKey: string;
@@ -35,8 +37,105 @@ export interface Mapped {
   problems: MappingProblem[];
   // Files that are not tasks (no frontmatter).
   ignored: Array<{ source: string; reason: string }>;
+  // Ignored files that hold checklist items (`import checklist` reads them).
+  checklists: Array<{ source: string; checkboxes: number }>;
   // History texts cut to the comment limit.
   truncated: number;
+  // --heading-labels: headings that give no label (labels are a-z0-9._-).
+  unlabeled: string[];
+}
+
+export interface ChecklistOptions {
+  // Status of an open item (`- [ ]`).
+  status: string;
+  // Status of a checked item (`- [x]`).
+  doneStatus: string;
+  // The nearest heading above an item becomes its label.
+  headingLabels: boolean;
+}
+
+// Longest task title in code points (the core's TitleInput: zod 4 counts code points).
+const TITLE_MAX = 200;
+
+// Empty result of a mapping.
+function emptyMapped(): Mapped {
+  return { tasks: [], problems: [], ignored: [], checklists: [], truncated: 0, unlabeled: [] };
+}
+
+// A record that is not a task: listed as ignored, and as a checklist when it holds checkbox items.
+function noteIgnored(out: Mapped, r: { source: string; reason: string; checkboxes: number }): void {
+  out.ignored.push({ source: r.source, reason: r.reason });
+  if (r.checkboxes > 0) out.checklists.push({ source: r.source, checkboxes: r.checkboxes });
+}
+
+// A heading as a label: lower case, runs of other characters -> '-', at most 40 characters; undefined when nothing is left.
+export function headingLabel(heading: string): string | undefined {
+  const slug = heading
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+  return slug === '' ? undefined : slug;
+}
+
+// Longest item text kept whole in the key, in code points; a longer one is cut and marked with its hash (link ref and source are at most 2000).
+const KEY_TEXT_MAX = 500;
+
+// The item text in the key: whole, or its first KEY_TEXT_MAX code points + "…#" + 12 hex of its sha256 (a whole text is never that long).
+function keyText(text: string): string {
+  const chars = Array.from(text);
+  if (chars.length <= KEY_TEXT_MAX) return text;
+  return `${chars.slice(0, KEY_TEXT_MAX).join('')}…#${crypto.createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
+}
+
+// The idempotency key of an item: file#text; a key already taken in the file (a repeated text, or an item literally "foo (2)")
+// gets the first free " (n)", n >= 2, so no item shares a key and the same file gives the same keys on every run.
+function itemSource(file: string, text: string, used: Set<string>): string {
+  const base = `${file}#${keyText(text)}`;
+  let key = base;
+  for (let n = 2; used.has(key); n++) key = `${base} (${n})`;
+  used.add(key);
+  return key;
+}
+
+// One checklist file as tasks: each item is a task; an item indented under another is its child (parent_source); a heading starts anew.
+function checklistTasks(file: string, items: readonly ChecklistItem[], o: ChecklistOptions, unlabeled: string[]): ImportTaskT[] {
+  const tasks: ImportTaskT[] = [];
+  const used = new Set<string>();
+  // Open items above the current one, shallowest first: the parent is the nearest one with a smaller indent.
+  let stack: Array<{ indent: number; source: string }> = [];
+  let heading: string | undefined;
+  for (const item of items) {
+    if (item.heading !== heading) stack = [];
+    heading = item.heading;
+    while (stack.length && (stack.at(-1)?.indent ?? 0) >= item.indent) stack.pop();
+    const source = itemSource(file, item.text, used);
+    const chars = Array.from(item.text);
+    const long = chars.length > TITLE_MAX;
+    const task: ImportTaskT = { source, title: long ? `${chars.slice(0, TITLE_MAX - 1).join('')}…` : item.text, status: item.checked ? o.doneStatus : o.status };
+    // A title cut to the limit keeps the whole text in the description.
+    if (long) task.description = item.text;
+    const parent = stack.at(-1);
+    if (parent) task.parent_source = parent.source;
+    const label = o.headingLabels ? headingLabel(item.heading) : undefined;
+    if (label !== undefined) task.labels = [label];
+    else if (o.headingLabels && item.heading !== '' && !unlabeled.includes(item.heading)) unlabeled.push(item.heading);
+    tasks.push(task);
+    stack.push({ indent: item.indent, source });
+  }
+  return tasks;
+}
+
+// Map checklist records: every item of every file is a task; files without items are listed as ignored.
+export function mapChecklist(records: readonly SourceRecord[], o: ChecklistOptions): Mapped {
+  const out = emptyMapped();
+  for (const r of records) {
+    if (r.kind === 'not-task') noteIgnored(out, r);
+    else if (r.kind === 'checklist') out.tasks.push(...checklistTasks(r.source, r.items, o, out.unlabeled));
+    else out.problems.push({ source: r.source, field: 'file', message: r.kind === 'broken' ? r.reason : 'not a checklist file' });
+  }
+  return out;
 }
 
 // Keys a history entry may use for its time, actor, and text (first one present wins).
@@ -113,18 +212,19 @@ function historyEvent(entry: unknown, o: MappingOptions): { event: NonNullable<I
 
 // Map every record; problems name the source file and the key.
 export function mapRecords(records: readonly SourceRecord[], o: MappingOptions): Mapped {
-  const out: Mapped = { tasks: [], problems: [], ignored: [], truncated: 0 };
+  const out = emptyMapped();
   const special = new Set([o.titleKey, o.statusKey, o.assigneeKey, o.labelsKey, o.descriptionKey, o.historyKey].filter((k): k is string => k !== undefined));
   for (const r of records) {
     if (r.kind === 'not-task') {
-      out.ignored.push({ source: r.source, reason: r.reason });
+      noteIgnored(out, r);
       continue;
     }
     const bad = (field: string, message: string): void => {
       out.problems.push({ source: r.source, field, message });
     };
-    if (r.kind === 'broken') {
-      bad('file', r.reason);
+    if (r.kind === 'broken' || r.kind === 'checklist') {
+      // A checklist record comes only from `import checklist` (mapChecklist); here it is a file that is not a task.
+      bad('file', r.kind === 'broken' ? r.reason : 'a checklist file, not a task file');
       continue;
     }
     const d = r.data;

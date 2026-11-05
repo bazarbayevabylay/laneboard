@@ -1,6 +1,7 @@
-// Op: import tasks read from another tracker's files (CLI-only: `laneboard import markdown|json`).
+// Op: import tasks read from another tracker's files (CLI-only: `laneboard import markdown|json|checklist`).
 // All or nothing: every problem of every new task is collected into one error before anything is written;
 // a task whose source file was imported before (link file=<source>) is skipped, so a re-run creates no duplicates.
+// A task may name its parent by the parent's source (a checklist item under another): the parent is new in this import or imported before.
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import type { ErrorCode } from '../errors.ts';
@@ -30,6 +31,8 @@ export const ImportTask = z.strictObject({
   labels: z.array(z.string()).optional(),
   fields: z.record(z.string(), z.unknown()).optional(),
   history: z.array(ImportEvent).optional(),
+  // Source of the parent task (ADR §25): another task of this import, or a task imported before (link file=<parent_source>).
+  parent_source: z.string().min(1).max(2000).optional(),
 });
 export type ImportTaskT = z.infer<typeof ImportTask>;
 
@@ -42,7 +45,8 @@ export type ImportInputT = z.infer<typeof ImportInput>;
 export interface ImportResult {
   dry_run: boolean;
   // New tasks (id is null in a dry run: ids are given only when written).
-  created: Array<{ id: string | null; source: string; title: string }>;
+  // parent: the parent's id for a subtask (null in a dry run when the parent is new too).
+  created: Array<{ id: string | null; source: string; title: string; parent?: string | null }>;
   // Sources imported before: the task that holds the link.
   skipped: Array<{ id: string; source: string }>;
 }
@@ -119,32 +123,62 @@ function problemsError(config: ConfigT, problems: Problems): LaneboardError | un
   });
 }
 
-// Which sources already have a task (link file=<source>, active or archive).
-function importedSources(files: readonly StoreFileT[]): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const f of files) for (const t of f.tasks) for (const l of t.links) if (l.kind === 'file' && !out.has(l.ref)) out.set(l.ref, t.id);
+// Which sources already have a task (link file=<source>, active or archive) and whether that task is archived.
+function importedSources(files: readonly StoreFileT[]): Map<string, { id: string; archived: boolean }> {
+  const out = new Map<string, { id: string; archived: boolean }>();
+  for (const f of files) for (const t of f.tasks) for (const l of t.links) if (l.kind === 'file' && !out.has(l.ref)) out.set(l.ref, { id: t.id, archived: f.kind === 'archive' });
+  return out;
+}
+
+// Parent of each new subtask: the id of a task imported before, or null when the parent is new in this import; problems for the rest.
+function resolveParents(fresh: readonly ImportTaskT[], known: ReadonlyMap<string, { id: string; archived: boolean }>, problems: Problems): Map<string, string | null> {
+  const freshSources = new Set(fresh.map((t) => t.source));
+  const out = new Map<string, string | null>();
+  for (const t of fresh) {
+    const ps = t.parent_source;
+    if (ps === undefined) continue;
+    const before = known.get(ps);
+    if (ps === t.source) problems.invalid.push({ source: t.source, field: 'parent', message: 'a task cannot be its own parent' });
+    else if (freshSources.has(ps)) out.set(t.source, null);
+    else if (before === undefined) problems.invalid.push({ source: t.source, field: 'parent', message: `parent ${JSON.stringify(ps)} is neither in this import nor imported before` });
+    else if (before.archived) problems.invalid.push({ source: t.source, field: 'parent', message: `parent ${before.id} (${ps}) is archived and read-only: laneboard restore ${before.id}, then import again` });
+    else out.set(t.source, before.id);
+  }
   return out;
 }
 
 // Split into new tasks and skipped ones, and fail when any new task has a problem.
-function plan(config: ConfigT, active: StoreFileT, archive: StoreFileT, tasks: readonly ImportTaskT[]): { fresh: ImportTaskT[]; skipped: ImportResult['skipped'] } {
+function plan(
+  config: ConfigT,
+  active: StoreFileT,
+  archive: StoreFileT,
+  tasks: readonly ImportTaskT[],
+): { fresh: ImportTaskT[]; skipped: ImportResult['skipped']; parents: Map<string, string | null> } {
   const known = importedSources([active, archive]);
   const fresh: ImportTaskT[] = [];
   const skipped: ImportResult['skipped'] = [];
-  for (const t of unique(tasks, (x) => x.source)) {
-    const id = known.get(t.source);
-    if (id !== undefined) skipped.push({ id, source: t.source });
+  const problems: Problems = { fields: new Map(), statuses: new Map(), invalid: [] };
+  // One source is one task: a repeated source is a problem, never a task dropped without a word.
+  const seen = new Set<string>();
+  for (const t of tasks) {
+    if (seen.has(t.source)) {
+      problems.invalid.push({ source: t.source, field: 'source', message: 'two tasks of this import have the same source' });
+      continue;
+    }
+    seen.add(t.source);
+    const before = known.get(t.source);
+    if (before !== undefined) skipped.push({ id: before.id, source: t.source });
     else fresh.push(t);
   }
-  const problems: Problems = { fields: new Map(), statuses: new Map(), invalid: [] };
   for (const t of fresh) checkTask(config, t, problems);
+  const parents = resolveParents(fresh, known, problems);
   const err = problemsError(config, problems);
   if (err) throw err;
-  return { fresh, skipped };
+  return { fresh, skipped, parents };
 }
 
 // Build a stored task: the source history first (original times), then `created` at import time naming the source.
-function buildTask(config: ConfigT, t: ImportTaskT, id: string, now: string, actor: string, source: ActorSource): TaskT {
+function buildTask(config: ConfigT, t: ImportTaskT, id: string, parent: string | undefined, now: string, actor: string, source: ActorSource): TaskT {
   const task: TaskT = {
     id,
     rev: 1,
@@ -154,6 +188,7 @@ function buildTask(config: ConfigT, t: ImportTaskT, id: string, now: string, act
     assignee: t.assignee ?? null,
     labels: unique(t.labels ?? []),
     links: [{ kind: 'file', ref: t.source }],
+    ...(parent !== undefined ? { parent } : {}),
     fields: { ...(t.fields ?? {}) },
     attachments: [],
     events: [],
@@ -165,7 +200,7 @@ function buildTask(config: ConfigT, t: ImportTaskT, id: string, now: string, act
   };
   const history = [...(t.history ?? [])].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   for (const e of history) addEvent(task, config, e.at, e.actor, e.type, e.data);
-  addEvent(task, config, now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee, imported_from: t.source }, source);
+  addEvent(task, config, now, actor, 'created', { title: task.title, status: task.status, assignee: task.assignee, ...(parent !== undefined ? { parent } : {}), imported_from: t.source }, source);
   return task;
 }
 
@@ -175,15 +210,16 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
   const warnings: string[] = [];
   if (p.dry_run) {
     const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
-    const { fresh, skipped } = plan(view.config, view.active, view.archive, p.tasks);
-    return { data: { dry_run: true, created: fresh.map((t) => ({ id: null, source: t.source, title: t.title })), skipped }, warnings };
+    const { fresh, skipped, parents } = plan(view.config, view.active, view.archive, p.tasks);
+    const created = fresh.map((t) => ({ id: null, source: t.source, title: t.title, ...(parents.has(t.source) ? { parent: parents.get(t.source) ?? null } : {}) }));
+    return { data: { dry_run: true, created, skipped }, warnings };
   }
   const actor = requireActor(ctx.actor);
   const data = await transact(
     ctx.store,
     { files: ['active', 'archive'] },
     (s) => {
-      const { fresh, skipped } = plan(s.config, s.active, s.archive, p.tasks);
+      const { fresh, skipped, parents } = plan(s.config, s.active, s.archive, p.tasks);
       if (s.active.next_id === undefined) throw new LaneboardError('STORE_INVALID', 'active.json next_id is missing');
       // next_id never decreases and never reuses an id, even after a hand edit (W9).
       const max = maxIdNumber(s.active.tasks, s.archive.tasks);
@@ -191,12 +227,18 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
         warnings.push(`active.json next_id ${s.active.next_id} was not above the highest id (${max}); continuing from ${max + 1}`);
         s.active.next_id = max + 1;
       }
+      // Ids first, so a subtask finds its new parent wherever the parent stands in the input.
+      const idOf = new Map<string, string>();
+      for (const t of fresh) {
+        idOf.set(t.source, `${s.config.prefix}-${s.active.next_id}`);
+        s.active.next_id += 1;
+      }
       const created: ImportResult['created'] = [];
       for (const t of fresh) {
-        const id = `${s.config.prefix}-${s.active.next_id}`;
-        s.active.next_id += 1;
-        s.active.tasks.push(buildTask(s.config, t, id, s.now, actor, actorSourceOf(ctx)));
-        created.push({ id, source: t.source, title: t.title });
+        const id = idOf.get(t.source) ?? '';
+        const parent = parents.has(t.source) ? (parents.get(t.source) ?? idOf.get(t.parent_source ?? '')) : undefined;
+        s.active.tasks.push(buildTask(s.config, t, id, parent, s.now, actor, actorSourceOf(ctx)));
+        created.push({ id, source: t.source, title: t.title, ...(parent !== undefined ? { parent } : {}) });
       }
       return { dry_run: false, created, skipped };
     },
