@@ -275,7 +275,9 @@ export LANEBOARD_AGENT=dev-1
 After `/clear` or a restart Claude Code gives the session a new id, so its default name changes and its task in progress looks like another
 session's. The default name's base is the global git `user.name` (read from `~/.gitconfig` without running git), else the OS user.
 `prime` under the default name lists unfinished tasks of the same base with another session id ("Your earlier sessions", with the age
-of the last update), and `claim <ID> --resume` takes one over: an `assigned` event with `resumed: true` (`get` shows "resumed from <old name>"),
+of the last update, the longest silent first: an abandoned task leads). It lists 5; past that a line `... N more (M in all): laneboard list
+--sessions-of <base> --json` names the command that lists them all (`prime --json` and MCP `task_prime`: `resumable_total`; MCP
+`task_list`: `sessions_of`). `claim <ID> --resume` takes one over: an `assigned` event with `resumed: true` (`get` shows "resumed from <old name>"),
 `resumed_from` in the reply. Only a task its holder took itself under its default name (the event says `actor_source: default`) of the
 same user and harness qualifies; a task of an explicit name (`dev-1` above, or `claude-code@ann:reviewer`) stays `ALREADY_CLAIMED` without
 `--resume`. `ALREADY_CLAIMED` on a task of an earlier session offers `claim <ID> --resume --json` as its fix once that session has written
@@ -285,7 +287,9 @@ On a board with checks a task handed in and waiting for a check is no work to re
 `claim --resume` of it gets "handed in already". Another session of the same base that worked on a task (by the events it wrote
 under its default name) is its author: it never passes it on or accepts it, and its queue "Waiting for your check" skips it.
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
-of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
+of a subtask names a parent held by the same session. The MCP server keeps the id it started with. The hook takes the id from
+`CLAUDE_CODE_SESSION_ID`, else from `session_id` of the hook input on stdin; then its commands carry `--as <that name>`, since a later
+command may not see the id either.
 
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name
@@ -496,6 +500,10 @@ against an agent's mistake, not against a hostile agent.
   check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker names where the task goes:
   `finish <ID> --status <next>` passes the handed-in task on to the next check (reply `passed: true`, `from`; still handed in, not in work)
   and from the last one `--status <final>` accepts it (`accepted: true`).
+- Work status: the status before the first check. `todo,in_progress,blocked,code_review,qa,done` gives `blocked`; when the first
+  check follows the first status, that status. Claims from `prime` (`claim --status`) and returns for rework go there; only the order
+  of the statuses sets it. `config` prints `work status: <status> (the status before the first check)` (JSON `review.work_status`, `prime`
+  `roles.work_status`). To change it, reorder the statuses: `laneboard config --statuses todo,blocked,in_progress,code_review,qa,done`.
 - A checker's `finish` without `--status`, with the check the task is in, or past the next status is refused (`INVALID_VALUE`): it may
   come from a read before another checker passed the task on, so it would pass the next check unseen. The fix only reads the task,
   `laneboard get <ID>`; the message names both exact commands, the pass (`finish <ID> --status <next> --result "<result of your check>"`)
@@ -506,7 +514,10 @@ against an agent's mistake, not against a hostile agent.
   of a waiting task `laneboard get <ID>` with both commands; of anybody else a comment that asks the holder to hand it in. A closed task
   is reopened first: the fix is `laneboard update <ID> --status <work status> && laneboard finish <ID> --status <check> ...`.
 - The hand-in belongs to the task: a new holder (`update --assignee`, `--unassign`) keeps a waiting task handed in and in the
-  checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it.
+  checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it. A write that gives
+  a waiting task to a name that could check it (a checker's `update <ID> --assignee <itself>`, or the orchestrator's) warns: that name
+  never checks it now, giving it back does not undo that; the check stays with the checkers left, else the owner's `config --reviewers`.
+  A check needs no claim or assignment: `finish <ID> --status <next>`.
 - Nobody claims a task waiting in a check (with or without `--status`): a check needs no claim, and holding the task would make the
   checker an author. A checker's `claim` gets `INVALID_VALUE`, fix `laneboard get <ID>`, the message names the pass and the return;
   the author's the "handed in already" refusal; anybody else's a comment (`ALREADY_CLAIMED` when held). `prime` and `task_prime` list

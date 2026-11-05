@@ -74,6 +74,9 @@ export const ListInput = z.strictObject({
   all_boards: z.boolean().optional(),
   // Only tasks not in the final status of their board.
   open: z.boolean().optional(),
+  // Tasks a session of the default name base `<harness>@<user>` holds under that default name (`<base>:<session>`), not in the final
+  // status and not waiting for a check: what claim --resume takes back (prime's earlier-session list counts them, S6x A-U1).
+  sessions_of: z.string().min(1).optional(),
   scope: z.enum(SCOPES).optional(),
   limit: z.int().min(1).optional(),
   offset: z.int().min(0).optional(),
@@ -196,7 +199,11 @@ export type ListContext = Omit<OpContext, 'store'> & { store?: StoreRef };
 export async function listTasks(ctx: ListContext, input: ListInputT): Promise<OpResult<ListResult>> {
   const p = parseInput(ListInput, input);
   if (p.assignee !== undefined && p.unassigned) throw new LaneboardError('USAGE', 'assignee and unassigned cannot be combined', { edit: { drop: [{ name: 'unassigned' }] } });
+  if (p.sessions_of !== undefined && (p.assignee !== undefined || p.unassigned)) {
+    throw new LaneboardError('USAGE', 'sessions_of names the holders already: it cannot be combined with assignee or unassigned', { edit: { drop: [{ name: 'assignee' }, { name: 'unassigned' }] } });
+  }
   if (p.assignee !== undefined) checkActor(p.assignee, 'assignee');
+  if (p.sessions_of !== undefined) checkActor(p.sessions_of, 'sessions_of');
   (p.labels ?? []).forEach(checkLabel);
   const scope = p.scope ?? 'active';
   const offset = p.offset ?? 0;
@@ -213,7 +220,7 @@ export async function listTasks(ctx: ListContext, input: ListInputT): Promise<Op
   const elsewhere = parent === undefined ? undefined : foreignTask(own, parent, config.prefix, 'read');
   if (elsewhere) throw elsewhere;
   const finals = finalStatuses(config.statuses);
-  const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals }));
+  const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals }) && heldBySessionsOf(config, task, p.sessions_of));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const nowMs = Date.now();
   const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListEntry(task, archived, config, nowMs));
@@ -272,11 +279,23 @@ async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, offs
   // A task's parent is on its own board, so the id alone picks the board.
   const parent = p.parent === undefined ? undefined : normalizeId(p.parent, first?.config.prefix ?? 'LB', 'parent');
   // Each task keeps its board's config: the marks (workMarks) read its statuses.
-  const matches = read.flatMap((r) => r.tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals: finalStatuses(r.config.statuses) })).map((t) => ({ ...t, config: r.config })));
+  const matches = read.flatMap((r) =>
+    r.tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals: finalStatuses(r.config.statuses) }) && heldBySessionsOf(r.config, task, p.sessions_of)).map((t) => ({ ...t, config: r.config })),
+  );
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const nowMs = Date.now();
   const items = matches.slice(offset, offset + limit).map(({ task, archived, config }) => toListEntry(task, archived, config, nowMs));
   return { data: { items, scope, limit, offset, total: matches.length, boards: rows }, warnings };
+}
+
+// Is `task` work a session of the default name base `sessionBase` may take back with claim --resume (prime's earlier-session list and
+// list --sessions-of, one rule, S6x A-U1): in a configured status that is not final, held by `<sessionBase>:<session>` under that default name
+// (heldByEarlierSession; never `actor` itself), not waiting for a check (S6w r3: handed in, claim --resume of it is refused).
+// True for every task without `sessionBase` (list without --sessions-of).
+function heldBySessionsOf(config: ConfigT, task: TaskT, sessionBase: string | undefined, actor = ''): boolean {
+  if (sessionBase === undefined) return true;
+  if (!config.statuses.includes(task.status) || finalStatuses(config.statuses).includes(task.status)) return false;
+  return heldByEarlierSession(task, sessionBase, actor) && !waitsInCheck(config, task);
 }
 
 // Explicit mapping of a task to a list item.
@@ -401,9 +420,11 @@ export interface SummaryResult {
   unassigned: ListItem[];
   unassigned_total: number;
   // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's) that their holder
-  // took under its session default name (heldByEarlierSession), not waiting for a check, newest update first, at most SUMMARY_RESUMABLE_MAX;
-  // empty without `session_base`.
+  // took under its session default name (heldBySessionsOf), not waiting for a check; oldest update first (S6x A-U1: an abandoned task
+  // has been silent the longest, a live parallel session's task is the newest), at most SUMMARY_RESUMABLE_MAX; `resumable_total` counts
+  // all (list --sessions-of <session_base> lists them). Empty and 0 without `session_base`.
   resumable: ListItem[];
+  resumable_total: number;
   // Is this store in the machine registry (<home>/.laneboard/boards.json, where init and setup add a board)? null without a home in the
   // context (cannot tell). A cloned repository's committed .laneboard is not: the SessionStart hook shows none of its texts (review security F4).
   registered: boolean | null;
@@ -494,7 +515,7 @@ export function inRegistry(home: string | undefined, dir: string, warnings: stri
 
 // How many free tasks the summary lists (prime stays short; the rest: list --unassigned).
 export const SUMMARY_UNASSIGNED_MAX = 10;
-// How many tasks of earlier sessions the summary lists (newest first; older ones are rarely the work a session resumes).
+// How many tasks of earlier sessions the summary lists (oldest update first: the abandoned ones; the rest: list --sessions-of).
 export const SUMMARY_RESUMABLE_MAX = 5;
 
 // Session summary for `prime`: counts per status and the active tasks of one assignee (active.json only, lock-free).
@@ -516,12 +537,13 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   // A task waiting for a check is no free work (S6w r2): a checker checks it with finish (the waiting list), nobody claims it.
   const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status) && !waitsInCheck(config, task));
   free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
-  // A task waiting for a check is no work to resume either (S6w r3): it is handed in, and claim --resume of it is refused.
+  // A task waiting for a check is no work to resume either (S6w r3): it is handed in, and claim --resume of it is refused. Oldest
+  // update first (S6x A-U1): the abandoned tasks lead, and none is cut silently (resumable_total).
   const resumable =
-    p.assignee === undefined
+    p.assignee === undefined || p.session_base === undefined
       ? []
-      : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? '') && !waitsInCheck(config, task));
-  resumable.sort((a, b) => byUpdatedDesc(a.task, b.task));
+      : tasks.filter(({ task }) => heldBySessionsOf(config, task, p.session_base, p.assignee));
+  resumable.sort((a, b) => -byUpdatedDesc(a.task, b.task));
   const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee, p.session_base);
   return {
     data: {
@@ -539,6 +561,7 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       unassigned: free.slice(0, SUMMARY_UNASSIGNED_MAX).map(({ task, archived }) => toListItem(task, archived)),
       unassigned_total: free.length,
       resumable: resumable.slice(0, SUMMARY_RESUMABLE_MAX).map(({ task, archived }) => toListItem(task, archived)),
+      resumable_total: resumable.length,
       registered: inRegistry(ctx.home, ctx.store.dir, warnings),
       ...(roles === undefined ? {} : { roles }),
     },

@@ -683,3 +683,29 @@ Checks
   checks a note before the command says so. (3) `config --reviewers` (or `--review-statuses`) that leaves a waiting task with no checker,
   and a hand-in while review.by names only its author, are written and warn with `stuckInChecks` (the owner's `config --reviewers`).
   Checks: test/cli/s6w.test.ts, test/mcp/s6w.test.ts "S6w review r3".
+
+## 52. UX run 5 before publication (S6x, LB-50; UX run 5 A-U1, A risk 1, B-U1, B-U2; supersedes §45/S3 "earlier-session tasks newest first, at most 5" and "the hook reads the session id from the env only")
+- A-U1: prime cut the earlier-session list to 5 silently (no total, no footer) and hid the oldest, the abandoned ones. Decision: one rule,
+  `heldBySessionsOf` (configured status not final, held by `<base>:<session>` under its default name, not waiting for a check), for
+  prime/task_prime `resumable` and the new optional filter `list --sessions-of <base>` (MCP `task_list` `sessions_of`; with `--assignee`
+  or `--unassigned`: USAGE). Order: oldest update first (abandoned first; a live parallel session's task is the newest). The summary
+  lists 5 and counts all (`resumable_total`, prime --json and task_prime); past 5 the text ends in `... N more (M in all): laneboard list
+  --sessions-of <base> --json`; prime keeps the first (oldest) line and the footer within PRIME_MAX_CHARS (budget tests unchanged).
+  Rejected: "N more not shown" (nothing to run), a list by `--text` (does not match the holder), a header "oldest first" (14 more
+  characters failed the s4b budget grid).
+- A risk 1: `prime --hook` named the session only by `CLAUDE_CODE_SESSION_ID`. Source, checked 2026-11-06: code.claude.com/docs/en/hooks
+  (common input fields: `session_id`, also on SessionStart and PostToolUse) and code.claude.com/docs/en/env-vars (`CLAUDE_CODE_SESSION_ID`:
+  set in Bash, hook and stdio MCP subprocesses, "for Bash, PowerShell, and hooks this matches the `session_id` field in the hook JSON
+  input"). Decision: the env wins; without it `session_id` of the hook input (a non-empty string) names the session in `prime --hook`
+  only, and the printed commands carry `--as <that name>` (`session_from_input`), so a later Bash command without the env writes under
+  the same name; with the env it resolves to the default name as before. `prime --edit-hook` is unchanged: it never uses a default name.
+- B-U1: the work status (claims, returns for rework) is the status before the first check, so `todo,in_progress,blocked,code_review,qa,done`
+  works in `blocked`, and init/config said nothing. Decision (owner: optional fields only): `config` of a board with checks prints
+  `work status: <X> (the status before the first check) - claims and returns for rework go here; to change it, reorder --statuses`, JSON
+  `review.work_status` (`reworkStatus`: the first status when the first check follows it). init never turns checks on, so it prints no
+  line. Rejected for now: `--work-status` (a new config key; not needed while the order says it).
+- B-U2: a checker that took a waiting task (`update --assignee <itself>`) lost its check silently (the holder is an author, `workedOn`).
+  Decision: the write stays allowed (reassignment is the orchestrator's) and warns when the new holder could check it before (`mayCheck`:
+  waiting, no author, in review.by or review.by empty), for any writer: it never checks the task now, giving it back does not undo that;
+  the check stays with the checkers left, anybody else without review.by, else the owner's `config --reviewers` (as `stuckInChecks`).
+  Checks: test/cli/s6x.test.ts; s2g grid with `resumable_total` 12 and 400.

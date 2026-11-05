@@ -10,10 +10,15 @@ function listOrNone(values: Values, name: string): string[] | null | undefined {
   return items !== undefined && items.length === 1 && items[0] === 'none' ? null : items;
 }
 
-// The checks and creators lines of a board that has them (config@2); nothing for a board without them.
+// The checks and creators lines of a board that has them (config@2); nothing for a board without them. With checks the work status is
+// named (S6x B-U1): a board like todo,in_progress,blocked,code_review sends claims and returns to blocked, and only the order changes it.
 function v2Lines(d: ConfigureResult): string {
   const final = d.statuses.at(-1) ?? '-';
-  const checks = d.review === undefined ? '' : `\n  checks: ${[...d.review.statuses, final].join(' -> ')}; checkers: ${d.review.by.length ? d.review.by.join(', ') : "anybody but the task's assignee"}`;
+  const checks =
+    d.review === undefined
+      ? ''
+      : `\n  checks: ${[...d.review.statuses, final].join(' -> ')}; checkers: ${d.review.by.length ? d.review.by.join(', ') : "anybody but the task's assignee"}` +
+        `\n  work status: ${d.review.work_status} (the status before the first check) - claims and returns for rework go here; to change it, reorder --statuses`;
   const creators = d.create_by === undefined ? '' : `\n  creators: ${d.create_by.join(', ')}`;
   return checks + creators;
 }

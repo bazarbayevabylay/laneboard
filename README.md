@@ -147,12 +147,14 @@ mistake, not against a hostile agent.
 | Two parallel sessions | two names, so the second one's `claim` fails with `ALREADY_CLAIMED` |
 | Where a name came from | every event has `actor_source`: `explicit` or `default`; `get` marks `(default name)` |
 | Subagents of one session | share its default name, so each passes its own `--as`; `prime` under the default name says so |
-| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age; `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning. On a board with checks a task handed in and waiting for a check is not resumed: the same base in any session is its author, gets "handed in already" and never sees it as a check of its own |
+| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age, the longest silent (abandoned) first; past 5 it ends in `... N more (M in all): laneboard list --sessions-of <base> --json`, which lists them all (`prime --json`, `task_prime`: `resumable_total`); `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning. On a board with checks a task handed in and waiting for a check is not resumed: the same base in any session is its author, gets "handed in already" and never sees it as a check of its own |
+| Session id in the hook | `CLAUDE_CODE_SESSION_ID`; without it `prime --hook` takes `session_id` from the hook input on stdin, and the commands it prints then carry `--as <that name>` |
 | Codex, Cursor, Gemini CLI, OpenCode | no default name (no session id): pass `--as` |
 
 ```sh
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "No name given" --status todo --assignee claude-code@ann:a1b2c3d4 --json
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard prime
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard list --sessions-of claude-code@ann --json
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard claim WEB-2 --resume --json
 ```
 
@@ -193,6 +195,9 @@ laneboard config --review-statuses none --reviewers none --json
 - `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
   to the check the task is in, else the first check. A checker names where the task goes: `finish <ID> --status <next>` passes it to
   the next check, from the last one `--status <final>` accepts it.
+- Work status: the status before the first check (`todo,in_progress,blocked,code_review,qa,done` gives `blocked`; the first status when
+  the first check follows it). Claims from `prime` and returns for rework go there. `config` prints `work status: <status>` (JSON
+  `review.work_status`); to change it, reorder: `laneboard config --statuses todo,blocked,in_progress,code_review,qa,done`.
 - A checker's `finish` without `--status`, with the check the task is in or past the next one is refused: the task may have moved on
   since your read (two checkers on one queue). Its fix only reads the task (`laneboard get <ID>`); the message names both commands,
   the pass (`finish --status <next>`) and the return for rework. No fix of a checker's refusal passes on or accepts a task.
@@ -205,7 +210,9 @@ laneboard config --review-statuses none --reviewers none --json
   refused. The holder's fix is the hand-in with `finish`; a checker's is `get` with both commands; anybody else's a comment to the holder.
   A closed task is reopened first: the fix is `update <ID> --status <work status> && finish <ID> --status <check> ...`.
 - A new holder keeps the hand-in: `update --assignee` or `--unassign` of a task waiting in a check leave it in the
-  checkers' queue. The new holder is an author of the work all the same and never passes it on or accepts it.
+  checkers' queue. The new holder is an author of the work all the same and never passes it on or accepts it. When the new holder
+  could check it (a checker's `update <ID> --assignee <itself>`), the write warns: it never checks this task now, the check stays with
+  the checkers left, else the owner's `config --reviewers`. A check needs no assignment: `finish <ID> --status <next>`.
 - Nobody claims a task waiting in a check: a check needs no claim (`finish --status <next>`), and the claim would make the checker
   an author. A checker's `claim` gets the fix `laneboard get <ID>`, the message names the pass and the return; anybody else a comment.
   `prime` lists such a task under "Waiting for your check", never among the free tasks.
