@@ -187,16 +187,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       const assignee = p.assignee === undefined ? task.assignee : p.assignee;
       const assignChange = assignee !== task.assignee ? { from: task.assignee, to: assignee } : undefined;
-      // A board with checks (P1): the assignee never closes its own task, only review.by (when set) close one; a move of a handed-in
-      // task takes the hand-in away (A17). Without checks nothing here applies (0.3.1, ADR §22).
-      const review = reviewStatuses(s.config);
-      if (statusChange && review.length > 0) {
-        const final = finalStatuses(s.config.statuses)[0] ?? '';
-        const by = reviewers(s.config);
-        if (statusChange.to === final && task.assignee === actor) throw handInToFirstCheck(id, final, review, final, actor, 'update');
-        if (statusChange.to === final && by.length > 0 && !by.includes(actor)) throw notChecker(id, task.assignee, actor, by);
-        if (handedIn(task)) warnings.push(handInLostWarning(id));
-      }
+      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, warnings);
 
       if (!Object.keys(diff).length && !statusChange && !assignChange) {
         warnings.push(`no changes: ${id} already has these values`);
@@ -293,6 +284,8 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       if (resumed && holder !== null) resumeWarnings(s.active.tasks, task, holder, ctx.sessionBase, actor, s.now, finalStatuses(s.config.statuses), warnings);
       const assignChange = holder !== actor ? { from: holder, to: actor, ...(resumed ? { resumed: true } : {}) } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
+      // The same checks as update (review r1): claim --status is no way around them; the actor holds the task after the claim.
+      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, true, warnings);
       if (!assignChange && !statusChange) {
         warnings.push(`no changes: ${id} is already claimed by ${actor}`);
         return toTaskView(task, false);
@@ -402,6 +395,35 @@ export function handedIn(task: TaskT): boolean {
 function passedBy(task: TaskT): string | undefined {
   const e = arrivalEvent(task);
   return e !== undefined && e.data.passed === true ? e.actor : undefined;
+}
+
+// Did `actor` do the work on `task` (the author of the work, P1, review r1): its assignee, or a name that held it or handed it in by
+// the events kept (an `assigned` event from or to the actor, `created` with it as the assignee, its hand-in). So unassigning the task
+// or handing it to another name first does not let its author close it. No store field records it: events dropped by the events limit
+// are not seen (a guard against mistakes, not a hostile agent: actors are self-named).
+function workedOn(task: TaskT, actor: string): boolean {
+  if (task.assignee === actor) return true;
+  return task.events.some(
+    (e) =>
+      (e.type === 'assigned' && (e.data.from === actor || e.data.to === actor)) ||
+      (e.type === 'created' && e.data.assignee === actor) ||
+      (e.type === 'status' && e.actor === actor && e.data.handed_in === true),
+  );
+}
+
+// One rule for a status move by update or claim on a board with checks (P1, review r1): the author of the work (workedOn) never sets
+// the final status, only review.by (when set) set it, and an actor that holds the task after this write (`takes`: claim, or update
+// with --assignee itself) does not close it either; a move of a handed-in task warns that the hand-in is lost (A17). Without checks
+// nothing here applies (0.3.1, ADR §22).
+function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, warnings: string[]): void {
+  const review = reviewStatuses(config);
+  if (review.length === 0) return;
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const by = reviewers(config);
+  if (to === final && workedOn(task, actor)) throw handInToFirstCheck(task.id, final, review, final, actor, 'update');
+  if (to === final && by.length > 0 && !by.includes(actor)) throw notChecker(task.id, task.assignee, actor, by);
+  if (to === final && takes) throw handInToFirstCheck(task.id, final, review, final, actor, 'update');
+  if (handedIn(task)) warnings.push(handInLostWarning(task.id));
 }
 
 // The checks of a board as one line for messages: `code_review -> qa -> done`.
@@ -600,8 +622,10 @@ function checkerFinish(
   const by = reviewers(s.config);
   if (by.length > 0 && !by.includes(actor)) throw refused(notChecker(id, holder, actor, by));
   if (!handedIn(task)) throw refused(notHandedInForCheck(id, holder, task.status, actor, review[0] ?? ''));
+  // Handed in to a status outside the checks (finish --status <other>, or before the checks were on): the next step is the first check,
+  // so a check never skips the others by default (review r1).
   const at = review.indexOf(task.status);
-  const later = [...(at >= 0 ? review.slice(at + 1) : []), final];
+  const later = [...review.slice(at + 1), final];
   const next = later[0] ?? final;
   if (passedBy(task) === actor && (p.status === undefined || p.status === task.status)) {
     warnings.push(`no changes: ${id} is already ${task.status}, where you passed it on (finish repeated); to pass it on yourself again, name the status: laneboard finish ${id} --status ${next} --result "<result of your check>"; ${notRecorded}`);

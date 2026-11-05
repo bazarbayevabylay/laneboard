@@ -435,7 +435,7 @@ function archivedFieldWarnings(uses: readonly FieldUse[]): string[] {
 // The checks after `config --review-statuses` / `--reviewers`: null statuses turn them off; reviewers need checks (now or already on).
 function nextReview(current: ReviewConfigT | undefined, statuses: string[] | null | undefined, by: string[] | null | undefined): ReviewConfigT | undefined {
   if (statuses === null) return undefined;
-  const base = statuses === undefined ? current : { statuses: [...statuses], by: current?.by ?? [] };
+  const base = statuses === undefined ? current : { ...current, statuses: [...statuses], by: current?.by ?? [] };
   if (base === undefined) {
     if (by === null || by === undefined) return undefined;
     throw new LaneboardError('INVALID_VALUE', 'reviewers check tasks in the checks of the board, and it has none', {
@@ -443,7 +443,8 @@ function nextReview(current: ReviewConfigT | undefined, statuses: string[] | nul
       fix: `laneboard config --review-statuses <status between the first and the final one> --reviewers ${by.join(',')}`,
     });
   }
-  return by === undefined ? { statuses: base.statuses, by: base.by ?? [] } : { statuses: base.statuses, by: by === null ? [] : unique(by) };
+  // `...base` keeps keys of a newer laneboard inside review (review r1): they are not read here, only written back.
+  return by === undefined ? { ...base, statuses: base.statuses, by: base.by ?? [] } : { ...base, statuses: base.statuses, by: by === null ? [] : unique(by) };
 }
 
 // INVALID_VALUE when the checks do not fit the statuses (a status missing, the first or the final one, listed twice); the fix keeps

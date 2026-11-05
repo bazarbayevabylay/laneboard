@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { z } from 'zod';
 import { LaneboardError } from './errors.ts';
 import { shellQuote } from './shell.ts';
-import { CONFIG_SCHEMA, CONFIG_SCHEMA_V2, CONFIG_V2_KEYS, CONFIG_VERSION, CONFIG_VERSION_MAX, Config, ConfigV2 } from './schema.ts';
+import { CONFIG_SCHEMA, CONFIG_SCHEMA_V2, CONFIG_V2_KEYS, CONFIG_VERSION, CONFIG_VERSION_MAX, Config, ConfigV2, ReviewConfig } from './schema.ts';
 import type { ConfigT } from './schema.ts';
 
 export const DEFAULT_PREFIX = 'LB';
@@ -101,6 +101,11 @@ export function schemaVersion(value: unknown): number {
   return m ? Number(m[1]) : 0;
 }
 
+// A JSON object (not an array, not null)?
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 // Keys of a config object that config@2 does not know (kept from a newer laneboard: written back as they are, with a warning).
 function unknownKeys(json: object): string[] {
   return Object.keys(json).filter((k) => !Object.hasOwn(ConfigV2.shape, k));
@@ -156,11 +161,16 @@ export function validateConfig(json: unknown, label: string, warnings?: string[]
   }
   let known = json;
   if (version === CONFIG_VERSION_MAX && json !== null && typeof json === 'object' && !Array.isArray(json)) {
-    const extra = unknownKeys(json);
-    if (extra.length) {
-      warnings?.push(`${label} has keys this laneboard does not know (${extra.join(', ')}), likely from a newer laneboard; they are kept as they are`);
-      known = Object.fromEntries(Object.entries(json).filter(([k]) => !extra.includes(k)));
+    const top = unknownKeys(json);
+    known = Object.fromEntries(Object.entries(json).filter(([k]) => !top.includes(k)));
+    // Inside review too (review r1): a later key there (say, a checker per step) is kept and not read, as at the top level.
+    const review = (known as { review?: unknown }).review;
+    const nested = isPlainObject(review) ? Object.keys(review).filter((k) => !Object.hasOwn(ReviewConfig.shape, k)) : [];
+    if (isPlainObject(review) && nested.length) {
+      known = { ...(known as Record<string, unknown>), review: Object.fromEntries(Object.entries(review).filter(([k]) => !nested.includes(k))) };
     }
+    const extra = [...top, ...nested.map((k) => `review.${k}`)];
+    if (extra.length) warnings?.push(`${label} has keys this laneboard does not know (${extra.join(', ')}), likely from a newer laneboard; they are kept as they are`);
   }
   const parsed = (version === CONFIG_VERSION_MAX ? ConfigV2 : Config).safeParse(known);
   if (!parsed.success) {

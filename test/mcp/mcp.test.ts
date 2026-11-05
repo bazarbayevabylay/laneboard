@@ -348,4 +348,25 @@ describe('MCP server over stdio (SDK client)', () => {
       await empty.close();
     }
   });
+
+  it('S6j review r1: task_claim with a status keeps the checks of task_update (assignee INVALID_VALUE, not in review.by ALREADY_CLAIMED)', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ['backlog', 'ready', 'dev', 'code_review', 'qa', 'done'] });
+    expect((await cli(['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch', '--as', 'orch'], { cwd: s.root })).code).toBe(0);
+    await createTask(as(s, 'orch'), { title: 'Held', status: 'ready' });
+    await createTask(as(s, 'orch'), { title: 'Free', status: 'ready' });
+    await claimTask(as(s, 'dev-a'), { id: 'API-1', status: 'dev' });
+    const mcp = await startMcp(s.root);
+    try {
+      const own = await mcp.call('task_claim', { id: 'API-1', status: 'done', actor: 'dev-a' });
+      expect(own.isError).toBe(true);
+      expect(own.structured).toMatchObject({ code: 'INVALID_VALUE' });
+      const other = await mcp.call('task_claim', { id: 'API-2', status: 'done', actor: 'dev-b' });
+      expect(other.isError).toBe(true);
+      expect(other.structured).toMatchObject({ code: 'ALREADY_CLAIMED' });
+      expect((await mcp.call('task_get', { id: 'API-1' })).structured).toMatchObject({ status: 'dev', assignee: 'dev-a' });
+      expect((await mcp.call('task_get', { id: 'API-2' })).structured).toMatchObject({ status: 'ready', assignee: null });
+    } finally {
+      await mcp.close();
+    }
+  });
 });

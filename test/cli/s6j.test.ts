@@ -177,6 +177,72 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
   });
 });
 
+describe('review r1: no way around the checks (claim --status, a hand-in outside the checks, the author after unassign)', () => {
+  const updateFix = (actor: string): string => `laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as ${actor}`;
+
+  it('claim --status done: the assignee INVALID_VALUE, not in review.by ALREADY_CLAIMED, a checker taking the task INVALID_VALUE (as update)', async () => {
+    const s = await reviewBoard();
+    const own = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'done']);
+    expect(own.code).toBe(2);
+    expect(own.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: updateFix('dev-a') });
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--status', 'done'])).doc.error).toEqual(own.doc.error);
+    await run(s, 'orch', ['create', 'Free', '--status', 'ready']);
+    const other = await run(s, 'dev-b', ['claim', 'API-2', '--status', 'done']);
+    expect(other.code).toBe(4);
+    expect(other.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-2 "<note for its assignee>" --as dev-b' });
+    expect((await run(s, 'dev-b', ['update', 'API-2', '--status', 'done'])).doc.error).toEqual(other.doc.error);
+    const checker = await run(s, 'rev', ['claim', 'API-2', '--status', 'done']);
+    expect(checker.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-2 --status code_review --result "<what you did, how you checked it>" --as rev' });
+    expect((await row(s, 'API-1')).status).toBe('dev');
+    expect(await row(s, 'API-2')).toMatchObject({ status: 'ready', assignee: null });
+  });
+
+  it('claim --status of a handed-in task warns that the hand-in is lost (A17), as update', async () => {
+    const s = await reviewBoard();
+    await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit']);
+    const moved = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa']);
+    expect(moved.code).toBe(0);
+    expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not: pass it on or accept it with laneboard finish API-1 --result "<result>" instead, or the assignee hands it in again with finish']);
+  });
+
+  it('a task handed in to a status outside the checks goes through every check: rev passes it to code_review, not into done', async () => {
+    const s = await reviewBoard();
+    expect((await run(s, 'dev-a', ['finish', 'API-1', '--status', 'ready', '--result', 'r', '--no-commit'])).doc.data.status).toBe('ready');
+    const first = await run(s, 'rev', ['finish', 'API-1', '--result', 'ok']);
+    expect(first.doc.data).toMatchObject({ status: 'code_review', passed: true, from: 'ready' });
+    expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'accepted'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
+  });
+
+  it('the author of the work does not close it after unassign or a handover to another name (review.by empty)', async () => {
+    const s = await reviewBoard([]);
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--unassign'])).code).toBe(0);
+    const unassigned = await run(s, 'dev-a', ['update', 'API-1', '--status', 'done']);
+    expect(unassigned.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: updateFix('dev-a') });
+    expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'done'])).doc.error.code).toBe('INVALID_VALUE');
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--assignee', 'other'])).code).toBe(0);
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--status', 'done'])).doc.error.code).toBe('INVALID_VALUE');
+    expect((await row(s, 'API-1')).status).toBe('dev');
+    // Somebody who never held it still closes it (review.by empty: anybody but the author).
+    expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).doc.data.status).toBe('done');
+  });
+
+  it('a key of a newer laneboard inside review is kept and not read: no STORE_INVALID, a warning, written back by config', async () => {
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa']);
+    const file = path.join(s.dir, 'config.json');
+    const conf = JSON.parse(configText(s));
+    fs.writeFileSync(file, JSON.stringify({ ...conf, review: { ...conf.review, stage_by: { qa: ['qa-bot'] } } }, null, 2));
+    expect((await run(s, 'orch', ['create', 'x', '--status', 'ready'])).code).toBe(0);
+    const shown = await run(s, 'orch', ['config', '--reviewers', 'rev']);
+    expect(shown.code).toBe(0);
+    expect(shown.doc.warnings).toEqual([expect.stringContaining('keys this laneboard does not know (review.stage_by)')]);
+    expect(JSON.parse(configText(s)).review).toEqual({ statuses: ['code_review', 'qa'], by: ['rev'], stage_by: { qa: ['qa-bot'] } });
+    await run(s, 'orch', ['config', '--review-statuses', 'qa']);
+    expect(JSON.parse(configText(s)).review).toEqual({ statuses: ['qa'], by: ['rev'], stage_by: { qa: ['qa-bot'] } });
+  });
+});
+
 describe('P1 criteria (9)-(10): config@1 stays until a key is on; an old board turns checks on by hand', () => {
   it('(9): a task handed in to review on a board without checks is accepted by finish after config --review-statuses review', async () => {
     const s = await newStore({ prefix: 'OLD' });
