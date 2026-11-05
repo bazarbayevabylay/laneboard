@@ -156,8 +156,12 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     expect(again.doc.warnings[0]).toMatch(/^no changes: API-1 is already qa, where you passed it on/);
     const explicitAgain = await run(s, 'rev', ['finish', 'API-1', '--result', 'ok', '--status', 'qa']);
     expect(explicitAgain.doc.data.status).toBe('qa');
-    // The same checker moves it on only by naming the status; an earlier check is refused.
-    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'x', '--status', 'code_review'])).doc.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['done'] });
+    // The same checker moves it on only by naming the status; an earlier check is refused (S6v B-U1 run 3: the fix is the return for
+    // rework, never the acceptance into done).
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'x', '--status', 'code_review'])).doc.error).toMatchObject({
+      code: 'INVALID_VALUE',
+      fix: 'laneboard comment API-1 x --as rev && laneboard update API-1 --status dev --as rev',
+    });
     expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'qa too', '--status', 'done'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
 

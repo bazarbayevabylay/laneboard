@@ -21,5 +21,7 @@ export const codex: Harness = {
     // Backups and folder markers stay out of git.
     gitExclude,
   ],
-  notes: ['the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project'],
+  notes: [
+    'the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project; start Codex in this project folder (or LANEBOARD_DIR=<board> codex for one run), never export LANEBOARD_DIR',
+  ],
 };

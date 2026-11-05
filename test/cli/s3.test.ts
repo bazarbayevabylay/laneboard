@@ -142,12 +142,13 @@ describe('laneboard finish', () => {
     expect(stored(s, 'LB-1').rev).toBe(1);
   });
 
-  it('--status must not be the starting status (the fix names the final one); unknown status, missing --result, archived task fail as elsewhere', async () => {
+  it('--status must not be the starting status (the fix goes back to the start); unknown status, missing --result, archived task fail as elsewhere', async () => {
     // Rewritten in S3b (owner's decision): finish takes any status but the first one, so the refused input is now `todo`.
+    // Rewritten in S6v (B-U1 run 3): the fix keeps the meaning (back to the start with the result as a comment), not finish into done.
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'T', status: 'todo', assignee: 'dev-1' });
     const first = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'todo', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
-    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: "laneboard finish LB-1 --result x --status done --as dev-1 --json" });
+    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: 'laneboard comment LB-1 x --as dev-1 && laneboard update LB-1 --status todo --as dev-1' });
     expect(first.error.message).toBe('"todo" is the starting status; finish sets one of in_progress, review, done (default done; back to the start: laneboard update LB-1 --status todo)');
     expect(stored(s, 'LB-1').rev).toBe(1);
     expect((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'done', '--as', 'dev-1'], { cwd: s.root })).code).toBe(0);

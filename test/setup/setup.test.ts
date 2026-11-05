@@ -315,7 +315,7 @@ describe('setup details', () => {
     const s = sandbox();
     const r = await s.run(['setup', 'codex']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toBe(`store: ${s.cwd}/.laneboard\n` + 'created ~/.codex/config.toml (global file)\ncreated AGENTS.md\nnext: the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project\n');
+    expect(r.stdout).toBe(`store: ${s.cwd}/.laneboard\n` + 'created ~/.codex/config.toml (global file)\ncreated AGENTS.md\nnext: the Codex config.toml is a global file: the laneboard MCP server is on in every Codex project; start Codex in this project folder (or LANEBOARD_DIR=<board> codex for one run), never export LANEBOARD_DIR\n');
   });
 });
 

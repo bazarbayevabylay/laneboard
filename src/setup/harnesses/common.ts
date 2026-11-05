@@ -12,7 +12,8 @@ export function pinnedMcpArgs(storeDir: string): string[] {
 }
 
 // Environment variables the global Codex entry forwards to the server (`env_vars`): a global file cannot name one project's store,
-// but a LANEBOARD_DIR exported for the session (as the AGENTS.md block says) then reaches the MCP server too.
+// but a LANEBOARD_DIR given to one Codex run (`LANEBOARD_DIR=<board> codex`) then reaches the MCP server too. Never exported: the
+// shell's other projects would write to this board (UX run 3 C-U3).
 export const CODEX_ENV_VARS = ['LANEBOARD_DIR'] as const;
 
 // SessionStart hook command (Claude Code): prints the rules and the agent's tasks; a hint when the CLI is missing.
@@ -55,7 +56,7 @@ export function instructionLines(storeDir: string, pin: StorePin): string {
         ? 'Its store is pinned by LANEBOARD_DIR in .claude/settings.local.json at the root of this git repository (kept out of git; `laneboard prime` shows the path).'
         : pin === 'settings-env'
         ? `Its store is ${storeDir} (LANEBOARD_DIR is set for this project in .claude/settings.json).`
-        : `Its store is ${storeDir}: run every laneboard command with it, \`LANEBOARD_DIR=${shellWord(storeDir)} laneboard <command>\` (or export LANEBOARD_DIR=${shellWord(storeDir)} once).`;
+        : `Its store is ${storeDir}: run every laneboard command with it, \`LANEBOARD_DIR=${shellWord(storeDir)} laneboard <command>\` (a prefix of each command; never export it: other projects of the shell would write to this board).`;
   return [`This project tracks work with laneboard (task board & CLI for AI coding agents). ${where}`, TASK_RULE, pin === 'inline' ? NAME_LINE : DEFAULT_NAME_LINE].join('\n');
 }
 

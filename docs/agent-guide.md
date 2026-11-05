@@ -74,7 +74,7 @@ What `setup` writes:
 | Harness | MCP server entry | Instructions | Store pin |
 |---|---|---|---|
 | claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in the `.claude/settings.local.json` Claude Code reads for the folder, kept out of git by a block in `.git/info/exclude`: the folder's own, or the repository root's for a package pinned to the root's board (3.3); `.claude/settings.json` only for a folder with a board of its own inside another git repository, or at a root that holds other boards. Plus the SessionStart hook and the PostToolUse hook (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`) in `.claude/settings.json` |
-| codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<store>` in the instructions; the entry forwards `LANEBOARD_DIR` (`env_vars`) |
+| codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<store>` before each command in the instructions; the entry forwards `LANEBOARD_DIR` (`env_vars`): start Codex in the project folder or as `LANEBOARD_DIR=<store> codex`, never export it |
 | cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 | opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
@@ -146,7 +146,7 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
   not in the final status and the free ones (no assignee, not final) with the claim command.
 - A board with checks or `create_by` (3.7): `prime` names the checks, who makes them and who creates tasks. Your `finish` hands your work in
-  to the first check; a checker's `finish` passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
+  to the check the task is in, else the first check; a checker's `finish` passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
 
 ### 2.2 A task from start to end
 
@@ -155,7 +155,7 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 `finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
-the final one (on a board with checks, 3.7: the first check by default, and the checkers set the rest).
+the final one (on a board with checks, 3.7: by default the check the task is in, else the first check, and the checkers set the rest).
 The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
 Somebody else's task `finish` only accepts, and only a handed-in one (the newest `status` event into its current status is the
 assignee's `finish` with `handed_in`): into the final status, the result comment and no commit link (the assignee linked it); the assignee
@@ -490,15 +490,19 @@ For an orchestrator that runs subagents. Both keys are optional; a board without
 against an agent's mistake, not against a hostile agent.
 
 - `--review-statuses a,b`: the checks in order, statuses between the first and the final one. The assignee's `finish` hands in to the
-  first check (a later check or the final status: `INVALID_VALUE`). A checker's `finish` passes the handed-in task on to the next check
+  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker's `finish` passes the handed-in task on to the next check
   (reply `passed: true`, `from`; still handed in, not in work) and from the last one accepts it into the final status (`accepted: true`).
-- `--reviewers x,y`: who checks (default: anybody but the author of the work). The author of the work (any name that held the task or
-  handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
+- `--reviewers x,y`: who checks (default: anybody but the author of the work). Any of them makes any check, both in a row too: the
+  two lists are not paired. A checker's `finish` applies to the check the task is in now, whoever passed it there. The author of the
+  work (any name that held the task or handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
 - A task waiting in a check (handed in, or passed on) is handed in already: the author's `finish`, `update` or `claim` into another check
   or the final status gets `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment; it never
   goes back to an earlier check. `finish` without `--status` there records a new result after rework, the status stays.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
-  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`.
+  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. A checker's
+  `finish --status` with an earlier check, a work status or the first status is refused (`INVALID_VALUE`): its fix is this return,
+  `laneboard comment <ID> '<result>' --as <checker> && laneboard update <ID> --status <work status> --as <checker>`, never a `finish`
+  that passes the task on or accepts it. A fix never changes what the refused command meant.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
 - `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check with the `finish` that checks them, and
