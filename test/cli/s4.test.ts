@@ -162,8 +162,8 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
       ['commented', { text: 'handed in again', result: true }],
       ['status', { from: 'review', to: 'review', handed_in: true }],
     ]);
-    // Handed in now: a second hand-in is unchanged; the acceptance goes through.
-    expect((await finishTask(as(s, 'dev-1'), { id: 'LB-1', result: 'x', status: 'review', no_commit: true })).warnings[0]).toMatch(/^no changes: LB-1 is already review/);
+    // Handed in now: the same hand-in again (a retry) is unchanged (S6h: a new result would be recorded); the acceptance goes through.
+    expect((await finishTask(as(s, 'dev-1'), { id: 'LB-1', result: 'handed in again', status: 'review', no_commit: true })).warnings).toEqual(['no changes: LB-1 is already review with this result']);
     expect((await finishTask(as(s, 'orch'), { id: 'LB-1', result: 'ok', no_commit: true })).reply).toEqual({ commit: null, accepted: true });
   });
 

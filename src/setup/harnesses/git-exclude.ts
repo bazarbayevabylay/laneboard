@@ -4,6 +4,7 @@
 // folders setup made (newcomer F6). Every harness writes the same block, so `--remove` of one keeps it while another still uses it.
 import fs from 'node:fs';
 import path from 'node:path';
+import { linkedWorktree } from '../../core/index.ts';
 import type { TextEdit } from '../files.ts';
 import { blockEdit } from '../md-block.ts';
 import type { Markers } from '../md-block.ts';
@@ -30,12 +31,15 @@ export function gitRoot(cwd: string): string | undefined {
   }
 }
 
-// The repository's exclude file when cwd lies in a repository with a `.git` directory, else undefined (no repository, or a worktree or
-// submodule whose `.git` is a file).
+// The repository's exclude file when cwd lies in a repository with a `.git` directory; in a linked worktree (`git worktree add`, its
+// `.git` is a file) the one in the repository's common git directory, which git reads for every worktree (`git rev-parse --git-path
+// info/exclude` names it; A18). Else undefined: no repository, or a submodule (its `.git` file names no common directory).
 export function excludeFile(c: HarnessContext): string | undefined {
   const root = gitRoot(c.cwd);
-  if (root === undefined || !fs.statSync(path.join(root, '.git')).isDirectory()) return undefined;
-  return path.join(root, GIT_EXCLUDE);
+  if (root === undefined) return undefined;
+  if (fs.statSync(path.join(root, '.git')).isDirectory()) return path.join(root, GIT_EXCLUDE);
+  const tree = linkedWorktree(c.cwd);
+  return tree === undefined ? undefined : path.join(tree.commonDir, 'info', 'exclude');
 }
 
 // Text with patterns of its own: a line that is neither blank nor a comment. `git init` writes an exclude file of comments only.
@@ -51,8 +55,9 @@ function excludeEdit(file: string): TextEdit {
   return { ...edit, ownsExclusive: (text) => edit.owns(text) || (text !== '' && !hasPatterns(text)) };
 }
 
-// The exclude file as a harness file: written in every git repository with a `.git` directory; at the repository root it is
-// ./.git/info/exclude, else (a folder inside the repository, the home directory as the root) the root's one.
+// The exclude file as a harness file: written in every git repository with a `.git` directory and in a linked worktree; at the
+// repository root it is ./.git/info/exclude, else (a folder inside the repository, the home directory as the root, a worktree) the
+// repository's one.
 export const gitExclude: HarnessFile = {
   path: GIT_EXCLUDE,
   scope: 'project',

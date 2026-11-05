@@ -7,8 +7,8 @@ export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MA
 export { forgetBoard, isLiveBoard, listBoards, liveBoards, readRegistry, registerStore, registryFile, resolveBoard, storeState } from './boards.ts';
 export type { BoardEntry, BoardInfo, BoardsResult, LiveBoard, MissingBoard } from './boards.ts';
 export { actorPart, agentUser, defaultAgentBase, defaultAgentName, isEarlierSessionName, resolveActor } from './agent-name.ts';
-export { GIT_TIMEOUT_MS, readCheckout } from './git.ts';
-export type { CheckoutState } from './git.ts';
+export { GIT_TIMEOUT_MS, linkedWorktree, readCheckout, readCommit, readWorktrees } from './git.ts';
+export type { CheckoutState, CommitState, LinkedWorktree, WorktreeState } from './git.ts';
 export type { ActorSource, ResolvedActor } from './agent-name.ts';
 export type { DiscoveryInput, ForeignStore, StoreRef, StoreSource } from './store.ts';
 export { derivePrefix, loadConfig, storePrefix } from './config.ts';

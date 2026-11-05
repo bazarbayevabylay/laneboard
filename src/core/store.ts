@@ -4,14 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describeIssue, schemaVersion, unreadableStoreFile } from './config.ts';
 import { LaneboardError } from './errors.ts';
+import { linkedWorktree } from './git.ts';
 import { shellQuote } from './shell.ts';
 import { STORE_SCHEMA, STORE_VERSION, StoreFile } from './schema.ts';
 import type { FileKind, StoreFileT, TaskT } from './schema.ts';
 
 export const STORE_DIR_NAME = '.laneboard';
 
-// How a store was found: --dir, LANEBOARD_DIR, in the current directory, in a parent of it (walk-up), or --board (read-only).
-export type StoreSource = 'dir' | 'env' | 'cwd' | 'parent' | 'board';
+// How a store was found: --dir, LANEBOARD_DIR, in the current directory, in a parent of it (walk-up), in the main checkout of the
+// git worktree holding cwd, or --board (read-only).
+export type StoreSource = 'dir' | 'env' | 'cwd' | 'parent' | 'worktree' | 'board';
 
 // A resolved store: absolute path of the `.laneboard` directory (and how discovery found it, when it did).
 export interface StoreRef {
@@ -53,7 +55,8 @@ function isDir(p: string): boolean {
   }
 }
 
-// Find the store: --dir, then LANEBOARD_DIR, then walk up from cwd to `/` (first match wins).
+// Find the store: --dir, then LANEBOARD_DIR, then walk up from cwd to `/` (first match wins); in a linked git worktree a store
+// inside the worktree comes first, then the main checkout's (see worktreeStore), then one above the worktree.
 export function resolveStore(input: DiscoveryInput): StoreRef {
   const explicit = input.dir ?? input.envDir;
   if (explicit !== undefined && explicit !== '') {
@@ -67,6 +70,8 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
     return { dir, found: input.dir !== undefined ? 'dir' : 'env' };
   }
   const found = walkUp(input.cwd, input.home);
+  const worktree = worktreeStore(input.cwd, found, input.home);
+  if (worktree) return worktree;
   if (found) return found;
   throw new LaneboardError('STORE_NOT_FOUND', `no ${STORE_DIR_NAME} directory in ${path.resolve(input.cwd)} or any parent`);
 }
@@ -79,6 +84,18 @@ function walkUp(cwd: string, home: string | undefined): StoreRef | undefined {
     if (isDir(candidate) && !isRegistryDir(candidate, home)) return { dir: candidate, found: current === start ? 'cwd' : 'parent' };
     if (path.dirname(current) === current) return undefined;
   }
+}
+
+// The store of the main checkout for cwd in a linked git worktree (`git worktree add ../wt`, A18): the worktree's `.git` file leads to
+// the repository's common git directory and so to the main checkout, whose `<root>/.laneboard` (not committed, so a worktree outside
+// the project tree has no copy) is this project's board. Only when walking up found no store inside the worktree itself; a store
+// above the worktree (e.g. `<project>/.claude/worktrees/<name>`, or an unrelated folder above `../wt`) gives way to it.
+function worktreeStore(cwd: string, near: StoreRef | undefined, home: string | undefined): StoreRef | undefined {
+  const tree = linkedWorktree(cwd);
+  if (tree?.main === undefined) return undefined;
+  if (near !== undefined && isWithin(canonicalPath(near.dir), canonicalPath(tree.root))) return undefined;
+  const candidate = path.join(tree.main, STORE_DIR_NAME);
+  return isDir(candidate) && !isRegistryDir(candidate, home) ? { dir: candidate, found: 'worktree' } : undefined;
 }
 
 // `p` absolute with symlinks resolved (macOS /var -> /private/var); for a path that does not exist yet, its nearest existing
