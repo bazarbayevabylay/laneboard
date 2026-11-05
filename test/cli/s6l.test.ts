@@ -124,6 +124,21 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
     expect(other.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment WORD-1 "<note for ${NAME_1}>" --as dev-1` });
     expect(other.doc.error.message).not.toContain('--resume');
   });
+
+  it('an explicit name of the session form (claude-code@ann:x), silent 20 min: claim and finish never name --resume (review S6l)', async () => {
+    const s = await newStore({ prefix: 'WORD', statuses: ['todo', 'doing', 'done'] });
+    expect((await json(s, ['create', 'Review', '--status', 'doing', '--assignee', `${BASE}:x`, '--as', `${BASE}:x`], SESSION_1)).code).toBe(0);
+    later(20 * MIN);
+    // The holder's name has the form of a session name, but no session of the default name took the task: decided by the events.
+    for (const argv of [['claim', 'WORD-1'], ['finish', 'WORD-1', '--result', 'r', '--no-commit'], ['finish', 'WORD-1', '--result', 'r', '--status', 'doing', '--no-commit']]) {
+      const r = await json(s, argv, SESSION_2);
+      expect(r.code, argv.join(' ')).toBe(4);
+      // The fix of the refusals for somebody else's task stays: a comment to the holder.
+      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: `${BASE}:x` } });
+      expect(r.doc.error.fix, argv.join(' ')).toMatch(new RegExp(`^laneboard comment WORD-1 ".+" --as ${NAME_2}$`));
+      expect(`${r.doc.error.message} ${r.doc.error.fix}`, argv.join(' ')).not.toContain('--resume');
+    }
+  });
 });
 
 describe('P5 (A-U6): a resume of a session active less than 15 min ago warns', () => {
@@ -139,6 +154,21 @@ describe('P5 (A-U6): a resume of a session active less than 15 min ago warns', (
     expect(second.doc.warnings).toContain(
       `WORD-2 taken from a session active <1 min ago (${NAME_2}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-2 "<note for ${NAME_2}>"`,
     );
+  });
+
+  it('no parent warning for a parent in the final status or held by someone else (review S6l)', async () => {
+    const s = await newStore({ prefix: 'WORD', statuses: ['todo', 'doing', 'done'] });
+    expect((await json(s, ['create', 'Closed parent', '--status', 'done', '--assignee', NAME_1], SESSION_1)).code).toBe(0);
+    expect((await json(s, ['create', 'Child 1', '--status', 'doing', '--assignee', NAME_1, '--parent', 'WORD-1'], SESSION_1)).code).toBe(0);
+    expect((await json(s, ['create', 'Other parent', '--status', 'doing', '--assignee', 'dev-9', '--as', 'dev-9'], SESSION_1)).code).toBe(0);
+    expect((await json(s, ['create', 'Child 2', '--status', 'doing', '--assignee', NAME_1, '--parent', 'WORD-3'], SESSION_1)).code).toBe(0);
+    later(16 * MIN);
+    for (const id of ['WORD-2', 'WORD-4']) {
+      const r = await json(s, ['claim', id, '--resume'], SESSION_2);
+      expect(r.code, id).toBe(0);
+      expect(r.doc.data, id).toMatchObject({ assignee: NAME_2, resumed_from: NAME_1 });
+      expect(r.doc.warnings.filter((w: string) => w.includes('its parent')), id).toEqual([]);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 // S3b: review S3 (prime keeps its commands at the real path length, resume decided by the events, the setup block names finish,
-// finish checks the owner first) and the owner's decisions (finish --status <any but the first>, warnings when the linked commit
-// may not hold the work, no --resume offer in ALREADY_CLAIMED, the resume section of prime --hook only after /clear; the last two
-// reversed in S6l, P5).
+// finish checks the owner first), the owner's decisions (finish --status <any but the first>, warnings when the linked commit
+// may not hold the work) and the orchestrator's S3b choices (no --resume offer in ALREADY_CLAIMED, the resume section of
+// prime --hook only after /clear), reversed in S6l, P5.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -378,7 +378,7 @@ describe('git checkout facts as git gives them, checked against git status', () 
   });
 });
 
-// Rewritten in S6l (P5, reverses the S3b decision): the hook shows the section in every new session (startup too: a restart),
+// Rewritten in S6l (P5, reverses the orchestrator's S3b choice): the hook shows the section in every new session (startup too: a restart),
 // not on resume or compact; ALREADY_CLAIMED on an earlier session's task names --resume (in the fix once that session is silent).
 describe('S6l: prime --hook shows the resume section in a new session, ALREADY_CLAIMED names --resume', () => {
   async function earlierTask(): Promise<TestStore> {
