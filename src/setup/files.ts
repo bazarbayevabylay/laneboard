@@ -41,6 +41,8 @@ export interface PlannedFile {
   before: string | null;
   // A backup that stays after this run (reported, so it is not forgotten or committed).
   keptBackup?: boolean;
+  // Project files: the folder no step of the path below may leave through a symlink (checked again right before the writes).
+  root?: string;
 }
 
 // Backup path of a harness file.
@@ -95,34 +97,97 @@ function checkWritable(p: PlannedFile): PlannedFile {
   return p;
 }
 
+// The folder a project file must stay in: the project for a file shown by its path relative to it (index.ts `locate`), else the
+// file's own directory (a moved project file, the repository's .git/info/exclude: laneboard computes that place, and git never
+// checks out a path through `.git`, so a clone cannot plant a link there).
+function projectRoot(file: string, shown: string): string {
+  if (path.isAbsolute(shown) || shown.startsWith('~/')) return path.dirname(file);
+  let root = file;
+  for (let i = shown.split('/').length; i > 0; i--) root = path.dirname(root);
+  return path.join(root, shown) === file ? root : path.dirname(file);
+}
+
+// What is at a path without following a symlink, or undefined when nothing is there yet (setup then creates a real file or folder).
+function lstatOrMissing(p: string): fs.Stats | undefined {
+  try {
+    return fs.lstatSync(p);
+  } catch (err) {
+    // Missing (or a parent missing) is the normal state of a file setup creates; anything else (permissions) is a real error.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+    throw err;
+  }
+}
+
+// SETUP_CONFLICT before any read or write when a project file (or its backup) is reached through a symlink at any step below the
+// project folder, or is not a regular file: a cloned repository may hold `CLAUDE.md -> ~/.zshrc` or `.claude -> ~/.claude`, and a
+// write through it would change the user's own files outside the project. Global files (~/.codex, CODEX_HOME) keep following links.
+function checkInsideProject(file: string, shown: string, root: string): void {
+  const steps = path.relative(root, file).split(path.sep);
+  let current = root;
+  for (const [i, step] of steps.entries()) {
+    current = path.join(current, step);
+    const stat = lstatOrMissing(current);
+    if (stat === undefined) return;
+    const link = steps.slice(0, i + 1).join('/');
+    const linkShown = path.isAbsolute(shown) || shown.startsWith('~/') ? shown : link;
+    if (stat.isSymbolicLink()) {
+      const target = fs.readlinkSync(current);
+      throw new LaneboardError('SETUP_CONFLICT', `${linkShown} is a symlink to ${target}; setup does not write ${shown} through a symlink in the project (a cloned repository can point one at your files outside it); nothing was written`, {
+        details: { file: shown, link: linkShown, target },
+        fix: `setup writes only real files inside the project: replace the symlink ${shellQuote(current)} with a real ${i === steps.length - 1 ? 'file' : 'folder'} and run setup again, or add laneboard's entry to ${shown} by hand`,
+      });
+    }
+    if (i === steps.length - 1 && !stat.isFile()) {
+      throw new LaneboardError('SETUP_CONFLICT', `${shown} is not a regular file (${stat.isDirectory() ? 'a directory' : 'a device, FIFO or socket'}); nothing was written`, {
+        details: { file: shown },
+        fix: `move ${shellQuote(current)} away and run setup again`,
+      });
+    }
+  }
+}
+
+// The checks of a project file before anything is read from it: the file and its backup stay inside the project. Returns the root.
+function guardProjectFile(file: string, shown: string, scope: PlannedFile['scope']): string | undefined {
+  if (scope !== 'project') return undefined;
+  const root = projectRoot(file, shown);
+  checkInsideProject(file, shown, root);
+  checkInsideProject(backupOf(file), `${shown}.laneboard.bak`, root);
+  return root;
+}
+
 // Plan the install of our part into one file (reads only).
 export function planAdd(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
+  const root = guardProjectFile(file, shown, scope);
+  const at = { file, shown, scope, ...(root !== undefined ? { root } : {}) };
   const before = readText(file);
   const after = edit.add(before);
-  if (before === after) return { file, shown, scope, result: 'unchanged', before };
-  if (before === null) return checkWritable({ file, shown, scope, result: 'created', write: after, before });
+  if (before === after) return { ...at, result: 'unchanged', before };
+  if (before === null) return checkWritable({ ...at, result: 'created', write: after, before });
   // The backup is the file as it was without laneboard: never a text that already holds our part, never overwritten.
   const exclusive = edit.ownsExclusive ?? edit.owns;
   const backup = !exclusive(before) && readText(backupOf(file)) === null ? before : undefined;
-  return checkWritable({ file, shown, scope, result: 'updated', write: after, diff: lineDiff(before, after), before, ...(backup !== undefined ? { backup } : {}) });
+  return checkWritable({ ...at, result: 'updated', write: after, diff: lineDiff(before, after), before, ...(backup !== undefined ? { backup } : {}) });
 }
 
 // Plan the removal of our part: restore the original bytes when nothing else changed, delete a file we created.
 export function planRemove(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
+  const root = guardProjectFile(file, shown, scope);
+  const at = { file, shown, scope, ...(root !== undefined ? { root } : {}) };
   const before = readText(file);
   const original = readText(backupOf(file));
   const keptBackup = original !== null;
-  if (before === null || !edit.owns(before)) return { file, shown, scope, result: 'unchanged', before, keptBackup };
+  if (before === null || !edit.owns(before)) return { ...at, result: 'unchanged', before, keptBackup };
   const stripped = edit.strip(before);
   // The backup itself is compared (not the backup without our part): one that holds our part never matches, so it never brings the entry back.
   // A backup without exclusive parts may hold values the user set before setup (env.LANEBOARD_DIR): equal apart from those, it is restored.
   const exclusive = edit.ownsExclusive ?? edit.owns;
   const sameAsBackup = original !== null && (edit.same(original, stripped) || (!exclusive(original) && edit.same(edit.strip(original), stripped)));
   if (original !== null && sameAsBackup) {
-    return checkWritable({ file, shown, scope, result: 'restored', write: original, dropBackup: true, before });
+    return checkWritable({ ...at, result: 'restored', write: original, dropBackup: true, before });
   }
-  if (original === null && edit.isEmpty(stripped)) return checkWritable({ file, shown, scope, result: 'deleted', write: null, before });
-  return checkWritable({ file, shown, scope, result: 'removed', write: stripped, before, keptBackup });
+  if (original === null && edit.isEmpty(stripped)) return checkWritable({ ...at, result: 'deleted', write: null, before });
+  return checkWritable({ ...at, result: 'removed', write: stripped, before, keptBackup });
 }
 
 // A shared file that another harness still needs: left as it is.
@@ -142,8 +207,8 @@ function dropCreatedDir(dir: string, roots: readonly string[]): void {
   if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
 }
 
-// Put a file back to `text` (null: it did not exist); `created` is the first directory this run made for it.
-function putBack(file: string, text: string | null, created?: string): void {
+// Put a file back to `text` (null: it did not exist); a directory this run made for it is removed by its own undo step.
+function putBack(file: string, text: string | null): void {
   if (readText(file) === text) return;
   if (text !== null) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -151,7 +216,18 @@ function putBack(file: string, text: string | null, created?: string): void {
     return;
   }
   fs.rmSync(file, { force: true });
-  if (created) fs.rmSync(created, { recursive: true, force: true });
+}
+
+// Create a file that must not exist yet (`wx`: a link or file that appeared at the path since planning fails with EEXIST and is
+// left alone), then write it; `owned` runs once the file is ours, so the undo of this run never deletes what it did not make.
+function writeNewFile(file: string, text: string, mode: number, owned: () => void): void {
+  const fd = fs.openSync(file, 'wx', mode);
+  owned();
+  try {
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // Write a plan: backups first (with the original's mode), then files; a deleted file also takes its now-empty directory
@@ -162,14 +238,15 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
   // Directories a deleted file was in: checked once every file is done (two files of ours may share one, .claude/).
   const emptied = new Set<string>();
   let current: PlannedFile | undefined;
+  // Again right before the first write: a link put in place after planning is refused too (SETUP_CONFLICT, nothing written).
+  for (const p of plan) if (p.root !== undefined && p.write !== undefined) checkInsideProject(p.file, p.shown, p.root);
   try {
     for (const p of plan) {
       if (p.backup === undefined) continue;
       current = p;
       const bak = backupOf(p.file);
       const mode = fs.statSync(p.file).mode & 0o777;
-      undo.push({ shown: `${p.shown}.laneboard.bak`, run: () => fs.rmSync(bak, { force: true }) });
-      fs.writeFileSync(bak, p.backup, { mode });
+      writeNewFile(bak, p.backup, mode, () => undo.push({ shown: `${p.shown}.laneboard.bak`, run: () => fs.rmSync(bak, { force: true }) }));
       // The mode given at creation is narrowed by umask; set it exactly (a 0600 config keeps a 0600 backup).
       fs.chmodSync(bak, mode);
     }
@@ -184,10 +261,15 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
       }
       const dir = path.dirname(p.file);
       const created = fs.mkdirSync(dir, { recursive: true });
-      undo.push({ shown: p.shown, run: () => putBack(p.file, p.before, created) });
+      if (created !== undefined) undo.push({ shown: p.shown, run: () => fs.rmSync(created, { recursive: true, force: true }) });
       // Remember that this directory is ours, so --remove may delete it later (a directory the user had is never deleted).
       if (created !== undefined && !roots.includes(dir)) fs.writeFileSync(path.join(dir, CREATED_DIR_MARKER), CREATED_DIR_TEXT);
-      fs.writeFileSync(p.file, p.write);
+      if (p.before === null) {
+        writeNewFile(p.file, p.write, 0o666, () => undo.push({ shown: p.shown, run: () => putBack(p.file, null) }));
+      } else {
+        undo.push({ shown: p.shown, run: () => putBack(p.file, p.before) });
+        fs.writeFileSync(p.file, p.write);
+      }
       if (p.dropBackup) {
         const bak = backupOf(p.file);
         const restored = p.write;

@@ -1,0 +1,4 @@
+# laneboard:start
+# .claude/settings.local.json holds this machine's store path and your name (laneboard setup claude-code)
+**/.claude/settings.local.json
+# laneboard:end
