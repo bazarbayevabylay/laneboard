@@ -49,7 +49,7 @@ export type InsideCheck = (inside: string, firstLine: number) => { conflict: str
 // Placeholder for the store path in the instruction line templates (plain characters, so shellQuote leaves it as it is).
 const STORE_SLOT = 'LANEBOARDSTOREPATHSLOT';
 // Every way the instruction block names the store (Record: a new pin cannot be left out).
-const PINS = Object.keys({ 'settings-local-env': true, 'settings-env': true, inline: true } satisfies Record<StorePin, true>) as StorePin[];
+const PINS = Object.keys({ 'settings-local-env': true, 'settings-root-local-env': true, 'settings-env': true, inline: true } satisfies Record<StorePin, true>) as StorePin[];
 // Lines the 0.1.0 builds wrote (commits 6f81877..4e19d07, before 0.2.0) that instructionLines no longer gives: a block holding them
 // is still laneboard's and is updated (test/setup/fixtures/blocks/0.1.0-*).
 const EARLIER_LINES = [

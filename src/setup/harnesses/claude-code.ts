@@ -1,25 +1,28 @@
 // Claude Code: .mcp.json, CLAUDE.md block, in .claude/settings.json the SessionStart hook and the PostToolUse edit reminder, and the
 // store pin plus the default agent name as `env` (LANEBOARD_DIR, LANEBOARD_DEFAULT_AGENT): code.claude.com/docs/en/mcp, /hooks,
 // /memory, /settings (`env` is set "for every session and its subprocesses").
-// The env goes into .claude/settings.local.json (no machine path is committed) when Claude Code reads that file from this folder:
-// the folder is the root of its own git repository, or there is no repository (or it is the home directory). In a folder inside
-// another repository Claude Code reads the local file at the repository root, and that file wins over the folder's own settings
-// (code.claude.com/docs/en/settings, "Where Claude Code keeps the local file", "Settings precedence"): there the env stays in
-// .claude/settings.json, and a repository root that holds other boards keeps its env in settings.json too, so its pin never reaches them.
+// The env goes into a .claude/settings.local.json (no machine path is committed) that Claude Code reads for sessions in this folder:
+// this folder's own when it is the root of its own git repository, or there is no repository (or the home directory is its root); in a
+// folder inside a repository (a package of a monorepo) or a linked worktree Claude Code reads the local file at the repository root
+// (the main checkout's), and that file wins over the folder's own settings (code.claude.com/docs/en/settings, "Where Claude Code
+// keeps the local file", "Settings precedence"). So the env goes to the root's local file when this folder is pinned to the
+// repository's own board (S6s); a folder with a board of its own (or another store) there keeps its env in .claude/settings.json, and
+// a repository root that holds other boards keeps its env in settings.json too, so its pin never reaches them.
 // A local file setup writes is kept out of git by the marked block in the repository's .git/info/exclude (git-exclude.ts; Claude Code
 // itself only excludes the file when it writes it first).
 // A pin an earlier setup wrote (both env keys) to a path that holds no store any more (the project folder was moved or renamed) is
-// replaced with this project's store; any other LANEBOARD_DIR that names another store is the user's and never overwritten.
+// replaced with this project's store; any other LANEBOARD_DIR that names another store is the user's and never overwritten. A pin of an
+// earlier setup in .claude/settings.json (to this store, or a stale one) moves out of it when the env goes to a local file.
 import fs from 'node:fs';
 import path from 'node:path';
-import { defaultAgentBase, isLiveBoard, LaneboardError, readRegistry, samePath, storeState } from '../../core/index.ts';
+import { canonicalPath, defaultAgentBase, isLiveBoard, LaneboardError, linkedWorktree, readRegistry, repositoryCheckouts, samePath, storeState } from '../../core/index.ts';
 import { readText } from '../files.ts';
 import type { TextEdit } from '../files.ts';
 import { jsonEdit, jsonEdits, jsonValueAt } from '../json-key.ts';
 import type { JsonOwned } from '../json-key.ts';
 import { blockEdit, MD_MARKERS } from '../md-block.ts';
 import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, MCP_ARGS, MCP_COMMAND, PRIME_HOOK_COMMAND, shellWord } from './common.ts';
-import type { Harness, HarnessContext } from './common.ts';
+import type { Harness, HarnessContext, StorePin } from './common.ts';
 import { gitExclude, gitRoot } from './git-exclude.ts';
 
 const SETTINGS = '.claude/settings.json';
@@ -56,17 +59,20 @@ const ENV_KEYS: JsonOwned[] = [
   { kind: 'key', path: ENV_AGENT, value: '' },
 ];
 
-// Does Claude Code read .claude/settings.local.json from this folder (so the env can live there)?
-export function localSettingsHere(c: HarnessContext): boolean {
+// The folder whose .claude/settings.local.json Claude Code reads for a session started in cwd: cwd itself outside a repository or
+// with the home directory as the root, else the repository root (a `.git` directory), the main checkout for a linked worktree;
+// undefined for a submodule or a worktree of a bare repository.
+function localFolder(c: HarnessContext): string | undefined {
   const root = gitRoot(c.cwd);
-  if (root === undefined || samePath(root, c.home)) return true;
-  // A worktree or submodule has a `.git` file: Claude Code uses the main checkout's local file then.
-  return root === c.cwd && fs.statSync(path.join(root, '.git')).isDirectory();
+  if (root === undefined || samePath(root, c.home)) return c.cwd;
+  if (fs.statSync(path.join(root, '.git')).isDirectory()) return root;
+  return linkedWorktree(c.cwd)?.main;
 }
 
-// Another live board of the machine registry inside this folder (a nested project): every session in it would get our pin
-// from a local file at a repository root, so the env must not go there.
-function nestedBoard(c: HarnessContext): string | undefined {
+// Another live board of the machine registry inside `folder` or inside a linked worktree of its repository (a nested project, a
+// worktree with a board of its own): every session there would get our pin from the local file of `folder`, so the env must not go there.
+function nestedBoard(c: HarnessContext, folder: string): string | undefined {
+  const areas = [folder, ...(repositoryCheckouts(folder)?.others ?? [])];
   let entries: Array<{ path: string }>;
   try {
     entries = readRegistry(c.home);
@@ -74,26 +80,97 @@ function nestedBoard(c: HarnessContext): string | undefined {
     // A broken registry is reported when setup registers the board; here it only means "no nested board known".
     return undefined;
   }
-  return entries.map((e) => e.path).find((p) => p !== c.storeDir && !path.relative(c.cwd, p).startsWith('..') && isLiveBoard(p));
+  // Paths compared with symlinks resolved: the registry may name a board through a link (/var vs /private/var on macOS).
+  const real = areas.map(canonicalPath);
+  return entries
+    .map((e) => e.path)
+    .find((p) => !samePath(p, c.storeDir) && real.some((a) => !path.relative(a, canonicalPath(p)).startsWith('..')) && isLiveBoard(p));
 }
 
-// Where setup writes the env: the local file when Claude Code reads it from this folder and, at a repository root, no other board
-// lives inside the repository; else .claude/settings.json.
-export function envInLocalFile(c: HarnessContext): boolean {
-  if (!localSettingsHere(c)) return false;
-  // Outside a repository, or with the home directory as its root, Claude Code reads the local file of the session folder only.
-  const root = gitRoot(c.cwd);
-  return root !== c.cwd || samePath(root, c.home) || nestedBoard(c) === undefined;
+// The folder whose local file gets the env, or undefined for .claude/settings.json of cwd. This folder's local file: outside a
+// repository, with the home directory as the root, or at a repository root that holds no other board. The repository root's (the main
+// checkout's) local file: cwd is pinned to the board in that folder and no other board lives inside it (S6s).
+export function envFolder(c: HarnessContext): string | undefined {
+  const folder = localFolder(c);
+  if (folder === undefined) return undefined;
+  if (folder === c.cwd) {
+    const root = gitRoot(c.cwd);
+    return root !== c.cwd || samePath(folder, c.home) || nestedBoard(c, folder) === undefined ? folder : undefined;
+  }
+  return samePath(path.dirname(c.storeDir), folder) && nestedBoard(c, folder) === undefined ? folder : undefined;
 }
 
-// SETUP_CONFLICT when the repository root's local file pins another store: Claude Code applies it to every session in the
-// repository above this folder's .claude/settings.json, so a pin written here would never take effect.
+// The local file Claude Code reads for cwd when it lies outside cwd (the repository root's, the main checkout's), else undefined. It
+// is that file whether or not the env goes there: a pin an earlier setup wrote there must still be found when it no longer applies.
+function rootLocalFile(c: HarnessContext): string | undefined {
+  const folder = localFolder(c);
+  return folder === undefined || samePath(folder, c.cwd) ? undefined : path.join(folder, LOCAL_SETTINGS);
+}
+
+// Does setup of Claude Code stand in `folder` (its .mcp.json, CLAUDE.md or .claude/settings.json holds our part)? A file that cannot be
+// read or parsed counts as yes: that setup may still use the folder's local file.
+function standsIn(c: HarnessContext, folder: string): boolean {
+  const there: HarnessContext = { ...c, cwd: folder };
+  return claudeCode.files
+    .filter((f) => f.path !== LOCAL_SETTINGS && f.scope === 'project' && f !== gitExclude)
+    .some((f) => {
+      try {
+        const text = readText(path.join(folder, f.path));
+        return text !== null && f.edit(f.path, there).owns(text);
+      } catch {
+        // Unreadable or unparseable: it may hold our part, so the folder's local file is left alone.
+        return true;
+      }
+    });
+}
+
+// A pin an earlier setup (both env keys) left in the repository root's local file that no longer applies there (S6s review r1): cwd
+// does not get its env there (another board appeared in the repository, the store changed), the pin names the board at that root
+// while another live board lies in the repository (setup in any package would now keep its env in its settings.json), and setup does
+// not stand at the root itself. Such a pin is taken out on install and --remove (ADR §14: a file that no longer applies loses our part).
+function leftRootPin(text: string | null, c: HarnessContext): boolean {
+  const file = rootLocalFile(c);
+  if (file === undefined || text === null || envFolder(c) !== undefined || !setupPin(file, text)) return false;
+  const dir = envString(text, ENV_DIR);
+  if (dir === undefined) return false;
+  const root = path.dirname(path.dirname(file));
+  const pinned = path.resolve(c.cwd, dir);
+  if (!samePath(path.dirname(pinned), root) || nestedBoard({ ...c, storeDir: pinned }, root) === undefined) return false;
+  return !standsIn(c, root);
+}
+
+// Edit of the local settings file: as settingsEdit with the env; the repository root's file that does not get the env holds our part
+// only as a pin an earlier setup left there (leftRootPin), never the user's value or another folder's pin.
+function localEdit(file: string, c: HarnessContext): TextEdit {
+  const edit = settingsEdit(file, c, { hooks: false, env: true });
+  if (envFolder(c) !== undefined || rootLocalFile(c) === undefined) return edit;
+  const left = (text: string): boolean => leftRootPin(text, c);
+  return {
+    ...edit,
+    strip: (text) => (left(text) ? edit.strip(text) : text),
+    owns: (text) => left(text) && edit.owns(text),
+    ownsExclusive: (text) => left(text) && (edit.ownsExclusive?.(text) ?? edit.owns(text)),
+  };
+}
+
+// The file the env goes to (absolute).
+function envFile(c: HarnessContext): string {
+  const folder = envFolder(c);
+  return path.join(c.cwd, folder === undefined ? SETTINGS : path.relative(c.cwd, path.join(folder, LOCAL_SETTINGS)));
+}
+
+// SETUP_CONFLICT when the repository root's (a linked worktree: the main checkout's) local file pins another store: Claude Code
+// applies it to every session in the repository above this folder's .claude/settings.json, so a pin written here would never take
+// effect. That file may hold the pin setup in another package wrote (S6s); setup at the root moves it.
 function checkRootPin(c: HarnessContext): void {
-  const root = gitRoot(c.cwd);
-  if (root === undefined || root === c.cwd || samePath(root, c.home)) return;
+  const root = localFolder(c);
+  if (root === undefined || root === c.cwd) return;
   const file = path.join(root, LOCAL_SETTINGS);
-  const dir = envString(readText(file), ENV_DIR);
+  const text = readText(file);
+  const dir = envString(text, ENV_DIR);
   if (dir === undefined || samePath(path.resolve(c.cwd, dir), c.storeDir)) return;
+  // A pin an earlier setup left there that no longer applies: this run takes it out (localEdit), so it is no conflict.
+  if (leftRootPin(text, c)) return;
   // init by --dir: a bare one makes <cwd>/.laneboard only, and is refused in a package of a repository whose board lies above.
   const init = isLiveBoard(c.storeDir) ? '' : `laneboard init --dir ${shellWord(c.storeDir)} --name <name> --description "<whose project, what work>" && `;
   throw new LaneboardError(
@@ -146,36 +223,92 @@ function envParts(file: string, text: string | null, c: HarnessContext): JsonOwn
   ];
 }
 
-// Edit of a settings file: the hooks and/or the env; `guard` also refuses another store pinned in a file we do not write env to.
+// Does a settings text hold a pin an earlier setup wrote (both env keys: setup writes them together)?
+function setupPin(file: string, text: string): boolean {
+  return ENV_KEYS.every((k) => jsonEdits(file, [k]).owns(text));
+}
+
+// The pin of an earlier setup in .claude/settings.json that moves to the local file (to this store, or a stale one), or undefined.
+export function movingPin(text: string | null, c: HarnessContext): string | undefined {
+  const dir = envString(text, ENV_DIR);
+  if (text === null || dir === undefined || !setupPin(SETTINGS, text)) return undefined;
+  return samePath(path.resolve(c.cwd, dir), c.storeDir) || stalePin(text, c) !== undefined ? dir : undefined;
+}
+
+// Edit of a settings file: the hooks and/or the env. Without the env (it goes to a local file) the hooks file loses a pin an earlier
+// setup left there (movingPin) and refuses another store pinned in it; --remove takes such a pin out too.
 function settingsEdit(file: string, c: HarnessContext, parts: { hooks: boolean; env: boolean }): TextEdit {
   const owned = [...(parts.hooks ? HOOK_PARTS : []), ...(parts.env ? ENV_KEYS : [])];
   const any = jsonEdits(file, owned);
   const hooksOnly = jsonEdits(file, HOOK_PARTS);
+  const envOnly = jsonEdits(file, ENV_KEYS);
   const bothEnv = ENV_KEYS.map((k) => jsonEdits(file, [k]));
+  const all = jsonEdits(file, [...HOOK_PARTS, ...ENV_KEYS]);
+  if (parts.env) {
+    return {
+      add(text) {
+        if (parts.hooks) checkRootPin(c);
+        return jsonEdits(file, [...(parts.hooks ? HOOK_PARTS : []), ...envParts(file, text, c)]).add(text);
+      },
+      strip: (text) => any.strip(text),
+      owns: (text) => any.owns(text),
+      // The hooks are only ever written by laneboard; env values alone may be the user's (both keys together are setup's).
+      ownsExclusive: (text) => (parts.hooks ? hooksOnly.owns(text) : bothEnv.every((e) => e.owns(text))),
+      same: (a, b) => any.same(a, b),
+      isEmpty: (text) => any.isEmpty(text),
+    };
+  }
   return {
     add(text) {
-      if (!parts.env) checkPin(file, text, c, false);
-      if (parts.env && parts.hooks) checkRootPin(c);
-      return jsonEdits(file, [...(parts.hooks ? HOOK_PARTS : []), ...(parts.env ? envParts(file, text, c) : [])]).add(text);
+      const kept = text !== null && movingPin(text, c) !== undefined ? envOnly.strip(text) : text;
+      checkPin(file, kept, c, false);
+      return hooksOnly.add(kept);
     },
-    strip: (text) => any.strip(text),
-    owns: (text) => any.owns(text),
-    // The hooks are only ever written by laneboard; env values alone may be the user's (both keys together are setup's).
-    ownsExclusive: (text) => (parts.hooks ? hooksOnly.owns(text) : bothEnv.every((e) => e.owns(text))),
-    same: (a, b) => any.same(a, b),
-    isEmpty: (text) => any.isEmpty(text),
+    strip(text) {
+      const rest = hooksOnly.strip(text);
+      return setupPin(file, rest) ? envOnly.strip(rest) : rest;
+    },
+    owns: (text) => hooksOnly.owns(text) || setupPin(file, text),
+    ownsExclusive: (text) => hooksOnly.owns(text) || setupPin(file, text),
+    same: (a, b) => all.same(a, b),
+    isEmpty: (text) => all.isEmpty(text),
   };
 }
 
 // What setup does with a stale pin of an earlier setup in the file that gets the env (read before the write): it is replaced, and the
 // registry entry of the store it named stays as missing until `laneboard boards --forget` drops it.
 function stalePinWarnings(c: HarnessContext): string[] {
-  const shown = envInLocalFile(c) ? LOCAL_SETTINGS : SETTINGS;
-  const dir = stalePin(readText(path.join(c.cwd, shown)), c);
+  const file = envFile(c);
+  const shown = envFolder(c) === undefined ? SETTINGS : (rootLocalFile(c) ?? path.relative(c.cwd, file).split(path.sep).join('/'));
+  const dir = stalePin(readText(file), c);
   if (dir === undefined) return [];
   const old = path.resolve(c.cwd, dir);
   const head = `${shown} pinned LANEBOARD_DIR=${dir}, which holds no store any more (the project folder was moved or renamed?), so setup pins ${c.storeDir} there instead`;
   return [registered(c, old) ? `${head}; laneboard boards --forget ${shellWord(old)} drops the old path from the machine registry` : head];
+}
+
+// A pin of an earlier setup in .claude/settings.json (committed) that this run moves to the local file: say so, the change to commit.
+function movedPinWarnings(c: HarnessContext): string[] {
+  if (envFolder(c) === undefined) return [];
+  const dir = movingPin(readText(path.join(c.cwd, SETTINGS)), c);
+  if (dir === undefined) return [];
+  const to = rootLocalFile(c) ?? LOCAL_SETTINGS;
+  return [
+    `${SETTINGS} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}, LANEBOARD_DEFAULT_AGENT), a machine path in a committed file; setup moved the env to ${to} (kept out of git) and left the rest of ${SETTINGS} as it was: commit that change`,
+  ];
+}
+
+// A pin an earlier setup left in the repository root's local file that this run takes out (leftRootPin): say so, and how the folders
+// that relied on it get their pin back.
+function leftPinWarnings(c: HarnessContext): string[] {
+  const file = rootLocalFile(c);
+  if (file === undefined) return [];
+  const text = readText(file);
+  if (!leftRootPin(text, c)) return [];
+  const dir = envString(text, ENV_DIR) ?? '';
+  return [
+    `${file} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code there pins it again`,
+  ];
 }
 
 // Is this path in the machine registry? A registry that cannot be read says no (setup reports it when it registers the board).
@@ -186,6 +319,12 @@ function registered(c: HarnessContext, dir: string): boolean {
     // Broken or unreadable: the warning just leaves out the forget command.
     return false;
   }
+}
+
+// How the instruction block names the pin: the local file of this folder or of the repository root, or .claude/settings.json.
+function storePin(c: HarnessContext): StorePin {
+  const folder = envFolder(c);
+  return folder === undefined ? 'settings-env' : folder === c.cwd ? 'settings-local-env' : 'settings-root-local-env';
 }
 
 // Plugins root: CLAUDE_CODE_PLUGIN_CACHE_DIR, else <CLAUDE_CONFIG_DIR or ~/.claude>/plugins (code.claude.com/docs/en/env-vars).
@@ -214,11 +353,20 @@ export const claudeCode: Harness = {
     {
       path: 'CLAUDE.md',
       scope: 'project',
-      edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, envInLocalFile(c) ? 'settings-local-env' : 'settings-env')),
+      edit: (f, c) => blockEdit(f, MD_MARKERS, instructionLines(c.storeDir, storePin(c))),
     },
-    // Hooks always; the env too when it does not go to the local file.
-    { path: SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: true, env: !envInLocalFile(c) }) },
-    { path: LOCAL_SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: false, env: true }), applies: envInLocalFile },
+    // Hooks always; the env too when it does not go to a local file.
+    { path: SETTINGS, scope: 'project', edit: (f, c) => settingsEdit(f, c, { hooks: true, env: envFolder(c) === undefined }) },
+    // The local file of this folder, or the repository root's (moved there) when that one gets the env.
+    {
+      path: LOCAL_SETTINGS,
+      scope: 'project',
+      edit: (f, c) => localEdit(f, c),
+      applies: (c) => envFolder(c) !== undefined,
+      // The file Claude Code reads (localFolder), also when the env no longer goes there: a pin left there is found and taken out.
+      moved: rootLocalFile,
+      movedInto: localFolder,
+    },
     // The local file, backups and folder markers stay out of git (the local file holds a machine path and the user's name).
     gitExclude,
   ],
@@ -228,6 +376,6 @@ export const claudeCode: Harness = {
     const plugin = dir
       ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove`]
       : [];
-    return [...stalePinWarnings(c), ...plugin];
+    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...plugin];
   },
 };
