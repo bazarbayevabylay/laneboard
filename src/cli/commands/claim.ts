@@ -9,6 +9,7 @@ export const claim: CommandDef = {
   usage: 'claim <id> [--status S] [--expected-rev N] [--resume] [--full]',
   summary:
     'Take a task: assignee := you. Fails with ALREADY_CLAIMED if someone else holds it. ' +
+    'On a board with checks a task that waits for a check is claimed by nobody: a checker passes it on with finish --status <next>, no claim. ' +
     '--resume: take over a task of another session of your session default name (your own work before /clear or a restart, listed by prime).',
   options: { status: { type: 'string' }, 'expected-rev': { type: 'string' }, resume: { type: 'boolean' }, ...FULL_OPTION },
   args: { min: 1, max: 1 },

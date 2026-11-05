@@ -158,7 +158,7 @@ who then becomes its assignee). `--status` takes any status but the first one: `
 the final one (on a board with checks, 3.7: by default the check the task is in, else the first check, and the checkers set the rest).
 The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
 Somebody else's task `finish` only accepts, and only a handed-in one (the newest `status` event into its current status is the
-assignee's `finish` with `handed_in`): into the final status, the result comment and no commit link (the assignee linked it); the assignee
+assignee's `finish` with `handed_in`; on a board with checks, 3.7, any handed-in task, whoever holds it now, and a checker passes it on too): into the final status, the result comment and no commit link (the assignee linked it); the assignee
 stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`. A task in work or moved by
 `update` (or handed in with 0.2.0, before the mark): `ALREADY_CLAIMED`, the fix asks the assignee to hand it in with
 `finish --status <status>`; the orchestrator may close it with `laneboard update <ID> --status done`. Accepting a closed task again:
@@ -502,8 +502,15 @@ against an agent's mistake, not against a hostile agent.
   unassigned task) is the hand-in, `laneboard finish <ID> --status <check> --result "<what you did, how you checked it>"`; of a checker
   of a waiting task `laneboard get <ID>` with both commands; of anybody else a comment that asks the holder to hand it in. A closed task
   is reopened first: the fix is `laneboard update <ID> --status <work status> && laneboard finish <ID> --status <check> ...`.
-- The hand-in belongs to the task: a new holder (`update --assignee`, `--unassign`, `claim` without `--status`) keeps a waiting task
-  handed in and in the checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it.
+- The hand-in belongs to the task: a new holder (`update --assignee`, `--unassign`) keeps a waiting task handed in and in the
+  checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it.
+- Nobody claims a task waiting in a check (with or without `--status`): a check needs no claim, and holding the task would make the
+  checker an author. A checker's `claim` gets `INVALID_VALUE`, fix `laneboard get <ID>`, the message names the pass and the return;
+  the author's the "handed in already" refusal; anybody else's a comment (`ALREADY_CLAIMED` when held). `prime` and `task_prime` list
+  such a task under the waiting ones, never among the free tasks (`unassigned`).
+- No checker left: when every name in `--reviewers` worked on a waiting task (the orchestrator gave it to the only checker), nobody
+  may pass it on. The refusals, `prime` (MCP `roles.no_checker {ids, fix}`) and `doctor` (check `checks`, exit 6) name the owner's way
+  out: `laneboard config --reviewers "<names there>,<another checker>"`.
 - `config --review-statuses` that turns a status with tasks in work into a check warns, naming each task and the hand-in its holder
   runs (`laneboard finish <ID> --status <check> --result "..." --as <holder>`); `doctor` reports them in the check `checks` (exit 6)
   until they are handed in. A move of a handed-in task by `update` or `claim` warns with the hand-in that puts it back in the queue.

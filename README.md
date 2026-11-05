@@ -204,8 +204,13 @@ laneboard config --review-statuses none --reviewers none --json
 - A task enters a check only with `finish`, so the checkers always see it: `update`, `claim`, `create` and `import` into a check are
   refused. The holder's fix is the hand-in with `finish`; a checker's is `get` with both commands; anybody else's a comment to the holder.
   A closed task is reopened first: the fix is `update <ID> --status <work status> && finish <ID> --status <check> ...`.
-- A new holder keeps the hand-in: `update --assignee`, `--unassign` or `claim` of a task waiting in a check leave it in the
+- A new holder keeps the hand-in: `update --assignee` or `--unassign` of a task waiting in a check leave it in the
   checkers' queue. The new holder is an author of the work all the same and never passes it on or accepts it.
+- Nobody claims a task waiting in a check: a check needs no claim (`finish --status <next>`), and the claim would make the checker
+  an author. A checker's `claim` gets the fix `laneboard get <ID>`, the message names the pass and the return; anybody else a comment.
+  `prime` lists such a task under "Waiting for your check", never among the free tasks.
+- No checker left (every name in `--reviewers` worked on a waiting task, say the orchestrator gave it to the only checker): the
+  refusals, `prime` and `doctor` (check `checks`, exit 6) name the owner's way out, `laneboard config --reviewers "<names>,<another checker>"`.
 - `config --review-statuses` that turns a status with tasks in work into a check warns with each task and its holder's
   `finish <ID> --status <check> ...`; until then `doctor` reports them (check `checks`, exit 6).
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.

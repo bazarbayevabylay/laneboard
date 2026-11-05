@@ -10,7 +10,7 @@ import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, deletedField, 
 import type { DeletedMark, FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
-import { handedIn, nextAfterCheck, waitsForCheck, workStatusBeforeChecks } from './update.ts';
+import { addCheckerCommand, handedIn, nextAfterCheck, noCheckerLeft, waitsForCheck, waitsInCheck, workStatusBeforeChecks } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
 
@@ -396,7 +396,7 @@ export interface SummaryResult {
   assigned: ListItem[];
   // Active tasks not in the final status that are assigned to `assignee` (without one: to anybody) - work in progress.
   in_progress: number;
-  // Free work: active tasks without an assignee, not in the final status; by priority (when declared), then newest update;
+  // Free work: active tasks without an assignee, not in the final status, not waiting for a check; by priority (when declared), then newest update;
   // at most SUMMARY_UNASSIGNED_MAX of them, `unassigned_total` counts all.
   unassigned: ListItem[];
   unassigned_total: number;
@@ -426,6 +426,9 @@ export interface SummaryRoles {
   // `next_status`: what the checker's finish names to pass it (S6w I2: finish --status <next_status>, the next check or the final status).
   waiting: Array<ListItem & { next_status: string }>;
   waiting_total: number;
+  // Tasks waiting in a check with no checker left (S6w r2: every name in review.by worked on them), and the owner's command that adds a
+  // checker (config --reviewers with the names there and a placeholder); null when there is none.
+  no_checker: { ids: string[]; fix: string } | null;
   // Each task of `assigned` with a comment by another name: the newest such comment (a checker's reason to return it, B-U6).
   feedback: Array<{ id: string; comment: LastComment }>;
 }
@@ -445,6 +448,7 @@ function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archi
   if (checks.length === 0 && config.create_by === undefined) return undefined;
   const waiting = assignee === undefined ? [] : tasks.filter(({ task }) => waitsForCheck(config, task, assignee));
   waiting.sort((a, b) => -byUpdatedDesc(a.task, b.task));
+  const stuck = tasks.filter(({ task }) => noCheckerLeft(config, task)).map(({ task }) => task.id);
   const feedback: SummaryRoles['feedback'] = [];
   for (const task of assigned) {
     const comment = checks.length === 0 || assignee === undefined ? null : otherComment(task, assignee);
@@ -458,6 +462,7 @@ function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archi
     can_create: config.create_by === undefined || (assignee !== undefined && config.create_by.includes(assignee)),
     waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => ({ ...toListItem(task, archived), next_status: nextAfterCheck(config, task.status) })),
     waiting_total: waiting.length,
+    no_checker: stuck.length === 0 ? null : { ids: stuck, fix: addCheckerCommand(config) },
     feedback,
   };
 }
@@ -497,7 +502,8 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee && open.includes(task.status));
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
-  const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status));
+  // A task waiting for a check is no free work (S6w r2): a checker checks it with finish (the waiting list), nobody claims it.
+  const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status) && !waitsInCheck(config, task));
   free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
   const resumable =
     p.assignee === undefined

@@ -242,7 +242,7 @@ export interface PrimeData {
   tasks: ListItem[];
   // The agent's tasks not in the final status (without a name: anybody's assigned ones, used by the edit hook).
   in_progress: number;
-  // Free work: active tasks without an assignee, not in the final status (at most 10, by priority), and how many there are.
+  // Free work: active tasks without an assignee, not in the final status, not waiting for a check (at most 10, by priority), and how many there are.
   unassigned: ListItem[];
   unassigned_total: number;
   // The session default name without its session part (null for other names); its other sessions' unfinished tasks are `resumable`.
@@ -347,7 +347,18 @@ function rolesLine(d: PrimeData): string {
     );
   }
   if (r.creators !== null) parts.push(`Only ${fit(r.creators.join(', '), NAMES_MAX)} create tasks here${r.can_create ? '' : ' (not you)'}.`);
-  return fit(parts.join(' '), ROLES_LINE_MAX);
+  return [fit(parts.join(' '), ROLES_LINE_MAX), noCheckerLine(r)].filter(Boolean).join('\n');
+}
+
+// How many ids of tasks with no checker left the line names (the rest as a count).
+const NO_CHECKER_IDS = 5;
+
+// The line under the roles when tasks wait in a check with no checker left (S6w r2): the owner's command that adds one, never cut.
+function noCheckerLine(r: SummaryRoles): string {
+  if (r.no_checker === null) return '';
+  const ids = r.no_checker.ids;
+  const more = ids.length > NO_CHECKER_IDS ? ` and ${ids.length - NO_CHECKER_IDS} more` : '';
+  return `No checker left for ${ids.slice(0, NO_CHECKER_IDS).join(', ')}${more} (every checker in review.by worked on it): the owner adds one: ${r.no_checker.fix}`;
 }
 
 // What to do when the agent has no task in progress: the exact create command (and how to keep a name without one); `dir` is

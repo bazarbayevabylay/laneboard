@@ -116,3 +116,35 @@ describe('S6w over MCP', () => {
     expect((await callTool('task_finish', { id: 'API-1', result: 'ok', actor: 'rev' }, env)).structuredContent).toMatchObject({ status: 'done', accepted: true });
   });
 });
+
+describe('S6w review r2 over MCP', () => {
+  it('task_claim of a waiting task by a checker: fix get (run: no change); task_prime lists it as waiting, not as free', async () => {
+    const s = await board(TWO, true);
+    const env = { cwd: s.root, env: {} };
+    await callTool('task_update', { id: 'API-1', assignee: null, actor: 'dev-1' }, env);
+    const rev = stored(s, 'API-1').rev;
+    for (const status of [undefined, 'dev']) {
+      const r = await callTool('task_claim', { id: 'API-1', ...(status === undefined ? {} : { status }), actor: 'rev' }, env);
+      expect(r.isError).toBe(true);
+      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+      expect(String((r.structuredContent as Record<string, unknown>).message)).toContain('laneboard finish API-1 --status qa --result "<result of your check>" --as rev');
+      expect(sh(s, `${(r.structuredContent as Record<string, string>).fix ?? ''} --as rev`)).toBe(0);
+    }
+    expect(stored(s, 'API-1')).toMatchObject({ status: 'code_review', assignee: null, rev });
+    const prime = (await callTool('task_prime', { actor: 'rev' }, env)).structuredContent as Record<string, any>;
+    expect(prime).toMatchObject({ unassigned: [], unassigned_total: 0 });
+    expect(prime.roles).toMatchObject({ waiting: [expect.objectContaining({ id: 'API-1', next_status: 'qa' })], no_checker: null });
+  });
+
+  it('no checker left (the only checker holds the task): task_prime roles.no_checker names the owner\'s command', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ONE.statuses });
+    await configureStore(as(s, 'orch'), { review_statuses: ['review'], reviewers: ['rev'] });
+    await createTask(as(s, 'orch'), { title: 'Add endpoint', status: 'todo' });
+    await claimTask(as(s, 'dev-1'), { id: 'API-1', status: 'in_progress' });
+    await finishTask(as(s, 'dev-1'), { id: 'API-1', result: 'work', no_commit: true });
+    const env = { cwd: s.root, env: {} };
+    await callTool('task_update', { id: 'API-1', assignee: 'rev', actor: 'orch' }, env);
+    const prime = (await callTool('task_prime', { actor: 'orch' }, env)).structuredContent as Record<string, any>;
+    expect(prime.roles.no_checker).toEqual({ ids: ['API-1'], fix: 'laneboard config --reviewers "rev,<another checker>"' });
+  });
+});

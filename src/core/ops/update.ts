@@ -262,7 +262,8 @@ function earlierSessionClaimed(id: string, holder: string, actor: string, silent
 // Take a task: assignee := actor; a task held by someone else fails with ALREADY_CLAIMED, unless `resume` takes it over from
 // another session of the same default name base (an `assigned` event with `resumed: true`). A resume warns when that session wrote
 // less than EARLIER_SESSION_SILENT_MS ago (a parallel session may still be at work: two tabs after a restart, A-U6) and names the
-// parent task held by the same session (finish of the parent needs it back too, A-U2).
+// parent task held by the same session (finish of the parent needs it back too, A-U2). On a board with checks a task that waits for a check
+// is claimed by nobody (S6w r2, waitingClaimRefusal): a checker checks it with finish, and a claim would make the checker its author.
 export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(ClaimInput, input);
@@ -276,6 +277,8 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       if (p.status !== undefined) checkStatus(s.config, p.status);
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       checkExpectedRev(task, false, p.expected_rev);
+      // A task that waits for a check is taken by nobody (S6w r2): a check needs no claim, and the claim would make a checker an author.
+      if (waitsInCheck(s.config, task)) throw waitingClaimRefusal(s.config, task, actor);
       const holder = task.assignee;
       const earlier = heldByEarlierSession(task, ctx.sessionBase, actor);
       const resumed = p.resume === true && earlier;
@@ -517,14 +520,74 @@ function authorRefusal(config: ConfigT, task: TaskT, target: string, actor: stri
 // INVALID_VALUE of the author's finish, update or claim of a task that waits in a check (B-U1 run 2): it is handed in, the checkers
 // move it on. The fix is a comment (rule 13: it may be run blindly), never a hand-in again into an earlier check.
 function alreadyHandedIn(config: ConfigT, task: TaskT, actor: string): LaneboardError {
-  const by = reviewers(config).filter((name) => name !== actor);
-  const checkers = by.length > 0 ? by.join(', ') : 'a checker (anybody but the author of the work)';
   const final = finalStatuses(config.statuses)[0] ?? '';
   return new LaneboardError(
     'INVALID_VALUE',
-    `${task.id} is handed in already and waits in ${task.status} for the check of ${checkers} (${checksLine(reviewStatuses(config), final)}): nothing to do; the author never moves it to another check or into ${final}, and a note for the checkers is a comment`,
+    `${task.id} is handed in already and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): nothing to do; the author never moves it to another check or into ${final}, and a note for the checkers is a comment${noCheckerExit(config, task)}`,
     { fix: `laneboard comment ${task.id} "<note for the check>" --as ${actor}` },
   );
+}
+
+// Does `task` wait for a check (S6w r2): it is in a check status, handed in or passed on (handedIn, whoever holds it now). Nobody
+// claims such a task, and prime lists it among no free tasks: a checker checks it with finish, its author never moves it (S6u).
+export function waitsInCheck(config: ConfigT, task: TaskT): boolean {
+  return reviewStatuses(config).includes(task.status) && handedIn(task, config);
+}
+
+// The names of config review.by that may check `task`: not an author of the work (workedOn). Empty when review.by is not set.
+function checkersLeft(config: ConfigT, task: TaskT): string[] {
+  return reviewers(config).filter((name) => !workedOn(task, name));
+}
+
+// Is no checker left for a task that waits in a check (S6w r2): review.by is set and every name in it worked on the task (an author,
+// say a checker the orchestrator gave the task to), so nobody may pass it on or accept it; only the owner adds a checker.
+export function noCheckerLeft(config: ConfigT, task: TaskT): boolean {
+  return reviewers(config).length > 0 && checkersLeft(config, task).length === 0 && waitsInCheck(config, task);
+}
+
+// The owner's command that adds a checker to config review.by, keeping the ones there (config --reviewers replaces the list).
+export function addCheckerCommand(config: ConfigT): string {
+  return `laneboard config --reviewers "${[...reviewers(config), '<another checker>'].join(',')}"`;
+}
+
+// Who checks `task` in a message: the names of review.by that are no authors of it, anybody but the author when review.by is not set.
+function checkersOf(config: ConfigT, task: TaskT): string {
+  if (reviewers(config).length === 0) return 'a checker (anybody but the author of the work)';
+  const left = checkersLeft(config, task);
+  return left.length > 0 ? left.join(', ') : 'nobody: every checker in config review.by worked on it';
+}
+
+// The way out a refusal names when no checker is left for `task` (noCheckerLeft): the owner adds one; '' otherwise.
+function noCheckerExit(config: ConfigT, task: TaskT): string {
+  return noCheckerLeft(config, task) ? `; no checker is left for it, so the owner adds one: ${addCheckerCommand(config)}` : '';
+}
+
+// Tasks that wait in a check with no checker left (noCheckerLeft), with the owner's command that adds one; undefined when there is none.
+// One text for the doctor check `checks`.
+export function stuckInChecks(config: ConfigT, tasks: readonly TaskT[]): string | undefined {
+  const stuck = tasks.filter((t) => noCheckerLeft(config, t)).map((t) => `${t.id} (${t.status})`);
+  if (stuck.length === 0) return undefined;
+  return `tasks waiting in a check that no checker may check (every name in config review.by worked on them): ${stuck.join(', ')}; the owner adds a checker: ${addCheckerCommand(config)}`;
+}
+
+// The refusal of a claim of a task that waits for a check (waitsInCheck, S6w r2), for everybody. Its author gets the S6u refusal
+// (alreadyHandedIn: nothing to do, a comment). A checker that may check it (in review.by when set, not an author) gets unclearCheck: the
+// fix reads the task, the message names the pass and the return. Anybody else a comment (ALREADY_CLAIMED when somebody else holds it).
+// When no checker is left, the message names the owner's way out (noCheckerExit).
+function waitingClaimRefusal(config: ConfigT, task: TaskT, actor: string): LaneboardError {
+  if (workedOn(task, actor)) return alreadyHandedIn(config, task, actor);
+  const by = reviewers(config);
+  if (by.length === 0 || by.includes(actor)) {
+    return unclearCheck(config, task, actor, 'claim never takes a task that waits for a check: a check needs no claim, and holding the task would make you an author of the work, who never checks it', undefined);
+  }
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const message =
+    `${task.id} is handed in and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): claim never takes a task that waits for a check ` +
+    `(a checker passes it on with finish, no claim needed; the author never moves it), and a note for the checkers is a comment${noCheckerExit(config, task)}`;
+  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor}`;
+  const holder = task.assignee;
+  if (holder !== null && holder !== actor) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: holder }, fix });
+  return new LaneboardError('INVALID_VALUE', message, { fix });
 }
 
 // The checks of a board as one line for messages: `code_review -> qa -> done`.
@@ -666,12 +729,12 @@ function notChecker(id: string, holder: string | null, actor: string, by: readon
   );
 }
 
-// ALREADY_CLAIMED of a check of a task its assignee did not hand in, on a board with checks: no command that closes it around the
+// ALREADY_CLAIMED of a check of a task that is not handed in, on a board with checks (whoever holds it: the hand-in is the task's, S6w r1): no command that closes it around the
 // check is named (A14); the fix asks the holder to hand it in.
 function notHandedInForCheck(id: string, holder: string, current: string, actor: string, first: string): LaneboardError {
   return new LaneboardError(
     'ALREADY_CLAIMED',
-    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; a check passes on or accepts only a task its assignee handed in (laneboard finish ${id} --status ${first}); do not take it over: ask ${holder} to hand it in`,
+    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; a check passes on or accepts only a handed-in task (laneboard finish ${id} --status ${first}); do not take it over: ask ${holder} to hand it in`,
     { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${first} --result <result>" --as ${actor}` },
   );
 }

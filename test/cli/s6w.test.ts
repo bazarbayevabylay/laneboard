@@ -344,16 +344,16 @@ describe('S6w review r1', () => {
       }
     });
 
-    it(`${l.name}: R1 claim without --status of an unassigned waiting task keeps it handed in; another checker passes it, the claimer cannot`, async () => {
+    it(`${l.name}: R1 an unassigned waiting task stays handed in; a checker's claim is refused (S6w r2), both checkers still pass it`, async () => {
       const s = await waiting(l);
       expect((await run(s, 'dev-1', ['update', 'API-1', '--unassign'])).code).toBe(0);
+      expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], assignee: null, handed_in: true });
       const claimed = await run(s, 'orch', ['claim', 'API-1']);
-      expect(claimed.code).toBe(0);
-      expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], assignee: 'orch', handed_in: true });
+      expect(claimed.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+      expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], assignee: null, handed_in: true });
       expect(await primeText(s, 'rev')).toContain(`Waiting for your check:\n  API-1  [${l.checks[0]}]`);
-      expect(await primeText(s, 'orch')).not.toContain('Waiting for your check');
+      expect(await primeText(s, 'orch')).toContain(`Waiting for your check:\n  API-1  [${l.checks[0]}]`);
       const next = l.checks[1] ?? l.final;
-      expect((await run(s, 'orch', ['finish', 'API-1', '--status', next, '--result', 'mine'])).code).toBe(2);
       expect(sh(s, await passLine(s, 'rev'))).toBe(0);
       expect((await task(s, 'API-1')).status).toBe(next);
     });
@@ -447,5 +447,151 @@ describe('S6w review r1', () => {
     });
     expect(sh(s, r.doc.error.fix)).toBe(0);
     expect(await task(s, 'API-1')).toMatchObject({ status: 'done', assignee: 'dev-1' });
+  });
+});
+
+describe('S6w review r2: nobody claims a task that waits for a check; no free task waits for one; no checker left names the owner\'s way out', () => {
+  // The task's status, assignee and rev: what a refused write must leave as it was.
+  const state = async (s: TestStore): Promise<Record<string, unknown>> => {
+    const t = await task(s, 'API-1');
+    return { status: t.status, assignee: t.assignee, rev: t.rev };
+  };
+
+  for (const l of WITH_CHECKS) {
+    it(`${l.name}: (a) a checker's claim of a waiting task, held or unassigned, with or without --status: fix get (run: no change), the named pass runs`, async () => {
+      for (const unassigned of [false, true]) {
+        for (let passes = 0; passes < l.checks.length; passes++) {
+          const s = await waiting(l, passes);
+          if (unassigned) expect((await run(s, 'dev-1', ['update', 'API-1', '--unassign'])).code).toBe(0);
+          const next = l.checks[passes + 1] ?? l.final;
+          const where = `${unassigned ? 'unassigned' : 'held'} in ${l.checks[passes] ?? ''}`;
+          const before = await state(s);
+          let message = '';
+          for (const checker of ['rev', 'orch']) {
+            for (const argv of [['claim', 'API-1'], ['claim', 'API-1', '--status', l.work], ['claim', 'API-1', '--status', l.final]]) {
+              const r = await run(s, checker, argv);
+              expect(r.code, `${where} ${checker} ${argv.join(' ')}`).toBe(2);
+              expect(r.doc.error, `${where} ${checker} ${argv.join(' ')}`).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+              expect(r.doc.error.message).toContain('claim never takes a task that waits for a check: a check needs no claim');
+              expect(sh(s, `${r.doc.error.fix as string} --as ${checker}`), where).toBe(0);
+              expect(await state(s), `${where} ${checker} ${argv.join(' ')}`).toEqual(before);
+              if (checker === 'orch') message = r.doc.error.message as string;
+            }
+          }
+          const { pass, back } = namedCommands(message);
+          expect(pass, where).toBe(`laneboard finish API-1 --status ${next} --result "<result of your check>" --as orch`);
+          expect(back, where).toContain(`laneboard update API-1 --status ${l.work} --as orch`);
+          expect(sh(s, pass), where).toBe(0);
+          expect(await task(s, 'API-1'), where).toMatchObject({ status: next });
+        }
+      }
+    });
+
+    it(`${l.name}: (a) the author's claim gets "handed in already", anybody else's the comment (ALREADY_CLAIMED when held); run as printed, nothing moves`, async () => {
+      for (const unassigned of [false, true]) {
+        const s = await waiting(l);
+        if (unassigned) expect((await run(s, 'dev-1', ['update', 'API-1', '--unassign'])).code).toBe(0);
+        const before = await state(s);
+        const own = await run(s, 'dev-1', ['claim', 'API-1', '--status', l.work]);
+        expect(own.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<note for the check>" --as dev-1' });
+        expect(own.doc.error.message).toContain('is handed in already');
+        const other = await run(s, 'dev-2', ['claim', 'API-1']);
+        expect(other.doc.error).toMatchObject({ code: unassigned ? 'INVALID_VALUE' : 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for the check>" --as dev-2' });
+        expect(other.doc.error.message).toContain(`waits in ${l.checks[0] ?? ''} for the check of rev, orch`);
+        expect(other.doc.error.message).toContain('claim never takes a task that waits for a check');
+        expect(sh(s, own.doc.error.fix)).toBe(0);
+        expect(sh(s, other.doc.error.fix)).toBe(0);
+        const after = await state(s);
+        expect({ ...after, rev: before.rev }).toEqual(before);
+        expect((await task(s, 'API-1')).events.slice(-2).map((e: { type: string }) => e.type)).toEqual(['commented', 'commented']);
+      }
+    });
+  }
+
+  it('(b) an unassigned waiting task is in "Waiting for your check", never among the free tasks (prime text and JSON, every name)', async () => {
+    const s = await waiting(TWO);
+    expect((await run(s, 'dev-1', ['update', 'API-1', '--unassign'])).code).toBe(0);
+    // Only the waiting task is unassigned: no free-task section, no "free task" way.
+    for (const name of ['rev', 'dev-2']) {
+      const text = await primeText(s, name);
+      expect(text, name).not.toContain('Free tasks');
+      expect(text, name).not.toContain('A free task below');
+      expect((await run(s, name, ['prime'])).doc.data, name).toMatchObject({ unassigned: [], unassigned_total: 0 });
+    }
+    expect(await primeText(s, 'rev')).toContain('Waiting for your check:\n  API-1  [code_review]');
+    expect((await run(s, 'orch', ['create', 'Free one', '--status', 'backlog'])).code).toBe(0);
+    const text = await primeText(s, 'rev');
+    expect(text).toContain('Free tasks (no assignee):\n  API-2  [backlog]');
+    expect(text.slice(text.indexOf('Free tasks'))).not.toContain('API-1');
+    expect((await run(s, 'rev', ['prime'])).doc.data.unassigned.map((t: { id: string }) => t.id)).toEqual(['API-2']);
+  });
+
+  // TWO with rev the only checker; API-1 handed in by dev-1, then given by orch to rev (allowed: S6w r1), so rev is an author of it.
+  const soleChecker = async (): Promise<TestStore> => {
+    const s = await newStore({ prefix: 'API', statuses: TWO.statuses });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'backlog'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work', '--no-commit'])).code).toBe(0);
+    expect((await run(s, 'orch', ['update', 'API-1', '--assignee', 'rev'])).code).toBe(0);
+    return s;
+  };
+  const ADD = 'laneboard config --reviewers "rev,<another checker>"';
+
+  it('(c) no checker left: the refusals, prime of every name and doctor name the owner\'s config --reviewers; run with a name, it passes', async () => {
+    const s = await soleChecker();
+    const before = await state(s);
+    const own = await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'cr ok']);
+    expect(own.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<note for the check>" --as rev' });
+    expect(own.doc.error.message).toContain('for the check of nobody: every checker in config review.by worked on it');
+    expect(own.doc.error.message).toContain(`; no checker is left for it, so the owner adds one: ${ADD}`);
+    const claim = await run(s, 'orch', ['claim', 'API-1']);
+    expect(claim.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for the check>" --as orch' });
+    expect(claim.doc.error.message).toContain(`so the owner adds one: ${ADD}`);
+    expect(sh(s, own.doc.error.fix)).toBe(0);
+    expect(sh(s, claim.doc.error.fix)).toBe(0);
+    expect({ ...(await state(s)), rev: before.rev }).toEqual(before);
+    for (const name of ['rev', 'orch', 'dev-1']) {
+      expect(await primeText(s, name), name).toContain(`No checker left for API-1 (every checker in review.by worked on it): the owner adds one: ${ADD}`);
+      expect((await run(s, name, ['prime'])).doc.data.roles.no_checker, name).toEqual({ ids: ['API-1'], fix: ADD });
+    }
+    const sick = await run(s, 'orch', ['doctor']);
+    expect(sick.code).toBe(6);
+    expect(sick.doc.data.checks.find((c: { name: string }) => c.name === 'checks')).toEqual({
+      name: 'checks',
+      ok: false,
+      fixed: false,
+      message: `tasks waiting in a check that no checker may check (every name in config review.by worked on them): API-1 (code_review); the owner adds a checker: ${ADD}`,
+    });
+    expect(sh(s, ADD.replace('<another checker>', 'lead'))).toBe(0);
+    expect((await run(s, 'lead', ['prime'])).doc.data.roles.no_checker).toBeNull();
+    expect(await primeText(s, 'rev')).not.toContain('No checker left');
+    const pass = /pass: (laneboard finish API-1 .+)$/m.exec(await primeText(s, 'lead'))?.[1] ?? '';
+    expect(pass).toBe('laneboard finish API-1 --status qa --result "<result of your check>" --as lead --json');
+    expect(sh(s, pass)).toBe(0);
+    expect(await task(s, 'API-1')).toMatchObject({ status: 'qa' });
+    expect((await run(s, 'orch', ['doctor'])).code).toBe(0);
+  });
+
+  it('(c) a board where review.by is not set always has a checker (anybody but the author): no line, doctor healthy', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ONE.statuses });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'review'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'todo'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['claim', 'API-1', '--status', 'in_progress'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work', '--no-commit'])).code).toBe(0);
+    expect((await run(s, 'orch', ['update', 'API-1', '--assignee', 'rev'])).code).toBe(0);
+    expect((await run(s, 'dev-2', ['prime'])).doc.data.roles.no_checker).toBeNull();
+    expect((await run(s, 'orch', ['doctor'])).code).toBe(0);
+  });
+
+  it('MINOR: a checker\'s finish of a task in a check that is not handed in: "only a handed-in task" (the hand-in is the task\'s)', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ['todo', 'dev', 'code_review', 'qa', 'done'] });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'rev,orch'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'In qa', '--status', 'todo', '--assignee', 'dev-1'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['update', 'API-1', '--status', 'qa'])).code).toBe(0);
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa'])).code).toBe(0);
+    const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'done', '--result', 'ok']);
+    expect(r.doc.error.code).toBe('ALREADY_CLAIMED');
+    expect(r.doc.error.message).toContain('not handed in with finish; a check passes on or accepts only a handed-in task (laneboard finish API-1 --status qa)');
   });
 });

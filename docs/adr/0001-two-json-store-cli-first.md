@@ -656,3 +656,15 @@ Checks
   warning names `finish --status <next>` and the hand-in that runs after the move (into the final status: a comment with the result);
   a move of a closed task into a check gets the fix `update <ID> --status <work> && finish <ID> --status <check> ...` (`handInLine`;
   finish never reopens, §20). Checks: test/cli/s6w.test.ts "S6w review r1"; s6j A17 expectations rewritten. Golden files: none changed.
+- S6w review r2 (CHANGES REQUESTED). A dead end: an unassigned waiting task was listed for a checker both as waiting and as free, and
+  prime's "free task: claim" made the checker its holder, so an author (`workedOn`); with review.by = that checker nobody could pass it
+  on, every refusal said "nothing to do" and doctor said healthy. Decision (orchestrator): (a) nobody claims a task waiting in a check
+  (`waitsInCheck`: in a check and handed in), with or without `--status`, CLI and MCP: a check needs no claim, the author never moves it
+  (S6u). The author gets "handed in already"; a checker that may check it `unclearCheck` (fix `laneboard get <ID>`, the pass and the
+  return named); anybody else a comment (`ALREADY_CLAIMED` when held). The author's way back into work stays `update --status <work>`.
+  (b) prime and task_prime list no waiting task among the free ones (`unassigned`; the `list --unassigned` footer may show more).
+  (c) No checker left (`noCheckerLeft`: review.by set, every name an author, which `update --assignee <checker>` can still make): the
+  author's refusal and the claim refusal name the owner's `laneboard config --reviewers "<names>,<another checker>"`, prime prints it
+  (`roles.no_checker {ids, fix}`), doctor's check `checks` reports it (exit 6). Rejected: refusing `update --assignee` of a checker
+  (reassignment is the orchestrator's step, r1). Also the checks' "not handed in" refusal says "only a handed-in task" (the hand-in is
+  the task's, r1). Checks: test/cli/s6w.test.ts, test/mcp/s6w.test.ts "S6w review r2"; s6j claim --status dev now refused.

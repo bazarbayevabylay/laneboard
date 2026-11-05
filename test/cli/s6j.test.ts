@@ -214,12 +214,14 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
     expect(await row(s, 'API-2')).toMatchObject({ status: 'ready', assignee: null });
   });
 
-  it('claim --status of a handed-in task warns that the hand-in is lost (A17), as update', async () => {
+  it('claim --status of a handed-in task is refused (S6w r2: nobody claims a waiting task); update back to work warns that the hand-in is lost (A17)', async () => {
     const s = await reviewBoard();
     await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit']);
     // Review r2: the author passing its own task on to a later check is refused like the final status; it waits in code_review (S6u).
     expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa'])).doc.error).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
-    const moved = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev']);
+    // S6w r2: a task waiting for a check is claimed by nobody, back into work too; the author's way back is update (A17 warning).
+    expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev'])).doc.error).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
+    const moved = await run(s, 'dev-a', ['update', 'API-1', '--status', 'dev']);
     expect(moved.code).toBe(0);
     expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a']);
   });

@@ -34,7 +34,7 @@ import {
 } from './doctor-checks.ts';
 import type { AttachmentMoves, CheckResult, RestorePlan } from './doctor-checks.ts';
 import type { OpContext, OpResult } from './common.ts';
-import { unseenInChecks } from './update.ts';
+import { stuckInChecks, unseenInChecks } from './update.ts';
 
 export const InitInput = z.strictObject({
   // Board name (default: the project folder's name); the prefix is derived from it unless given.
@@ -807,10 +807,11 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     // --drop-field / --field warn about it) is no problem to fix.
     add('fields', fieldCheck(config, active.data.tasks));
     // A board with checks: every task in a check is handed in, so the checkers see it (S6w r1; config turning a status with tasks in
-    // work into a check warns too). Not shown without checks.
+    // work into a check warns too), and a checker is left for each (S6w r2: not every name in review.by an author of it, else the owner
+    // adds one). Not shown without checks.
     if (reviewStatuses(config).length > 0) {
-      const unseen = unseenInChecks(config, active.data.tasks);
-      add('checks', unseen === undefined ? { ok: true, message: 'every task in a check is handed in' } : { ok: false, message: unseen });
+      const problems = [unseenInChecks(config, active.data.tasks), stuckInChecks(config, active.data.tasks)].filter((m) => m !== undefined);
+      add('checks', problems.length === 0 ? { ok: true, message: 'every task in a check is handed in' } : { ok: false, message: problems.join('; ') });
     }
   });
   return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings };
