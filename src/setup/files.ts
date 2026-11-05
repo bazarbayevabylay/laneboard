@@ -22,12 +22,21 @@ export interface TextEdit {
 
 export type FileResult = 'created' | 'updated' | 'unchanged' | 'removed' | 'restored' | 'deleted' | 'kept';
 
+// Which file is open: the same dev and inode as when the plan was made (bigint, so a large inode number is never rounded).
+interface Identity {
+  dev: bigint;
+  ino: bigint;
+}
+
 export interface PlannedFile {
   // Absolute path.
   file: string;
   // As shown to the user: relative to the project, or ~/… for global files.
   shown: string;
   scope: 'project' | 'global';
+  // The file setup really reads and writes: a project file's real path inside the project (`CLAUDE.md -> AGENTS.md` gives AGENTS.md),
+  // a global file's end of its symlink chain (a dotfiles link), else `file`.
+  target: string;
   result: FileResult;
   // Line diff for an updated file that existed before.
   diff?: string[];
@@ -41,8 +50,10 @@ export interface PlannedFile {
   before: string | null;
   // A backup that stays after this run (reported, so it is not forgotten or committed).
   keptBackup?: boolean;
-  // Project files: the folder no step of the path below may leave through a symlink (checked again right before the writes).
+  // Project files: the folder the real path must stay in (checked again right before the writes).
   root?: string;
+  // Project files that existed when planned: the write goes only into this same file (dev/inode of the open descriptor).
+  identity?: Identity;
 }
 
 // Backup path of a harness file.
@@ -50,14 +61,100 @@ export function backupOf(file: string): string {
   return `${file}.laneboard.bak`;
 }
 
-// File text, or null when missing.
-export function readText(file: string): string | null {
+// Where a planned file's backup is: next to the real project file (two harnesses writing one file through a link share it),
+// next to the global path itself (a dotfiles folder the link points into gets no backup files).
+function backupPath(p: Pick<PlannedFile, 'file' | 'scope' | 'target'>): string {
+  return backupOf(p.scope === 'project' ? p.target : p.file);
+}
+
+// Largest file setup reads: harness configs and instruction files are kilobytes; a bigger file or a link to /dev/zero is never read.
+export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
+
+// The first folder on the way down to a path that cannot be opened (no search permission), or undefined when every folder can be.
+function closedFolder(file: string): string | undefined {
+  const folders: string[] = [];
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    folders.unshift(dir);
+    if (path.dirname(dir) === dir) break;
+  }
+  return folders.find((dir) => {
+    try {
+      fs.accessSync(dir, fs.constants.X_OK);
+      return false;
+    } catch {
+      // This folder cannot be searched: it is the one that blocks the path.
+      return true;
+    }
+  });
+}
+
+// SETUP_WRITE_FAILED for a path setup cannot look at or read (permissions, I/O): before any write, with the chmod that opens it.
+function cannotRead(file: string, err: unknown): LaneboardError {
+  const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
+  const denied = code === 'EACCES' || code === 'EPERM';
+  const folder = denied ? closedFolder(file) : undefined;
+  const fix = !denied
+    ? `check ${shellQuote(file)} and run setup again`
+    : folder !== undefined
+      ? `let yourself open the folder (chmod u+rx ${shellQuote(folder)}) and run setup again`
+      : `let yourself read the file (chmod u+r ${shellQuote(file)}) and run setup again`;
+  return new LaneboardError('SETUP_WRITE_FAILED', `cannot read ${file} (${code}); nothing was written`, { details: { file }, fix });
+}
+
+// SETUP_CONFLICT for a path that is no regular file (a folder, a device like /dev/zero, a FIFO or socket): setup never reads or writes it.
+function notRegularFile(file: string, shown: string, stat: fs.Stats | fs.BigIntStats): LaneboardError {
+  return new LaneboardError('SETUP_CONFLICT', `${shown} is not a regular file (${stat.isDirectory() ? 'a directory' : 'a device, FIFO or socket'}); nothing was written`, {
+    details: { file: shown },
+    fix: `move ${shellQuote(file)} away and run setup again`,
+  });
+}
+
+// What is at a path, following symlinks, or undefined when nothing is there.
+function statOrMissing(file: string): fs.Stats | undefined {
   try {
-    return fs.readFileSync(file, 'utf8');
+    return fs.statSync(file);
   } catch (err) {
-    // A missing file is a normal state here; anything else (permissions) is a real error.
+    // Missing (or a parent missing) is a normal state here; anything else (permissions) gets an error with its fix.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+    throw cannotRead(file, err);
+  }
+}
+
+// File text, or null when missing. Only a regular file of at most MAX_TEXT_BYTES is read (SETUP_CONFLICT otherwise): a link from a
+// cloned repository to /dev/zero or a FIFO must not eat the memory or hang setup, whoever calls this (planning, ownsNow, checkRootPin).
+export function readText(file: string): string | null {
+  // A missing file is never opened (its absence is the answer).
+  if (statOrMissing(file) === undefined) return null;
+  let fd: number;
+  try {
+    // O_NONBLOCK: a FIFO put at the path does not block the open; the fstat below refuses it.
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  } catch (err) {
+    // Removed since the stat: missing; anything else (permissions) gets an error with its fix.
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
+    throw cannotRead(file, err);
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw notRegularFile(file, file, stat);
+    // Read up to one byte over the limit, whatever the size said: a file that grows while it is read is caught too.
+    const buffer = Buffer.allocUnsafe(MAX_TEXT_BYTES + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const read = fs.readSync(fd, buffer, size, buffer.length - size, null);
+      if (read === 0) break;
+      size += read;
+    }
+    if (size > MAX_TEXT_BYTES) {
+      throw new LaneboardError('SETUP_CONFLICT', `${file} is larger than ${MAX_TEXT_BYTES / 1024 / 1024} MiB, too big for a harness file; nothing was written`, {
+        details: { file },
+        fix: `add laneboard's entry to ${file} by hand, or move the file away and run setup again`,
+      });
+    }
+    return buffer.toString('utf8', 0, size);
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -78,17 +175,16 @@ function existingAncestor(dir: string): string {
 // Fails before any write when this file (or the directory it is created or deleted in) is not writable.
 function checkWritable(p: PlannedFile): PlannedFile {
   if (p.write === undefined) return p;
-  const dir = path.dirname(p.file);
-  const targets = fs.existsSync(p.file) ? [p.file] : [existingAncestor(dir)];
-  // The backup is created next to the file, and a delete or a dropped backup unlinks in that directory.
-  if (fs.existsSync(p.file) && (p.backup !== undefined || p.write === null || p.dropBackup)) targets.push(dir);
+  const targets = fs.existsSync(p.target) ? [p.target] : [existingAncestor(path.dirname(p.target))];
+  // The backup is created next to the file (a global one next to its link), and a delete or a dropped backup unlinks there.
+  if (fs.existsSync(p.target) && (p.backup !== undefined || p.write === null || p.dropBackup)) targets.push(path.dirname(p.target), path.dirname(backupPath(p)));
   for (const target of targets) {
     try {
       fs.accessSync(target, fs.constants.W_OK);
     } catch (err) {
       // Not writable (or vanished): stop the whole setup before anything is written.
       const code = (err as NodeJS.ErrnoException).code ?? 'EACCES';
-      throw new LaneboardError('SETUP_WRITE_FAILED', `cannot write ${target === p.file ? p.shown : `the directory of ${p.shown}`} (${code}); nothing was written`, {
+      throw new LaneboardError('SETUP_WRITE_FAILED', `cannot write ${target === p.target ? p.shown : `the directory of ${p.shown}`} (${code}); nothing was written`, {
         details: { file: p.shown },
         fix: `make ${target} writable (chmod u+w ${shellQuote(target)}) and run setup again`,
       });
@@ -112,70 +208,144 @@ function lstatOrMissing(p: string): fs.Stats | undefined {
   try {
     return fs.lstatSync(p);
   } catch (err) {
-    // Missing (or a parent missing) is the normal state of a file setup creates; anything else (permissions) is a real error.
+    // Missing (or a parent missing) is the normal state of a file setup creates; anything else (permissions) gets an error with its fix.
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
-    throw err;
+    throw cannotRead(p, err);
   }
 }
 
-// SETUP_CONFLICT before any read or write when a project file (or its backup) is reached through a symlink at any step below the
-// project folder, or is not a regular file: a cloned repository may hold `CLAUDE.md -> ~/.zshrc` or `.claude -> ~/.claude`, and a
-// write through it would change the user's own files outside the project. Global files (~/.codex, CODEX_HOME) keep following links.
-function checkInsideProject(file: string, shown: string, root: string): void {
+// Real path of an existing path, or the errno code when it leads nowhere (a dangling link, a loop).
+function realOrCode(p: string): { real: string } | { code: string } {
+  try {
+    return { real: fs.realpathSync(p) };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
+    // A missing target or a loop is the link's own fault (SETUP_CONFLICT by the caller); permissions get an error with its fix.
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP') return { code };
+    throw cannotRead(p, err);
+  }
+}
+
+// Real path of a folder that may not exist yet (HOME/.git/info before the exclude file is made): its closest existing ancestor resolved,
+// the missing rest appended.
+function realFolder(dir: string): string {
+  const existing = existingAncestor(dir);
+  return path.join(fs.realpathSync(existing), path.relative(existing, dir));
+}
+
+// Is a real path inside the real project folder (or the folder itself)?
+function inside(realRoot: string, real: string): boolean {
+  const rel = path.relative(realRoot, real);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+// Path as shown in messages: relative to the project (with /), or absolute for a file setup shows absolute or as ~/….
+function shownOf(realRoot: string, real: string, shown: string): string {
+  return path.isAbsolute(shown) || shown.startsWith('~/') ? real : path.relative(realRoot, real).split(path.sep).join('/');
+}
+
+// The real file a project file names, refused (SETUP_CONFLICT) before any read or write when a symlink on its path leads outside the
+// project folder (a cloned repository may hold `CLAUDE.md -> ~/.zshrc` or `.claude -> ~/.claude`; chains and `..` are followed to
+// their end) or nowhere (dangling, a loop), or when the file is not a regular file. A link whose end is inside the project
+// (`CLAUDE.md -> AGENTS.md`, `.claude -> conf/claude`) is fine: setup reads and writes the real file it ends at.
+function resolveInsideProject(file: string, shown: string, root: string): { target: string; identity?: Identity } {
+  const realRoot = realFolder(root);
   const steps = path.relative(root, file).split(path.sep);
   let current = root;
+  let found = 0;
   for (const [i, step] of steps.entries()) {
     current = path.join(current, step);
     const stat = lstatOrMissing(current);
-    if (stat === undefined) return;
-    const link = steps.slice(0, i + 1).join('/');
-    const linkShown = path.isAbsolute(shown) || shown.startsWith('~/') ? shown : link;
-    if (stat.isSymbolicLink()) {
-      const target = fs.readlinkSync(current);
-      throw new LaneboardError('SETUP_CONFLICT', `${linkShown} is a symlink to ${target}; setup does not write ${shown} through a symlink in the project (a cloned repository can point one at your files outside it); nothing was written`, {
-        details: { file: shown, link: linkShown, target },
-        fix: `setup writes only real files inside the project: replace the symlink ${shellQuote(current)} with a real ${i === steps.length - 1 ? 'file' : 'folder'} and run setup again, or add laneboard's entry to ${shown} by hand`,
+    if (stat === undefined) break;
+    found = i + 1;
+    if (!stat.isSymbolicLink()) continue;
+    const link = path.isAbsolute(shown) || shown.startsWith('~/') ? shown : steps.slice(0, i + 1).join('/');
+    const linkTo = fs.readlinkSync(current);
+    const kind = i === steps.length - 1 ? 'file' : 'folder';
+    const end = realOrCode(current);
+    if ('code' in end) {
+      throw new LaneboardError('SETUP_CONFLICT', `${link} is a symlink to ${linkTo}, which leads nowhere (${end.code}: a missing target or a loop); setup does not write ${shown} through it; nothing was written`, {
+        details: { file: shown, link, target: linkTo },
+        fix: `point ${shellQuote(current)} at an existing ${kind} inside the project or replace it with a real ${kind}, then run setup again`,
       });
     }
-    if (i === steps.length - 1 && !stat.isFile()) {
-      throw new LaneboardError('SETUP_CONFLICT', `${shown} is not a regular file (${stat.isDirectory() ? 'a directory' : 'a device, FIFO or socket'}); nothing was written`, {
-        details: { file: shown },
-        fix: `move ${shellQuote(current)} away and run setup again`,
+    if (!inside(realRoot, end.real)) {
+      throw new LaneboardError('SETUP_CONFLICT', `${link} is a symlink to ${linkTo}, which leads outside the project (${end.real}); setup does not write ${shown} through it (a cloned repository can point a link at your files); nothing was written`, {
+        details: { file: shown, link, target: linkTo, resolved: end.real },
+        fix: `setup writes only inside the project: replace the symlink ${shellQuote(current)} with a real ${kind} (or point it inside the project) and run setup again, or add laneboard's entry to ${shown} by hand`,
       });
     }
   }
+  // The deepest part of the path that exists, resolved (inside the project: every link on the way was checked above, and a step that is
+  // no link stays in its folder); the rest does not exist yet and is created as real folders and file.
+  const existing = found === 0 ? realRoot : fs.realpathSync(path.join(root, ...steps.slice(0, found)));
+  const target = path.join(existing, ...steps.slice(found));
+  if (found < steps.length) return { target };
+  const stat = fs.lstatSync(target, { bigint: true });
+  if (!stat.isFile()) throw notRegularFile(target, shownOf(realRoot, target, shown), stat);
+  return { target, identity: { dev: stat.dev, ino: stat.ino } };
 }
 
-// The checks of a project file before anything is read from it: the file and its backup stay inside the project. Returns the root.
-function guardProjectFile(file: string, shown: string, scope: PlannedFile['scope']): string | undefined {
-  if (scope !== 'project') return undefined;
+// SETUP_CONFLICT when a project file's backup (next to its real file) is a symlink or not a regular file: a backup is read and written only
+// as a real file, never through a link, also one inside the project.
+function checkBackup(bak: string, shown: string): void {
+  const stat = lstatOrMissing(bak);
+  if (stat === undefined) return;
+  if (stat.isSymbolicLink()) {
+    const linkTo = fs.readlinkSync(bak);
+    throw new LaneboardError('SETUP_CONFLICT', `${shown} is a symlink to ${linkTo}; setup reads and writes its backup only as a real file; nothing was written`, {
+      details: { file: shown, link: shown, target: linkTo },
+      fix: `move the symlink ${shellQuote(bak)} away and run setup again`,
+    });
+  }
+  if (!stat.isFile()) throw notRegularFile(bak, shown, stat);
+}
+
+// The end of a global file's symlink chain, also when the last link points at a file not created yet (a dotfiles manager links
+// ~/.codex/config.toml into its own folder): setup creates it there, as a write through the link would. A loop is SETUP_CONFLICT.
+function linkChainEnd(file: string, shown: string): string {
+  let current = file;
+  for (let hops = 0; hops < 40; hops++) {
+    const stat = lstatOrMissing(current);
+    if (stat === undefined || !stat.isSymbolicLink()) return current;
+    // A relative link is relative to the folder it really lies in (that folder may itself be reached through a link).
+    current = path.resolve(fs.realpathSync(path.dirname(current)), fs.readlinkSync(current));
+  }
+  throw new LaneboardError('SETUP_CONFLICT', `${shown} is a symlink loop; nothing was written`, {
+    details: { file: shown },
+    fix: `point ${shellQuote(file)} at a real file and run setup again`,
+  });
+}
+
+// Where a planned file is read and written, checked before anything is read: a project file's real path (its backup a real file next to
+// it) inside the project, a global file's end of its symlink chain.
+function locateFile(file: string, shown: string, scope: PlannedFile['scope']): Pick<PlannedFile, 'target' | 'root' | 'identity'> {
+  if (scope !== 'project') return { target: linkChainEnd(file, shown) };
   const root = projectRoot(file, shown);
-  checkInsideProject(file, shown, root);
-  checkInsideProject(backupOf(file), `${shown}.laneboard.bak`, root);
-  return root;
+  const { target, identity } = resolveInsideProject(file, shown, root);
+  checkBackup(backupOf(target), `${shownOf(realFolder(root), target, shown)}.laneboard.bak`);
+  return { target, root, ...(identity !== undefined ? { identity } : {}) };
 }
 
 // Plan the install of our part into one file (reads only).
 export function planAdd(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
-  const root = guardProjectFile(file, shown, scope);
-  const at = { file, shown, scope, ...(root !== undefined ? { root } : {}) };
-  const before = readText(file);
+  const at = { file, shown, scope, ...locateFile(file, shown, scope) };
+  const before = readText(at.target);
   const after = edit.add(before);
   if (before === after) return { ...at, result: 'unchanged', before };
   if (before === null) return checkWritable({ ...at, result: 'created', write: after, before });
   // The backup is the file as it was without laneboard: never a text that already holds our part, never overwritten.
   const exclusive = edit.ownsExclusive ?? edit.owns;
-  const backup = !exclusive(before) && readText(backupOf(file)) === null ? before : undefined;
+  const backup = !exclusive(before) && readText(backupPath(at)) === null ? before : undefined;
   return checkWritable({ ...at, result: 'updated', write: after, diff: lineDiff(before, after), before, ...(backup !== undefined ? { backup } : {}) });
 }
 
 // Plan the removal of our part: restore the original bytes when nothing else changed, delete a file we created.
 export function planRemove(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
-  const root = guardProjectFile(file, shown, scope);
-  const at = { file, shown, scope, ...(root !== undefined ? { root } : {}) };
-  const before = readText(file);
-  const original = readText(backupOf(file));
+  const at = { file, shown, scope, ...locateFile(file, shown, scope) };
+  const before = readText(at.target);
+  const original = readText(backupPath(at));
   const keptBackup = original !== null;
   if (before === null || !edit.owns(before)) return { ...at, result: 'unchanged', before, keptBackup };
   const stripped = edit.strip(before);
@@ -192,7 +362,7 @@ export function planRemove(file: string, shown: string, scope: PlannedFile['scop
 
 // A shared file that another harness still needs: left as it is.
 export function planKeep(file: string, shown: string, scope: PlannedFile['scope']): PlannedFile {
-  return { file, shown, scope, result: 'kept', before: readText(file) };
+  return { file, shown, scope, target: file, result: 'kept', before: readText(file) };
 }
 
 // Marker file setup writes into a directory it created for a harness file (.cursor/, .gemini/, .claude/, ~/.codex/).
@@ -230,22 +400,78 @@ function writeNewFile(file: string, text: string, mode: number, owned: () => voi
   }
 }
 
+// Same file as planned (both missing counts as the same).
+function sameIdentity(a: Identity | undefined, b: Identity | undefined): boolean {
+  return a === undefined || b === undefined ? a === b : a.dev === b.dev && a.ino === b.ino;
+}
+
+// SETUP_CONFLICT: a project file was replaced (another file, a link) between planning and its write.
+function replacedWhileRunning(p: PlannedFile): LaneboardError {
+  return new LaneboardError('SETUP_CONFLICT', `${p.shown} was replaced while setup ran (another file or a symlink is at its path now)`, {
+    details: { file: p.shown },
+    fix: 'run setup again',
+  });
+}
+
+// Overwrite an existing file. A project file is opened without following a link and without truncating; only when the open file is the
+// planned one (dev/inode) is it truncated and written, so a link or file swapped in after the checks is never written through.
+// `owned` runs once the write may start (the undo of this run then puts the old text back).
+function writeExisting(p: PlannedFile, text: string, owned: () => void = () => {}): void {
+  if (p.identity === undefined) {
+    owned();
+    fs.writeFileSync(p.target, text);
+    return;
+  }
+  let fd: number;
+  try {
+    // O_NONBLOCK: a FIFO swapped in does not block the open (its inode differs anyway).
+    fd = fs.openSync(p.target, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (err) {
+    // O_NOFOLLOW on a symlink fails with ELOOP: a link was put at the path after the checks.
+    if ((err as NodeJS.ErrnoException).code === 'ELOOP') throw replacedWhileRunning(p);
+    throw err;
+  }
+  try {
+    if (!sameIdentity(fs.fstatSync(fd, { bigint: true }), p.identity)) throw replacedWhileRunning(p);
+    owned();
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// After a new project file is created: its folder must still be inside the project (a folder swapped for a link after the checks).
+function checkCreatedInside(p: PlannedFile): void {
+  if (p.root === undefined) return;
+  if (!inside(realFolder(p.root), fs.realpathSync(path.dirname(p.target)))) throw replacedWhileRunning(p);
+}
+
 // Write a plan: backups first (with the original's mode), then files; a deleted file also takes its now-empty directory
-// when setup created it (marker), never a directory the user had, never a root. When a write fails, everything this run changed is put back and one SETUP_WRITE_FAILED reports it.
+// when setup created it (marker), never a directory the user had, never a root. When a write fails, everything this run changed is put back
+// and one error reports it (SETUP_WRITE_FAILED, or SETUP_CONFLICT for a project file replaced while setup ran).
 export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]): void {
   // Undo steps, each with the file it puts back.
   const undo: Array<{ shown: string; run: () => void }> = [];
   // Directories a deleted file was in: checked once every file is done (two files of ours may share one, .claude/).
   const emptied = new Set<string>();
   let current: PlannedFile | undefined;
-  // Again right before the first write: a link put in place after planning is refused too (SETUP_CONFLICT, nothing written).
-  for (const p of plan) if (p.root !== undefined && p.write !== undefined) checkInsideProject(p.file, p.shown, p.root);
+  // Again right before the first write: a project file whose path now leads elsewhere (a link put in place after planning, another
+  // file) is refused too (SETUP_CONFLICT, nothing written).
+  for (const p of plan) {
+    if (p.root === undefined || p.write === undefined) continue;
+    const now = resolveInsideProject(p.file, p.shown, p.root);
+    if (now.target !== p.target || !sameIdentity(now.identity, p.identity)) {
+      const err = replacedWhileRunning(p);
+      throw new LaneboardError(err.code, `${err.message}; nothing was written`, { details: err.details ?? {}, fix: err.fix });
+    }
+  }
   try {
     for (const p of plan) {
       if (p.backup === undefined) continue;
       current = p;
-      const bak = backupOf(p.file);
-      const mode = fs.statSync(p.file).mode & 0o777;
+      const bak = backupPath(p);
+      const mode = fs.statSync(p.target).mode & 0o777;
       writeNewFile(bak, p.backup, mode, () => undo.push({ shown: `${p.shown}.laneboard.bak`, run: () => fs.rmSync(bak, { force: true }) }));
       // The mode given at creation is narrowed by umask; set it exactly (a 0600 config keeps a 0600 backup).
       fs.chmodSync(bak, mode);
@@ -254,24 +480,26 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
       if (p.write === undefined) continue;
       current = p;
       if (p.write === null) {
-        undo.push({ shown: p.shown, run: () => putBack(p.file, p.before) });
-        fs.unlinkSync(p.file);
-        emptied.add(path.dirname(p.file));
+        // unlink never follows a link (the real path was checked again above).
+        undo.push({ shown: p.shown, run: () => putBack(p.target, p.before) });
+        fs.unlinkSync(p.target);
+        emptied.add(path.dirname(p.target));
         continue;
       }
-      const dir = path.dirname(p.file);
+      const dir = path.dirname(p.target);
       const created = fs.mkdirSync(dir, { recursive: true });
       if (created !== undefined) undo.push({ shown: p.shown, run: () => fs.rmSync(created, { recursive: true, force: true }) });
       // Remember that this directory is ours, so --remove may delete it later (a directory the user had is never deleted).
       if (created !== undefined && !roots.includes(dir)) fs.writeFileSync(path.join(dir, CREATED_DIR_MARKER), CREATED_DIR_TEXT);
       if (p.before === null) {
-        writeNewFile(p.file, p.write, 0o666, () => undo.push({ shown: p.shown, run: () => putBack(p.file, null) }));
+        writeNewFile(p.target, p.write, 0o666, () => undo.push({ shown: p.shown, run: () => putBack(p.target, null) }));
+        checkCreatedInside(p);
       } else {
-        undo.push({ shown: p.shown, run: () => putBack(p.file, p.before) });
-        fs.writeFileSync(p.file, p.write);
+        const before = p.before;
+        writeExisting(p, p.write, () => undo.push({ shown: p.shown, run: () => writeExisting(p, before) }));
       }
       if (p.dropBackup) {
-        const bak = backupOf(p.file);
+        const bak = backupPath(p);
         const restored = p.write;
         const mode = fs.statSync(bak).mode & 0o777;
         undo.push({
@@ -287,7 +515,7 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
     current = undefined;
     for (const dir of emptied) dropCreatedDir(dir, roots);
   } catch (err) {
-    // A write failed after the plan passed its checks (disk full, a dangling symlink, a race): undo this run, newest first.
+    // A write failed after the plan passed its checks (disk full, a race): undo this run, newest first.
     const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
     const stuck: string[] = [];
     for (const step of undo.reverse()) {
@@ -300,9 +528,14 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
     }
     const shown = current?.shown ?? 'a file';
     const after = stuck.length ? `; could not put back: ${stuck.join(', ')}` : '; the files changed before it were put back';
+    // A file replaced while setup ran keeps its own code and fix, with what happened to the files written before it.
+    if (err instanceof LaneboardError) throw new LaneboardError(err.code, `${err.message}${after}`, { details: err.details ?? {}, fix: err.fix });
     throw new LaneboardError('SETUP_WRITE_FAILED', `writing ${shown} failed (${code})${after}`, {
       details: { file: shown },
-      fix: `make ${shown} and its directory writable (a symlink must point to a writable place) and run setup again`,
+      fix:
+        code === 'EEXIST'
+          ? `${shown} appeared while setup ran and was left as it is: look at it and run setup again`
+          : `make ${shown} and its directory writable (a symlink must point to a writable place) and run setup again`,
     });
   }
 }
