@@ -20,13 +20,14 @@ async function register(home: string, storeDir: string, harness: string, lockWai
 
 export const setup: CommandDef = {
   name: 'setup',
-  usage: `setup <${HARNESS_NAMES.join('|')}> [--remove] [--dry-run]`,
+  usage: `setup <${HARNESS_NAMES.join('|')}> [--remove [--global]] [--dry-run]`,
   summary:
     'Register the laneboard MCP server and instruction block for a harness (run in the project root); --remove rolls it back. ' +
     'The project is pinned to its store: --dir, else LANEBOARD_DIR, else ./.laneboard (Claude Code: env LANEBOARD_DIR and the default agent name in .claude/settings.local.json, ' +
     'kept out of git by .git/info/exclude; or .claude/settings.json in a folder inside another git repository and at a repository root that holds other boards; others: in the instructions). ' +
-    'An existing board is added to the machine registry.',
-  options: { remove: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },
+    'An existing board is added to the machine registry. ' +
+    '--remove keeps the entry of a global file (codex: ~/.codex/config.toml) while other projects of the machine registry may use it; --global removes it anyway.',
+  options: { remove: { type: 'boolean' }, global: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },
   args: { min: 1, max: 1 },
   async run(c) {
     // Like init, the pin never walks up: a store in a parent directory belongs to another project unless --dir names it.
@@ -38,7 +39,7 @@ export const setup: CommandDef = {
     const home = c.io.env.HOME;
     let r: ReturnType<typeof runSetup>;
     try {
-      r = runSetup({ harness, remove, dryRun, cwd: c.io.cwd, env: c.io.env, storeDir });
+      r = runSetup({ harness, remove, global: flag(c.values, 'global'), dryRun, cwd: c.io.cwd, env: c.io.env, storeDir });
     } catch (raw) {
       // SETUP_CONFLICT for a repository root's pin: its fix runs setup at the root, which finds this folder's board only in the
       // registry. Register the board first (a board made before the registry or under another HOME is missing there), then refuse.

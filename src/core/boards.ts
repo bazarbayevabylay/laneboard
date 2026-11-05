@@ -77,20 +77,66 @@ export function storeState(dir: string): 'live' | 'missing' | 'unreadable' {
   }
 }
 
-// Change the registry under its own lock: `fn` gets the entries and returns the new list (or throws to change nothing).
+// Errors of a registry folder that cannot be written at all: a read-only HOME, a harness sandbox (Codex workspace-write), a read-only disk.
+const UNWRITABLE = new Set(['EACCES', 'EPERM', 'EROFS']);
+
+// The errno code of an error that means the registry folder cannot be written, else undefined.
+function unwritableCode(err: unknown): string | undefined {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && UNWRITABLE.has(code) ? code : undefined;
+}
+
+export interface RegistryOptions extends LockOptions {
+  // Given: a registry folder that cannot be made or locked (UNWRITABLE) does not fail the command (newcomer F3): `fn` runs on the
+  // entries that can be read, without the registry lock, nothing is saved, and this gets the warning that says so.
+  onUnwritable?: (warning: string) => void;
+}
+
+// The warning of a board left out of an unwritable registry (`code`: why the folder `dir` cannot be written).
+function unregisteredWarning(dir: string, code: string): string {
+  return (
+    `this board is not in the machine registry (${dir} cannot be written: ${code}), so laneboard boards does not list it and its prefix was checked only against the boards listed there; ` +
+    'once that folder is writable, laneboard config --name <name> in the project adds it'
+  );
+}
+
+// Change the registry under its own lock: `fn` gets the entries and returns the new list (or throws to change nothing). A folder that
+// cannot be made or locked fails the command, unless `opts.onUnwritable` takes the warning (RegistryOptions).
 export async function updateRegistry<T>(
   home: string,
-  opts: LockOptions,
+  opts: RegistryOptions,
   fn: (entries: BoardEntry[]) => Promise<{ entries: BoardEntry[]; result: T }> | { entries: BoardEntry[]; result: T },
 ): Promise<T> {
   const dir = registryDir(home);
-  ensureDir(dir);
-  return withLock({ dir }, opts, async (lock) => {
-    const { entries, result } = await fn(readRegistry(home));
-    lock.assertHeld();
-    writeFileAtomic(registryFile(home), `${JSON.stringify({ schema: REGISTRY_SCHEMA, boards: entries }, null, 2)}\n`, 0o644);
+  // Set once `fn` runs under the lock: from then on every error is the command's own, never the registry folder's.
+  let entered = false;
+  try {
+    ensureDir(dir);
+    return await withLock({ dir }, opts, async (lock) => {
+      entered = true;
+      const { entries, result } = await fn(readRegistry(home));
+      lock.assertHeld();
+      writeFileAtomic(registryFile(home), `${JSON.stringify({ schema: REGISTRY_SCHEMA, boards: entries }, null, 2)}\n`, 0o644);
+      return result;
+    });
+  } catch (err) {
+    const code = unwritableCode(err);
+    if (entered || code === undefined || opts.onUnwritable === undefined) throw err;
+    const { result } = await fn(readableEntries(home));
+    opts.onUnwritable(unregisteredWarning(dir, code));
     return result;
-  });
+  }
+}
+
+// Registry entries for a command that cannot write the registry: none when the file cannot be read either (a broken file still fails).
+function readableEntries(home: string): BoardEntry[] {
+  try {
+    return readRegistry(home);
+  } catch (err) {
+    // No permission to read it either: no board is known, as without a registry.
+    if (unwritableCode(err) !== undefined) return [];
+    throw err;
+  }
 }
 
 // Entries with `entry` added, or the entry of the same path replaced (registered_at kept).
@@ -104,15 +150,17 @@ export function upsertEntry(entries: BoardEntry[], entry: BoardEntry): BoardEntr
 // false). A prefix another live board uses is refused (checkPrefixFree), so a copied project folder cannot register a second board
 // with the same ids; a board registered before that duplicate keeps working and gets a warning naming it. `harness`: the setup that
 // asked (its fix undoes that setup on a refused copy).
+// A registry folder that cannot be written (EACCES, EPERM, EROFS) is a warning, not a failure (`registered` false).
 export async function registerStore(home: string, dir: string, opts: LockOptions & { harness?: string } = {}): Promise<{ registered: boolean; warnings: string[] }> {
   if (!isLiveBoard(dir)) return { registered: false, warnings: [] };
   const config = loadConfig(dir);
   const entry: BoardEntry = { path: dir, prefix: config.prefix, name: config.name ?? null, description: config.description ?? null, registered_at: new Date().toISOString() };
-  const warnings = await updateRegistry(home, opts, (entries) => {
+  const unwritable: string[] = [];
+  const warnings = await updateRegistry(home, { ...opts, onUnwritable: (w) => unwritable.push(w) }, (entries) => {
     const found = checkPrefixFree(entries, dir, config.prefix, opts.harness);
     return { entries: upsertEntry(entries, entry), result: found };
   });
-  return { registered: true, warnings };
+  return { registered: unwritable.length === 0, warnings: [...warnings, ...unwritable] };
 }
 
 // Prefixes of the boards other than the one at `exceptPath` (any spelling of that path) whose path still holds a store or cannot be
@@ -331,6 +379,60 @@ export function boardByPrefix(home: string, prefix: string, current?: StoreRef):
     .boards.filter((b) => !b.current)
     .map((b) => ({ ...b, prefix: storePrefix(b.store.dir) ?? b.prefix }));
   return { board: others.find((b) => b.prefix === prefix), prefixes: [...new Set(others.map((b) => b.prefix))] };
+}
+
+export interface ForgetResult {
+  registry: string;
+  // The entries dropped: their path held no store.
+  forgotten: Array<{ path: string; prefix: string; name: string | null }>;
+}
+
+// Registry entries that `value` names: a path (the store folder or the project holding it, any spelling), else a prefix, else a name
+// (both ignoring case, like --board).
+function entriesNamed(entries: readonly BoardEntry[], value: string, home: string, cwd: string): BoardEntry[] {
+  if (looksLikePath(value)) {
+    const dir = path.resolve(cwd, value.startsWith('~') ? path.join(home, value.slice(1)) : value);
+    return entries.filter((e) => e.path === dir || samePath(e.path, dir) || samePath(e.path, path.join(dir, STORE_DIR_NAME)));
+  }
+  const want = value.toLowerCase();
+  const byPrefix = entries.filter((e) => e.prefix.toLowerCase() === want);
+  return byPrefix.length ? byPrefix : entries.filter((e) => (e.name ?? '').toLowerCase() === want);
+}
+
+// `laneboard boards --forget <prefix|name|path>` (LB-26): drop the registry entries `value` names whose path holds no store any more (a
+// moved or deleted board), under the registry lock. An entry whose path still holds a store (or cannot be checked) is never dropped:
+// with no entry left to drop that is INVALID_VALUE, else a warning per kept entry.
+export async function forgetBoard(home: string, value: string, cwd: string, opts: LockOptions = {}): Promise<{ data: ForgetResult; warnings: string[] }> {
+  const notFound = (entries: readonly BoardEntry[]): LaneboardError =>
+    new LaneboardError('STORE_NOT_FOUND', `--forget ${value}: no board with this prefix, name or path in ${registryFile(home)}`, {
+      allowed: [...new Set(entries.map((e) => e.prefix))],
+      fix: 'laneboard boards lists the boards on this machine; pass the prefix or the path of one shown as missing',
+    });
+  // Nothing registered: fail before the registry folder is made for the lock.
+  if (readRegistry(home).length === 0) throw notFound([]);
+  // A registry folder that cannot be written (read-only HOME, a sandbox): the entry cannot be dropped, said plainly, not INTERNAL.
+  const unwritable = (): never => {
+    throw new LaneboardError('STORE_READ_ONLY', `--forget ${value}: the machine registry ${registryDir(home)} cannot be written, so nothing was forgotten`, {
+      fix: `make ${shellQuote(registryDir(home))} writable, then run laneboard boards --forget ${shellQuote(value)} again`,
+    });
+  };
+  return updateRegistry(home, { ...opts, onUnwritable: unwritable }, (entries) => {
+    const named = entriesNamed(entries, value, home, cwd);
+    if (named.length === 0) throw notFound(entries);
+    const gone = named.filter((e) => storeState(e.path) === 'missing');
+    const live = named.filter((e) => !gone.includes(e));
+    const first = live[0];
+    if (gone.length === 0 && first !== undefined) {
+      throw new LaneboardError('INVALID_VALUE', `--forget ${value}: the board at ${first.path} still holds a store; forget drops only entries whose path holds none (a moved or deleted board)`, {
+        details: { path: first.path, prefix: first.prefix },
+        // Never a fix that moves or deletes the store: an agent may run a fix blindly (ADR-0001 rule 13), and this board holds tasks.
+        fix: 'nothing to do: a live board stays listed; laneboard boards shows the entries marked missing, the only ones --forget drops',
+      });
+    }
+    const forgotten = gone.map((e) => ({ path: e.path, prefix: e.prefix, name: e.name }));
+    const warnings = live.map((e) => `kept ${e.path} (${e.prefix}): it still holds a store, and forget drops only entries without one`);
+    return { entries: entries.filter((e) => !gone.includes(e)), result: { data: { registry: registryFile(home), forgotten }, warnings } };
+  });
 }
 
 // Does the value name a path (not a prefix or a name)?

@@ -190,15 +190,21 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
     warnings.push('HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards');
     return { data: { store: target, config, registered: false }, warnings };
   }
-  // The registry lock is held around the check and the create, so two inits cannot take the same prefix.
-  await updateRegistry(opts.home, opts, async (entries) => {
+  // The registry lock is held around the check and the create, so two inits cannot take the same prefix. A registry folder that
+  // cannot be written (a read-only HOME, a sandbox) leaves the board out of it with a warning, as without HOME (newcomer F3).
+  let registered = true;
+  const onUnwritable = (warning: string): void => {
+    registered = false;
+    warnings.push(warning);
+  };
+  await updateRegistry(opts.home, { ...opts, onUnwritable }, async (entries) => {
     const taken = takenPrefixes(entries, target);
     const owner = taken.get(prefix);
     if (owner !== undefined) throw prefixTaken(prefix, owner, taken);
     await create();
     return { entries: upsertEntry(entries, { path: target, prefix, name, description, registered_at: new Date().toISOString() }), result: undefined };
   });
-  return { data: { store: target, config, registered: true }, warnings };
+  return { data: { store: target, config, registered }, warnings };
 }
 
 export const ConfigureInput = z.strictObject({
@@ -502,7 +508,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
   // Like init, the registry lock is held around the prefix check and the write, so two boards cannot take one prefix. An unchanged
   // prefix is checked too: a copied project folder must not register a second board with the same ids (review S5c MINOR); the board
   // registered first under its path keeps working next to such a copy (checkPrefixFree, ADR §33).
-  const data = await updateRegistry(ctx.home, ctx, async (entries) => {
+  const data = await updateRegistry(ctx.home, { ...ctx, onUnwritable: (warning) => warnings.push(warning) }, async (entries) => {
     const current = read().prefix;
     if (prefix === undefined || prefix === current) warnings.push(...checkPrefixFree(entries, ctx.store.dir, current));
     else {

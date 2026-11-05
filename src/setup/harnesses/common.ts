@@ -18,11 +18,12 @@ export const CODEX_ENV_VARS = ['LANEBOARD_DIR'] as const;
 // SessionStart hook command (Claude Code): prints the rules and the agent's tasks; a hint when the CLI is missing.
 export const PRIME_HOOK_COMMAND = "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'";
 
-// PostToolUse hook command (Claude Code) after Edit/Write: a reminder when no task is in progress; silent and exit 0 otherwise or on any failure.
+// PostToolUse hook command (Claude Code) after a file edit tool: a reminder when no task is in progress; silent and exit 0 otherwise or on any failure.
 export const EDIT_HOOK_COMMAND = 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0';
 
-// Tools the edit reminder follows (exact names, code.claude.com/docs/en/hooks matcher syntax).
-export const EDIT_HOOK_MATCHER = 'Edit|Write';
+// Tools the edit reminder follows (exact names, code.claude.com/docs/en/hooks matcher syntax): every file edit tool, notebooks too
+// (MultiEdit in the Claude Code versions that have it; an unknown name in the list matches nothing). Edits through Bash are not seen.
+export const EDIT_HOOK_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit';
 
 // A path as one shell word (single-quoted when it holds anything but safe characters).
 export function shellWord(value: string): string {
