@@ -1,9 +1,8 @@
 // Ops that change an active task: update, claim, comment, finish (task_update, task_claim, task_comment, task_finish).
-import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
-import { readCheckout, readCommit, readWorktrees } from '../git.ts';
+import { isDirectory, readCheckout, readCommit, readWorktrees } from '../git.ts';
 import type { CheckoutState } from '../git.ts';
 import { samePath } from '../store.ts';
 import type { LinkT, TaskT } from '../schema.ts';
@@ -407,16 +406,6 @@ function notHandedIn(id: string, holder: string, current: string, actor: string,
   );
 }
 
-// Is `p` an existing directory?
-function isDirectory(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    // Missing or unreadable: no directory there.
-    return false;
-  }
-}
-
 // The commit finish links and what git says about it: HEAD of the input's cwd, else of the command's folder; or the commit the caller
 // named, checked in that folder (git not there or no repository: linked as given, with the "could not check git" warning). Nothing
 // with no_commit, which goes with neither commit nor cwd.
@@ -460,25 +449,32 @@ const WORKTREES_SHOWN = 3;
 
 // Warning that HEAD of the main checkout may be the wrong commit (A18, LB-1, B-U4): finish ran there (the CLI in the main folder, an MCP
 // server started in the project root) without commit or cwd, and other worktrees of the repository have another HEAD committed since
-// the actor's work began (any, when that is unknown). It names the folder, its HEAD and those worktrees, and fixes the link with one
-// command. Finish from a linked worktree links that worktree's HEAD and gets none.
-async function worktreeWarning(cwd: string, id: string, linked: string, workStart: string | undefined, actor: string): Promise<string | undefined> {
+// the actor's work began (any, when that is unknown). It names the folder, its HEAD and those worktrees (newest first). The fix never
+// guesses (it may be run blindly, rule 13): one such worktree gets the exact relink command; with several only the agent knows which
+// one holds its work, so the command takes the sha of it as a placeholder (refused as is: --commit takes hex only) and the link of
+// this HEAD is removed only by a second command, after that. Finish from a linked worktree (also of a bare repository, which has no
+// main checkout) links that worktree's HEAD and gets none. `status`: the task's status after finish, for the command.
+async function worktreeWarning(cwd: string, id: string, linked: string, workStart: string | undefined, actor: string, status: string): Promise<string | undefined> {
   const trees = await readWorktrees(cwd);
-  const main = trees?.list[0];
-  if (trees === undefined || main === undefined || !samePath(main.path, trees.here)) return undefined;
+  if (trees?.main === undefined || !samePath(trees.main, trees.here)) return undefined;
+  const main = trees.main;
   const since = workStart === undefined ? undefined : Math.floor(Date.parse(workStart) / 1000);
   const others = trees.list
-    .slice(1)
-    .filter((w) => w.head !== linked && (since === undefined || (w.committedAt ?? 0) >= since))
+    .filter((w) => !samePath(w.path, main) && w.head !== linked && (since === undefined || (w.committedAt ?? 0) >= since))
     .sort((a, b) => (b.committedAt ?? 0) - (a.committedAt ?? 0));
-  const newest = others[0];
-  if (newest === undefined) return undefined;
+  if (others.length === 0) return undefined;
+  const only = others.length === 1 ? others[0] : undefined;
   const named = others.slice(0, WORKTREES_SHOWN).map((w) => `${w.path} (${w.branch ?? 'detached'}) ${w.head.slice(0, 12)}`);
   if (others.length > WORKTREES_SHOWN) named.push(`${others.length - WORKTREES_SHOWN} more: git worktree list`);
   const which = since === undefined ? 'other worktrees of this repository have another HEAD' : `other worktrees of this repository have commits since you claimed ${id}`;
+  const branch = trees.list.find((w) => samePath(w.path, main))?.branch ?? 'detached';
+  const fix =
+    only !== undefined
+      ? `if your work is in one of them, link its commit instead: laneboard update ${id} --remove-link commit=${linked} --add-link commit=${only.head} --as ${actor}`
+      : `if your work is in one of them, link the HEAD of yours (listed above): laneboard finish ${id} --status ${status} --commit <HEAD of your worktree> --result "<your result>" --as ${actor}, ` +
+        `then drop the link of this one: laneboard update ${id} --remove-link commit=${linked} --as ${actor}`;
   return (
-    `the linked commit ${linked.slice(0, 12)} is HEAD of ${trees.here} (${main.branch ?? 'detached'}), the main checkout, and ${which}: ${named.join(', ')}; ` +
-    `if your work is in one of them, link its commit instead: laneboard update ${id} --remove-link commit=${linked} --add-link commit=${newest.head} --as ${actor} ` +
+    `the linked commit ${linked.slice(0, 12)} is HEAD of ${trees.here} (${branch}), the main checkout, and ${which}: ${named.join(', ')}; ${fix} ` +
     `(next time run finish in that folder or pass --commit <sha>; MCP task_finish: cwd "<that folder>" or commit "<sha>")`
   );
 }
@@ -623,7 +619,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   // Only HEAD of the command's own folder can be another worktree's wrong commit; a named commit or folder is the caller's choice.
   const where = p.commit === undefined && p.cwd === undefined ? ctx.cwd : undefined;
   if (!byOther && commit !== undefined && where !== undefined) {
-    const other = await worktreeWarning(where, taskId, commit, workStart, actor);
+    const other = await worktreeWarning(where, taskId, commit, workStart, actor, data.status);
     if (other) warnings.push(other);
   }
   if (finished && byOther) return { data, warnings, reply: { commit: null, accepted: true } };

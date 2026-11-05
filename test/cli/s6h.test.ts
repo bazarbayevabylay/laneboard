@@ -272,6 +272,115 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
   });
 });
 
+// A commit date `seconds` from now (ISO), so commits after the claim have a known order.
+function inSeconds(seconds: number): string {
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+describe('review S6h r2: the main checkout, a fix that never guesses, the shared exclude block, the registry', () => {
+  it('bare repository + 2 worktrees: finish in the first one links its HEAD with no warning (a bare repository has no main checkout)', async () => {
+    const src = tempDir();
+    const srcGit = gitIn(src);
+    srcGit(['init', '-q', '-b', 'main']);
+    srcGit(['commit', '-q', '--allow-empty', '-m', 'first'], LONG_AGO);
+    const top = tempDir();
+    gitIn(top)(['clone', '-q', '--bare', src, 'repo.git']);
+    const bare = gitIn(path.join(top, 'repo.git'));
+    bare(['worktree', 'add', '-q', '../alpha', '-b', 'alpha']);
+    bare(['worktree', 'add', '-q', '../beta', '-b', 'beta']);
+    const alpha = path.join(top, 'alpha');
+    const env = { HOME: tempDir() };
+    expect((await json(alpha, ['init', '--name', 'a', '--prefix', 'LB', '--description', 'bare layout', '--no-gitignore'], env)).code).toBe(0);
+    expect((await json(alpha, ['create', 'Work', '--status', 'todo', '--as', 'dev-1'], env)).code).toBe(0);
+    expect((await json(alpha, ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'], env)).code).toBe(0);
+    gitIn(alpha)(['commit', '-q', '--allow-empty', '-m', 'dev-1 work'], inSeconds(60));
+    gitIn(path.join(top, 'beta'))(['commit', '-q', '--allow-empty', '-m', 'dev-2 work'], inSeconds(120));
+    const f = await json(alpha, ['finish', 'LB-1', '--status', 'review', '--result', 'done', '--as', 'dev-1'], env);
+    expect(f.code).toBe(0);
+    expect(f.doc.data.commit).toBe(gitIn(alpha)(['rev-parse', 'HEAD']));
+    expect(f.doc.warnings).toEqual([]);
+  });
+
+  it('main checkout + 2 worktrees with commits since the claim: both named (newest first), the fix takes your sha and runs as is only with it', async () => {
+    const r = await repoWithWorktree();
+    const wt2 = path.join(tempDir(), 'wt2');
+    r.git(['worktree', 'add', '-q', wt2, '-b', 'other']);
+    const wt2Git = gitIn(wt2);
+    await claimed(r);
+    r.wtGit(['commit', '-q', '--allow-empty', '-m', 'work'], inSeconds(60));
+    wt2Git(['commit', '-q', '--allow-empty', '-m', 'work of another agent'], inSeconds(120));
+    const work = r.wtGit(['rev-parse', 'HEAD']);
+    const other = wt2Git(['rev-parse', 'HEAD']);
+    const mainHead = r.git(['rev-parse', 'HEAD']);
+    const f = await json(r.main, ['finish', 'LB-1', '--status', 'review', '--result', 'done', '--as', 'dev-1']);
+    expect(f.code).toBe(0);
+    const relink = 'laneboard finish LB-1 --status review --commit <HEAD of your worktree> --result "<your result>" --as dev-1';
+    const unlink = `laneboard update LB-1 --remove-link commit=${mainHead} --as dev-1`;
+    expect(worktreeWarnings(f.doc)).toEqual([
+      `the linked commit ${mainHead.slice(0, 12)} is HEAD of ${r.main} (main), the main checkout, and other worktrees of this repository have commits since you claimed LB-1: ` +
+        `${wt2} (other) ${other.slice(0, 12)}, ${r.wt} (feat) ${work.slice(0, 12)}; if your work is in one of them, link the HEAD of yours (listed above): ${relink}, then drop the link of this one: ${unlink} ` +
+        '(next time run finish in that folder or pass --commit <sha>; MCP task_finish: cwd "<that folder>" or commit "<sha>")',
+    ]);
+    // No sha of another worktree in any command: the warning never picks one for the agent.
+    expect(worktreeWarnings(f.doc)[0]).not.toContain(`commit=${other}`);
+    expect(worktreeWarnings(f.doc)[0]).not.toContain('--add-link');
+    // Run as is, the placeholder is refused and nothing changes.
+    const blind = await json(r.main, ['finish', 'LB-1', '--status', 'review', '--commit', '<HEAD of your worktree>', '--result', 'done', '--as', 'dev-1']);
+    expect(blind.code).toBe(2);
+    expect(blind.doc.error.code).toBe('INVALID_VALUE');
+    expect(stored(r.s, 'LB-1').links).toEqual([{ kind: 'commit', ref: mainHead }]);
+    // With the agent's own sha: its commit linked, then the main checkout's HEAD unlinked.
+    expect((await json(r.main, ['finish', 'LB-1', '--status', 'review', '--commit', work, '--result', 'done', '--as', 'dev-1'])).code).toBe(0);
+    expect((await json(r.main, unlink.split(' ').slice(1))).code).toBe(0);
+    expect(stored(r.s, 'LB-1').links).toEqual([{ kind: 'commit', ref: work }]);
+  });
+
+  it('setup --remove in a worktree keeps the shared exclude block while the setup of the main checkout stands; the last --remove takes it out', async () => {
+    const r = await repoWithWorktree();
+    const home = tempDir();
+    const exclude = path.join(r.main, '.git', 'info', 'exclude');
+    for (const dir of [r.main, r.wt]) {
+      fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# Project\n');
+      expect((await json(dir, ['setup', 'claude-code', '--dir', r.s.dir], { HOME: home })).code, dir).toBe(0);
+    }
+    const blocks = (): number => fs.readFileSync(exclude, 'utf8').split('# laneboard:start').length - 1;
+    expect(blocks()).toBe(1);
+    const off = await json(r.wt, ['setup', 'claude-code', '--remove'], { HOME: home });
+    expect(off.code, JSON.stringify(off.doc)).toBe(0);
+    expect(off.doc.data.files).toContainEqual({ path: exclude, scope: 'project', result: 'kept' });
+    expect(off.doc.warnings).toContain(
+      `kept the laneboard block in ${exclude}: setup in another checkout of this repository still uses it (${r.main}); laneboard setup <harness> --remove there removes it`,
+    );
+    expect(blocks()).toBe(1);
+    // The main checkout's backups stay out of git.
+    expect(r.git(['status', '--porcelain'])).not.toContain('laneboard.bak');
+    // The other way round: --remove in the main checkout keeps it while the worktree's setup stands.
+    expect((await json(r.wt, ['setup', 'claude-code', '--dir', r.s.dir], { HOME: home })).code).toBe(0);
+    const main = await json(r.main, ['setup', 'claude-code', '--remove'], { HOME: home });
+    expect(main.code, JSON.stringify(main.doc)).toBe(0);
+    expect(main.doc.data.files).toContainEqual({ path: '.git/info/exclude', scope: 'project', result: 'kept' });
+    expect(blocks()).toBe(1);
+    const last = await json(r.wt, ['setup', 'claude-code', '--remove'], { HOME: home });
+    expect(last.code, JSON.stringify(last.doc)).toBe(0);
+    expect(blocks()).toBe(0);
+  });
+
+  it('a worktree of a repository whose main checkout is HOME: ~/.laneboard is the registry, never the board (STORE_NOT_FOUND)', async () => {
+    const home = tempDir();
+    const git = gitIn(home);
+    git(['init', '-q', '-b', 'main']);
+    git(['commit', '-q', '--allow-empty', '-m', 'dotfiles'], LONG_AGO);
+    // A board elsewhere fills the machine registry ~/.laneboard (boards.json, no config.json).
+    expect((await json(tempDir(), ['init', '--name', 'p', '--prefix', 'PP', '--description', 'another project'], { HOME: home })).code).toBe(0);
+    expect(fs.existsSync(path.join(home, '.laneboard', 'boards.json'))).toBe(true);
+    const wt = path.join(tempDir(), 'wt');
+    git(['worktree', 'add', '-q', wt, '-b', 'feat']);
+    const list = await json(wt, ['list'], { HOME: home });
+    expect(list.code).not.toBe(0);
+    expect(list.doc.error.code).toBe('STORE_NOT_FOUND');
+  });
+});
+
 describe('review S6l X5: claim --resume names the parent only when the same session holds it', () => {
   const BASE = 'claude-code@ann';
   const session = (n: string): Record<string, string> => ({ LANEBOARD_DEFAULT_AGENT: BASE, CLAUDE_CODE_SESSION_ID: `${n.repeat(8)}-1a1a-4a1a-8a1a-000000000001` });

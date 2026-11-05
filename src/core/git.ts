@@ -1,6 +1,7 @@
 // What git says about the checkout finish links: HEAD, its commit time and uncommitted changes, a commit named by its sha, the
 // worktrees of the repository. git is asked, if it is there; the store never depends on it (ADR-0001 §0, §21). Where a linked
-// worktree's repository lies is read from its `.git` file without running git (store discovery is synchronous).
+// worktree's repository lies, and which checkouts a repository has, is read from git's files without running git (store discovery
+// and setup are synchronous); the one check "is this an existing folder" of core lives here too.
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -82,15 +83,19 @@ export interface WorktreeState {
   committedAt?: number;
 }
 
-// The worktrees of the repository holding `cwd` (`git worktree list`: the main checkout first; bare and prunable entries left out)
-// and the folder of the one holding `cwd`; undefined when git cannot tell (no repository, git missing or failing).
-export async function readWorktrees(cwd: string): Promise<{ here: string; list: WorktreeState[] } | undefined> {
+// The worktrees of the repository holding `cwd` (`git worktree list`; bare and prunable entries left out), the folder of the one
+// holding `cwd` (`here`) and the repository's own folder (`main`: the first entry git lists, before anything is left out). That is
+// the main checkout, or a bare repository, which is no checkout and so never `here` (`git init --bare repo.git` + worktrees: every
+// checkout is a linked one). Undefined when git cannot tell (no repository, git missing or failing).
+export async function readWorktrees(cwd: string): Promise<{ here: string; main?: string; list: WorktreeState[] } | undefined> {
   const [top, listed] = await Promise.all([runGit(cwd, ['rev-parse', '--show-toplevel']), runGit(cwd, ['worktree', 'list', '--porcelain'])]);
   if (top.out === undefined || listed.out === undefined) return undefined;
   const list: WorktreeState[] = [];
+  let main: string | undefined;
   for (const block of listed.out.split(/\n\s*\n/)) {
     const line = (key: string): string | undefined => block.split('\n').find((l) => l === key || l.startsWith(`${key} `))?.slice(key.length + 1);
     const folder = line('worktree');
+    main ??= folder;
     const head = line('HEAD');
     if (folder === undefined || head === undefined || line('bare') !== undefined || line('prunable') !== undefined) continue;
     const branch = line('branch');
@@ -103,11 +108,11 @@ export async function readWorktrees(cwd: string): Promise<{ here: string; list: 
     const t = at.get(w.head);
     if (t !== undefined) w.committedAt = Number(t);
   }
-  return { here: top.out, list };
+  return { here: top.out, ...(main !== undefined ? { main } : {}), list };
 }
 
-// Is `p` an existing directory?
-function isDirectory(p: string): boolean {
+// Is `p` an existing directory? The one such check of core (store discovery, finish's cwd, the git files below).
+export function isDirectory(p: string): boolean {
   try {
     return fs.statSync(p).isDirectory();
   } catch {
@@ -116,25 +121,21 @@ function isDirectory(p: string): boolean {
   }
 }
 
-// A linked git worktree (`git worktree add`) holding `cwd`: its root (the folder with the `.git` file), the repository's common git
-// directory (the `commondir` file in the folder the `.git` file names) and the main checkout (the folder of that `.git` directory;
-// none for a bare repository). Undefined for a `.git` directory, a submodule (no commondir), no repository or a broken link.
+// A linked git worktree (`git worktree add`): its root (the folder with the `.git` file), the repository's common git directory (the
+// `commondir` file in the folder the `.git` file names) and the main checkout (the folder of that `.git` directory; none for a bare
+// repository or a `.bare`-style layout). Undefined for a `.git` directory, a submodule (no commondir), no repository or a broken link.
 export interface LinkedWorktree {
   root: string;
   commonDir: string;
   main?: string;
 }
 
-// The linked worktree holding `cwd`, read from files only (see LinkedWorktree); the nearest `.git` from cwd up decides.
-export function linkedWorktree(cwd: string): LinkedWorktree | undefined {
-  let root = path.resolve(cwd);
-  while (!fs.existsSync(path.join(root, '.git'))) {
-    if (path.dirname(root) === root) return undefined;
-    root = path.dirname(root);
-  }
+// The linked worktree whose root is `root` (its `.git` is a file), read from files only; the one rule of "whose worktree is this"
+// for discovery (linkedWorktree) and the project-marker check (store.ts separateProjectMarker).
+export function worktreeAt(root: string): LinkedWorktree | undefined {
   let common: string;
   try {
-    // A `.git` directory fails here with EISDIR: not a linked worktree.
+    // A `.git` directory fails here with EISDIR, a missing one with ENOENT: not a linked worktree.
     const text = fs.readFileSync(path.join(root, '.git'), 'utf8');
     const gitdir = /^gitdir:\s*(.+)$/m.exec(text)?.[1]?.trim();
     if (!gitdir) return undefined;
@@ -146,4 +147,47 @@ export function linkedWorktree(cwd: string): LinkedWorktree | undefined {
   }
   if (!isDirectory(common)) return undefined;
   return { root, commonDir: common, ...(path.basename(common) === '.git' ? { main: path.dirname(common) } : {}) };
+}
+
+// Closest folder from `cwd` up that holds a `.git` (file or directory), or undefined.
+function gitRootOf(cwd: string): string | undefined {
+  let root = path.resolve(cwd);
+  while (!fs.existsSync(path.join(root, '.git'))) {
+    if (path.dirname(root) === root) return undefined;
+    root = path.dirname(root);
+  }
+  return root;
+}
+
+// The linked worktree holding `cwd` (see LinkedWorktree); the nearest `.git` from cwd up decides.
+export function linkedWorktree(cwd: string): LinkedWorktree | undefined {
+  const root = gitRootOf(cwd);
+  return root === undefined ? undefined : worktreeAt(root);
+}
+
+// The checkouts of the repository holding `cwd`, read from files only: `own`, the one holding cwd, and `others`: the main checkout
+// (none for a bare repository) and every linked worktree whose folder still exists (`<common dir>/worktrees/<name>/gitdir` names its
+// `.git` file). Undefined outside a repository and in a submodule.
+export function repositoryCheckouts(cwd: string): { own: string; others: string[] } | undefined {
+  const own = gitRootOf(cwd);
+  if (own === undefined) return undefined;
+  const common = isDirectory(path.join(own, '.git')) ? path.join(own, '.git') : worktreeAt(own)?.commonDir;
+  if (common === undefined) return undefined;
+  const found = path.basename(common) === '.git' ? [path.dirname(common)] : [];
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(path.join(common, 'worktrees'));
+  } catch {
+    // No `worktrees` folder: the repository has no linked worktree.
+  }
+  for (const name of names) {
+    const admin = path.join(common, 'worktrees', name);
+    try {
+      found.push(path.dirname(path.resolve(admin, fs.readFileSync(path.join(admin, 'gitdir'), 'utf8').trim())));
+    } catch {
+      // A half-made or broken entry (no gitdir file): git prunes it; no checkout to look at.
+    }
+  }
+  const others = found.filter((f) => isDirectory(f) && fs.realpathSync(f) !== fs.realpathSync(own));
+  return { own, others };
 }
