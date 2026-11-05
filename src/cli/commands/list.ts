@@ -21,7 +21,7 @@ function listContext(c: CommandContext, allBoards: boolean): ListContext {
 export const list: CommandDef = {
   name: 'list',
   usage: 'list [--status S]... [--open] [--assignee A | --unassigned] [--label L]... [--text Q] [--parent ID] [--all-boards] [--scope active|archive|all] [--limit N] [--offset N]',
-  summary: 'List tasks, newest update first (default: scope active, limit 20), each with its newest comment line. --open: not in the final status. --all-boards: every board of this machine (laneboard boards), merged.',
+  summary: 'List tasks, newest update first (default: scope active, limit 20, or list_limit_max of the board when lower; each item also says handed_in, in_work, stale), each with its newest comment line. --open: not in the final status. --all-boards: every board of this machine (laneboard boards), merged.',
   options: {
     status: { type: 'string', multiple: true },
     assignee: { type: 'string' },

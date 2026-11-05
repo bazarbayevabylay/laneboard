@@ -103,7 +103,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   listTasks: {
     name: 'task_list',
-    description: 'List task summaries, newest update first (default scope active, limit 20), each with its newest comment line. all_boards: every board of this machine (registry under HOME), open: only tasks not in their final status. Use task_get for a full task.',
+    description: 'List task summaries, newest update first (default scope active, limit 20, or list_limit_max of the board when lower; each item also says handed_in, in_work, stale), each with its newest comment line. all_boards: every board of this machine (registry under HOME), open: only tasks not in their final status. Use task_get for a full task.',
     params: ListInput,
     write: false,
   },
