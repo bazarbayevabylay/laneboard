@@ -1,6 +1,6 @@
 // laneboard prime
 import path from 'node:path';
-import { agentRules, boardsOverview, foreignStore, inRegistry, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
+import { agentRules, boardsOverview, ERRORS, foreignStore, inRegistry, LaneboardError, parentStoreWarning, resolveActor, taskSummary, toLaneboardError } from '../../core/index.ts';
 import type { ActorSource, ForeignStore, OpContext, OverviewBoard, StoreRef, SummaryResult } from '../../core/index.ts';
 import { BOARD_DATA_NOTE, OVERVIEW_MAX_CHARS, overviewText, primeText } from '../format.ts';
 import type { PrimeData } from '../format.ts';
@@ -16,6 +16,12 @@ const NO_STORE_FIX =
 // a neutral fact and how to start if the user wants it, never a task rule (owner's decision, S2d).
 function noBoardLine(message: string): string {
   return `laneboard: no board found (${message}). If the user wants to track work here with laneboard: laneboard init --name <name> --description "<whose project, what work>" in the project root, then laneboard prime.`;
+}
+
+// SessionStart line where LANEBOARD_DIR or --dir names no folder (a pin left by a moved project, S6k): the store's own fix, which is
+// `laneboard setup <harness>` when this folder's board exists (a bare init is refused there), else `init --dir <that path>`.
+function pinLine(message: string, fix: string): string {
+  return `laneboard: no board opened (${message}). If the user wants to track work here with laneboard: ${fix}.`;
 }
 
 // SessionStart line for a board that is not in the machine registry (a cloned repository with a committed .laneboard, review security F4):
@@ -158,9 +164,11 @@ export const prime: CommandDef = {
       const err = toLaneboardError(raw);
       // No store yet is a normal state for prime; in a hook every error becomes a line, so a session never starts with a failed hook.
       if (err.code !== 'STORE_NOT_FOUND' && !hook) throw err;
-      if (err.code === 'STORE_NOT_FOUND') noStore = everyBoard ? noOwnBoardLine(err.message) : noBoardLine(err.message);
+      // A pin to no folder has a fix of its own (setup, or init --dir), never the bare init of NO_STORE_FIX.
+      const pinFix = err.code === 'STORE_NOT_FOUND' && err.fix !== ERRORS.STORE_NOT_FOUND.fix ? err.fix : undefined;
+      if (err.code === 'STORE_NOT_FOUND') noStore = everyBoard ? noOwnBoardLine(err.message) : pinFix !== undefined ? pinLine(err.message, pinFix) : noBoardLine(err.message);
       // With --all-boards no board here is the orchestrator's usual place: the boards follow, no advice to make one (review orchestrator F17).
-      const fix = !noStore ? err.fix : everyBoard ? 'none needed for the overview: the boards of this machine are below' : NO_STORE_FIX;
+      const fix = !noStore ? err.fix : everyBoard ? 'none needed for the overview: the boards of this machine are below' : (pinFix ?? NO_STORE_FIX);
       problem = `${err.code}: ${err.message}; fix: ${fix}`;
     }
     // In the hook a board missing from the machine registry shows none of its texts (review security F4), whether its store loads or not:
