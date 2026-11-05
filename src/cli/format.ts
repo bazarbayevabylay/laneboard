@@ -250,9 +250,6 @@ export interface PrimeData {
   session_base: string | null;
   resumable: ListItem[];
   resumable_total?: number;
-  // Only in prime --hook: the session id of the default name came from the hook input on stdin (`session_id`), as CLAUDE_CODE_SESSION_ID
-  // is not set in the hook (S6x): the commands carry --as with the name, since a later command may not see the id either.
-  session_from_input?: boolean;
   // Only with --all-boards: every board of the machine (ADR §29), the current one first.
   boards?: OverviewBoard[];
   // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, the newest
@@ -261,17 +258,12 @@ export interface PrimeData {
 }
 
 // Always under the session default name: the parent session, its subagents and parallel workers share it (LB-8, review S2g),
-// so it comes before every command prime prints. A session id from the hook input (S6x) is no default of later commands: --as it is.
-function sessionLine(agent: string, fromInput: boolean): string {
-  const own = fromInput
-    ? `Your name: session default ${agent} (the session id is from the hook input, CLAUDE_CODE_SESSION_ID is not set: pass --as ${shellQuote(agent)} on every command).`
-    : `Your name: session default ${agent} (no --as needed).`;
-  return `${own} Subagent or parallel worker? It is your parent's name: run laneboard prime --as <your-own-name> and pass that --as on every command.`;
-}
-
-// Do the printed commands go without --as: the session default name, unless its session id came from the hook input (S6x).
-function defaultWithoutAs(d: PrimeData): boolean {
-  return d.agent_source === 'default' && d.session_from_input !== true;
+// so it comes before every command prime prints.
+function sessionLine(agent: string): string {
+  return (
+    `Your name: session default ${agent} (no --as needed). Subagent or parallel worker? It is your parent's name: ` +
+    'run laneboard prime --as <your-own-name> and pass that --as on every command.'
+  );
 }
 
 // `line` cut to `room` characters, marked with an ellipsis when cut.
@@ -289,7 +281,7 @@ function statusCounts(d: PrimeData): string {
 // `--as` for a printed command: the agent's own name, none for the default name (writes use it anyway), a placeholder without one.
 function asOption(d: PrimeData): string {
   if (d.agent === null) return ' --as <your-name>';
-  return defaultWithoutAs(d) ? '' : ` --as ${shellQuote(d.agent)}`;
+  return d.agent_source === 'default' ? '' : ` --as ${shellQuote(d.agent)}`;
 }
 
 // The claim command prime prints: `--status` of the working status, so a task taken from the first status does not stay there
@@ -381,7 +373,7 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
   }
   const name = d.agent === null ? '<your-name>' : shellQuote(d.agent);
   // The default name is used without --as, so commands copied from here stay "default" in the task events.
-  const as = defaultWithoutAs(d) ? '' : ` --as ${name}`;
+  const as = d.agent_source === 'default' ? '' : ` --as ${name}`;
   const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${as}${dir} --json`;
   const claim = claimCommand(d, dir);
   const keepName = 'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).';
@@ -519,7 +511,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const waits = d.store_warning === null && (d.roles?.waiting_total ?? 0) > 0;
   // Without a name the agent's own tasks are unknown, so the ways to start one are always shown.
   const closing = [
-    d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent, d.session_from_input === true) : '',
+    d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent) : '',
     dirLine,
     noTask ? noTaskText(d, dir, { resume, free, check: waits }) : '',
     listed ? `Your active tasks (${d.agent}), newest update first:` : '',

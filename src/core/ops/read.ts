@@ -75,7 +75,8 @@ export const ListInput = z.strictObject({
   // Only tasks not in the final status of their board.
   open: z.boolean().optional(),
   // Tasks a session of the default name base `<harness>@<user>` holds under that default name (`<base>:<session>`), not in the final
-  // status and not waiting for a check: what claim --resume takes back (prime's earlier-session list counts them, S6x A-U1).
+  // status and not waiting for a check, never one the caller (its name) holds itself: what claim --resume takes back (prime's
+  // earlier-session list counts them, S6x A-U1, r1).
   sessions_of: z.string().min(1).optional(),
   scope: z.enum(SCOPES).optional(),
   limit: z.int().min(1).optional(),
@@ -220,7 +221,7 @@ export async function listTasks(ctx: ListContext, input: ListInputT): Promise<Op
   const elsewhere = parent === undefined ? undefined : foreignTask(own, parent, config.prefix, 'read');
   if (elsewhere) throw elsewhere;
   const finals = finalStatuses(config.statuses);
-  const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals }) && heldBySessionsOf(config, task, p.sessions_of));
+  const matches = tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals }) && heldBySessionsOf(config, task, p.sessions_of, ctx.actor ?? ''));
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const nowMs = Date.now();
   const items = matches.slice(offset, offset + limit).map(({ task, archived }) => toListEntry(task, archived, config, nowMs));
@@ -280,7 +281,7 @@ async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, offs
   const parent = p.parent === undefined ? undefined : normalizeId(p.parent, first?.config.prefix ?? 'LB', 'parent');
   // Each task keeps its board's config: the marks (workMarks) read its statuses.
   const matches = read.flatMap((r) =>
-    r.tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals: finalStatuses(r.config.statuses) }) && heldBySessionsOf(r.config, task, p.sessions_of)).map((t) => ({ ...t, config: r.config })),
+    r.tasks.filter(({ task }) => taskMatches(task, { ...p, parent, finals: finalStatuses(r.config.statuses) }) && heldBySessionsOf(r.config, task, p.sessions_of, ctx.actor ?? '')).map((t) => ({ ...t, config: r.config })),
   );
   matches.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const nowMs = Date.now();
@@ -290,9 +291,10 @@ async function listAllBoards(ctx: ListContext, p: ListInputT, scope: Scope, offs
 
 // Is `task` work a session of the default name base `sessionBase` may take back with claim --resume (prime's earlier-session list and
 // list --sessions-of, one rule, S6x A-U1): in a configured status that is not final, held by `<sessionBase>:<session>` under that default name
-// (heldByEarlierSession; never `actor` itself), not waiting for a check (S6w r3: handed in, claim --resume of it is refused).
-// True for every task without `sessionBase` (list without --sessions-of).
-function heldBySessionsOf(config: ConfigT, task: TaskT, sessionBase: string | undefined, actor = ''): boolean {
+// (heldByEarlierSession), not waiting for a check (S6w r3: handed in, claim --resume of it is refused). Never a task `actor` holds
+// itself (S6x r1): the caller's own tasks are its active tasks, not work to resume, so list --sessions-of run under the name prime ran
+// under counts exactly prime's resumable_total. True for every task without `sessionBase` (list without --sessions-of).
+function heldBySessionsOf(config: ConfigT, task: TaskT, sessionBase: string | undefined, actor: string): boolean {
   if (sessionBase === undefined) return true;
   if (!config.statuses.includes(task.status) || finalStatuses(config.statuses).includes(task.status)) return false;
   return heldByEarlierSession(task, sessionBase, actor) && !waitsInCheck(config, task);
@@ -542,7 +544,7 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   const resumable =
     p.assignee === undefined || p.session_base === undefined
       ? []
-      : tasks.filter(({ task }) => heldBySessionsOf(config, task, p.session_base, p.assignee));
+      : tasks.filter(({ task }) => heldBySessionsOf(config, task, p.session_base, p.assignee ?? ''));
   resumable.sort((a, b) => -byUpdatedDesc(a.task, b.task));
   const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee, p.session_base);
   return {

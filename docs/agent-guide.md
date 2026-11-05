@@ -276,7 +276,7 @@ After `/clear` or a restart Claude Code gives the session a new id, so its defau
 session's. The default name's base is the global git `user.name` (read from `~/.gitconfig` without running git), else the OS user.
 `prime` under the default name lists unfinished tasks of the same base with another session id ("Your earlier sessions", with the age
 of the last update, the longest silent first: an abandoned task leads). It lists 5; past that a line `... N more (M in all): laneboard list
---sessions-of <base> --json` names the command that lists them all (`prime --json` and MCP `task_prime`: `resumable_total`; MCP
+--sessions-of <base> --json` names the command that lists them all, never your own (`prime --json` and MCP `task_prime`: `resumable_total`; MCP
 `task_list`: `sessions_of`). `claim <ID> --resume` takes one over: an `assigned` event with `resumed: true` (`get` shows "resumed from <old name>"),
 `resumed_from` in the reply. Only a task its holder took itself under its default name (the event says `actor_source: default`) of the
 same user and harness qualifies; a task of an explicit name (`dev-1` above, or `claude-code@ann:reviewer`) stays `ALREADY_CLAIMED` without
@@ -287,9 +287,7 @@ On a board with checks a task handed in and waiting for a check is no work to re
 `claim --resume` of it gets "handed in already". Another session of the same base that worked on a task (by the events it wrote
 under its default name) is its author: it never passes it on or accepts it, and its queue "Waiting for your check" skips it.
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
-of a subtask names a parent held by the same session. The MCP server keeps the id it started with. The hook takes the id from
-`CLAUDE_CODE_SESSION_ID`, else from `session_id` of the hook input on stdin; then its commands carry `--as <that name>`, since a later
-command may not see the id either.
+of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
 
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name

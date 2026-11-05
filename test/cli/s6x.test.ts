@@ -1,10 +1,11 @@
 // S6x (UX run 5): A-U1 no earlier-session task is cut from prime silently (oldest first, a total, a footer with list --sessions-of);
-// B-U1 config names the work status of a board with checks; A risk 1 prime --hook takes the session id from the hook input when
-// CLAUDE_CODE_SESSION_ID is not set; B-U2 a checker that gets a task waiting for its check is warned that it no longer checks it.
+// B-U1 config names the work status of a board with checks; A risk 1 (r1) prime --hook names the session by CLAUDE_CODE_SESSION_ID
+// only, never by session_id of the hook input; B-U2 a checker that gets a task waiting for its check is warned that it no longer checks it.
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PRIME_MAX_CHARS } from '../../src/cli/format.ts';
 import { callTool } from '../../src/mcp/tools.ts';
-import { cleanupTemp, cli, newStore } from '../helpers.ts';
+import { registerStore } from '../../src/core/index.ts';
+import { cleanupTemp, cli, newStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -130,41 +131,66 @@ describe('A-U1: prime never cuts an earlier-session task silently', () => {
   });
 });
 
-describe('A risk 1: prime --hook names the session by the session_id of the hook input when CLAUDE_CODE_SESSION_ID is not set', () => {
+describe('A risk 1 (r1): prime --hook names the session by CLAUDE_CODE_SESSION_ID only, never by session_id of the hook input', () => {
   const NO_ENV_ID = { LANEBOARD_DEFAULT_AGENT: BASE };
 
-  it('no env: the name and the resume section come from session_id; the commands carry --as with that name', async () => {
+  it('no env, session_id on stdin: as without a session (the base name, no --as, no resume section), the name later Bash commands get', async () => {
     const s = await abandoned(2);
     const out = await hook(s, NO_ENV_ID, { session_id: ID_2, source: 'startup' });
-    expect(out).toContain(`Your name: session default ${NAME_2} (the session id is from the hook input, CLAUDE_CODE_SESSION_ID is not set: pass --as ${NAME_2} on every command).`);
-    expect(out).toContain('Your earlier sessions, unfinished');
-    expect(out).toContain('  LB-1  [doing]');
-    expect(out).toContain(`laneboard create "<short title of your work>" --status todo --assignee ${NAME_2} --as ${NAME_2} --json`);
-    expect(out).toContain(`The request names a task id: laneboard claim <ID> --status doing --as ${NAME_2} --json`);
-    // The printed --as is this session's default name where the env has the id: the write stays "default", and resume works.
-    const claim = await json(s, ['claim', 'LB-1', '--resume', '--as', NAME_2], SESSION_2);
-    expect(claim.code).toBe(0);
-    expect(claim.doc.data).toMatchObject({ assignee: NAME_2, resumed_from: NAME_1 });
+    expect(out).toContain(`Your name: session default ${BASE} (no --as needed).`);
+    expect(out).not.toContain(NAME_2);
+    expect(out).not.toContain('22222222');
+    expect(out).not.toContain('Your earlier sessions');
+    expect(out).toContain(`laneboard create "<short title of your work>" --status todo --assignee ${BASE} --json`);
+    // The hook says what a Bash command of the same session (same env, no hook input) says: one name for both.
+    const bash = (await cli(['prime'], { cwd: s.root, env: NO_ENV_ID })).stdout;
+    expect(bash).toContain(`Your name: session default ${BASE} (no --as needed).`);
+    const write = await json(s, ['create', 'mine', '--status', 'doing', '--assignee', BASE], NO_ENV_ID);
+    expect(write.code).toBe(0);
+    expect(write.doc.data.assignee).toBe(BASE);
   });
 
-  it('env set: the env wins over the input; no input id and no env: the name has no session part, as before', async () => {
+  it('env set: the env names the session whatever the input says; no input id and no env: the base name, as before', async () => {
     const s = await abandoned(1);
     const both = await hook(s, SESSION_2, { session_id: ID_1, source: 'startup' });
     expect(both).toContain(`Your name: session default ${NAME_2} (no --as needed).`);
+    expect(both).toContain('Your earlier sessions, unfinished');
     const none = await hook(s, NO_ENV_ID, { source: 'startup' });
     expect(none).toContain(`Your name: session default ${BASE} (no --as needed).`);
     expect(none).not.toContain('Your earlier sessions');
-    // An empty or non-string session_id is no id.
-    for (const session_id of ['', '42']) {
-      const input = JSON.parse(`{"session_id": ${session_id === '' ? '""' : session_id}, "source": "startup"}`);
-      expect(await hook(s, NO_ENV_ID, input), session_id).toContain(`Your name: session default ${BASE} (no --as needed).`);
-    }
   });
 
   it('plain prime never reads the hook input', async () => {
     const s = await abandoned(1);
     const out = (await cli(['prime'], { cwd: s.root, env: NO_ENV_ID, stdin: JSON.stringify({ session_id: ID_2, source: 'startup' }) })).stdout;
     expect(out).toContain(`Your name: session default ${BASE} (no --as needed).`);
+  });
+});
+
+describe('A-U1 (r1): list --sessions-of never lists the caller\'s own tasks, so it counts what prime counts', () => {
+  it('own task in doing: prime resumable_total 3 = list --sessions-of 3 (CLI and MCP); a name of no session (a person) sees all 4', async () => {
+    const s = await abandoned(3);
+    expect((await json(s, ['create', 'mine', '--status', 'doing', '--assignee', NAME_2], SESSION_2)).code).toBe(0);
+    const prime = (await json(s, ['prime'], SESSION_2)).doc.data;
+    expect(prime.resumable_total).toBe(3);
+    const listed = (await json(s, ['list', '--sessions-of', BASE], SESSION_2)).doc.data;
+    expect(listed.items.map((t: { id: string }) => t.id).sort()).toEqual(['LB-1', 'LB-2', 'LB-3']);
+    expect(listed.total).toBe(prime.resumable_total);
+    // --as with the session's own default name is the same caller.
+    expect((await json(s, ['list', '--sessions-of', BASE, '--as', NAME_2], SESSION_2)).doc.data.total).toBe(3);
+    // Every board of the machine: the same rule (the board registered in a fresh HOME).
+    const home = tempDir();
+    await registerStore(home, s.dir);
+    const all = await json(s, ['list', '--sessions-of', BASE, '--all-boards'], { ...SESSION_2, HOME: home });
+    expect(all.code).toBe(0);
+    expect(all.doc.data.total).toBe(3);
+    const env = { cwd: s.root, env: SESSION_2 };
+    const mcpPrime = (await callTool('task_prime', {}, env)).structuredContent as Record<string, any>;
+    const mcpList = (await callTool('task_list', { sessions_of: BASE }, env)).structuredContent as Record<string, any>;
+    expect(mcpPrime.resumable_total).toBe(3);
+    expect(mcpList.total).toBe(3);
+    // Another caller (a person, an orchestrator): every session's task, LB-4 included.
+    expect((await json(s, ['list', '--sessions-of', BASE, '--as', 'orch'])).doc.data.total).toBe(4);
   });
 });
 

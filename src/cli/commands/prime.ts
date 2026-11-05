@@ -82,29 +82,20 @@ async function editHook(op: () => OpContext, agent: string | undefined, cwd: str
   }
 }
 
-// What prime --hook reads from the Claude Code SessionStart hook input on stdin (code.claude.com/docs/en/hooks, checked 2026-11-06):
-// `source` (startup, resume, clear, compact, fork) and `session_id` (a common input field of every hook); each undefined without
-// input (a terminal, another harness, not JSON) or when it is not a non-empty string.
-function sessionStartInput(io: CommandContext['io']): { source?: string; sessionId?: string } {
-  if (io.stdinIsTTY === true) return {};
+// The `source` of the Claude Code SessionStart hook input on stdin (startup, resume, clear, compact, fork:
+// code.claude.com/docs/en/hooks); undefined without input (a terminal, another harness, not JSON). Its `session_id` is never read
+// (S6x r1, ADR §52): the hook's name comes from CLAUDE_CODE_SESSION_ID only, as the name of every later Bash command does.
+function sessionStartSource(io: CommandContext['io']): string | undefined {
+  if (io.stdinIsTTY === true) return undefined;
   let input: unknown;
   try {
     input = JSON.parse(io.readStdin());
   } catch {
-    // A hook never fails: no input, unreadable or not JSON all mean "source and session unknown".
-    return {};
+    // A hook never fails: no input, unreadable or not JSON all mean "source unknown".
+    return undefined;
   }
-  const fields = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
-  const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
-  return { source: text(fields.source), sessionId: text(fields.session_id) };
-}
-
-// The environment prime --hook names the agent by: CLAUDE_CODE_SESSION_ID when it is set (Claude Code sets it in hook subprocesses,
-// code.claude.com/docs/en/env-vars, checked 2026-11-06), else the `session_id` of the hook input (S6x, run 5 A risk 1); `fromInput`:
-// the id came from the input.
-function hookEnv(env: CommandContext['io']['env'], sessionId: string | undefined): { env: CommandContext['io']['env']; fromInput: boolean } {
-  if ((env.CLAUDE_CODE_SESSION_ID ?? '') !== '' || sessionId === undefined) return { env, fromInput: false };
-  return { env: { ...env, CLAUDE_CODE_SESSION_ID: sessionId }, fromInput: true };
+  const source = typeof input === 'object' && input !== null ? (input as Record<string, unknown>).source : undefined;
+  return typeof source === 'string' ? source : undefined;
 }
 
 // prime --all-boards: every board of the machine (ADR §29), or one line saying why not; a read, so it never fails prime.
@@ -146,13 +137,8 @@ export const prime: CommandDef = {
     if (hook && edit) throw new LaneboardError('USAGE', '--hook and --edit-hook are two different hooks; pass one of them', { edit: { drop: [{ name: 'edit-hook' }] } });
     const everyBoard = flag(c.values, 'all-boards');
     if (edit && everyBoard) throw new LaneboardError('USAGE', '--edit-hook prints a reminder after an edit; --all-boards goes with prime or prime --hook', { edit: { drop: [{ name: 'all-boards' }] } });
-    // The hook input is read once (stdin): its source decides the resume way, its session id names the session without the env.
-    const input = hook ? sessionStartInput(c.io) : {};
-    const hookNaming = hookEnv(c.io.env, input.sessionId);
     // The same name a write would use: --as, LANEBOARD_AGENT, else the session's default name.
-    const named = resolveActor(typeof c.values.as === 'string' ? c.values.as : undefined, hookNaming.env);
-    // The session part of a default name came from the hook input (only then the printed commands carry --as).
-    const sessionFromInput = hookNaming.fromInput && named.sessionBase !== undefined;
+    const named = resolveActor(typeof c.values.as === 'string' ? c.values.as : undefined, c.io.env);
     const agent = named.actor;
     const agentSource: ActorSource | null = named.actorSource ?? null;
     // A default name says little in the hook: an agent that passed its own --as owns its task under that name, so the reminder
@@ -163,7 +149,7 @@ export const prime: CommandDef = {
     // agent's restart is a new session with a new id (P5, S6l; S3b offered them after /clear only). Not on "resume" or "compact": the
     // session id stays, so its own tasks are its own, and the rest is a parallel session's. A parallel live session's task stays in
     // the list with its age; its claim --resume warns (core claimTask), the list says "resume only your own".
-    const source = input.source;
+    const source = hook ? sessionStartSource(c.io) : undefined;
     const resumeShown = source !== 'resume' && source !== 'compact';
     let summary: SummaryResult | undefined;
     let ctx: OpContext | undefined;
@@ -215,7 +201,6 @@ export const prime: CommandDef = {
       session_base: named.sessionBase ?? null,
       resumable: resumeShown ? (summary?.resumable ?? []) : [],
       resumable_total: resumeShown ? (summary?.resumable_total ?? 0) : 0,
-      ...(sessionFromInput ? { session_from_input: true } : {}),
       ...(summary?.roles === undefined ? {} : { roles: summary.roles }),
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
