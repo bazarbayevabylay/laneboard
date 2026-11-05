@@ -191,6 +191,7 @@ export const prime: CommandDef = {
       unassigned_total: summary?.unassigned_total ?? 0,
       session_base: named.sessionBase ?? null,
       resumable: resumeShown ? (summary?.resumable ?? []) : [],
+      ...(summary?.roles === undefined ? {} : { roles: summary.roles }),
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.
     // A store named by --dir stays named in the commands prime prints (LANEBOARD_DIR or a walk-up may find another one).

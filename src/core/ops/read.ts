@@ -6,11 +6,11 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { canonicalPath, idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, parseInput, suggestClosest, toTaskView, unique } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, parseInput, reviewers, reviewStatuses, suggestClosest, toTaskView, unique } from './common.ts';
 import type { FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
-import { handedIn } from './update.ts';
+import { handedIn, waitsForCheck, workStatusBeforeChecks } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
 
@@ -403,6 +403,59 @@ export interface SummaryResult {
   // Is this store in the machine registry (<home>/.laneboard/boards.json, where init and setup add a board)? null without a home in the
   // context (cannot tell). A cloned repository's committed .laneboard is not: the SessionStart hook shows none of its texts (review security F4).
   registered: boolean | null;
+  // Only on a board with checks or create_by (config@2, P1/P2; a board without them answers as before): who checks and who creates.
+  roles?: SummaryRoles;
+}
+
+// The roles of a board for prime (S6m, P1/P2, B-U6): an agent of somebody else's flow reads from here what it may do.
+export interface SummaryRoles {
+  // The check statuses in order (config review.statuses); empty without checks.
+  checks: string[];
+  // Who checks (config review.by); empty: anybody but the author of the work.
+  checkers: string[];
+  // The status work goes on in before the first check (claim --status); null without checks or when it is the first status.
+  work_status: string | null;
+  // Who creates tasks (config create_by); null: everybody.
+  creators: string[] | null;
+  // May `assignee` create tasks (no create_by, or a name in it); false without a name on a board with create_by.
+  can_create: boolean;
+  // Tasks waiting in a check that `assignee` may make (waitsForCheck), oldest update first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
+  waiting: ListItem[];
+  waiting_total: number;
+  // Each task of `assigned` with a comment by another name: the newest such comment (a checker's reason to return it, B-U6).
+  feedback: Array<{ id: string; comment: LastComment }>;
+}
+
+// How many tasks waiting for the agent's check the summary lists (the rest: list --json, handed_in).
+export const SUMMARY_WAITING_MAX = 5;
+
+// The newest comment of `task` written by a name other than `actor`, as lastComment shows a comment; null without one.
+function otherComment(task: TaskT, actor: string): LastComment | null {
+  const others = { ...task, events: task.events.filter((e) => e.type !== 'commented' || e.actor !== actor) };
+  return lastComment(others);
+}
+
+// The roles of the board (SummaryRoles) for `assignee`, or undefined on a board without checks and create_by (as before, ADR §22).
+function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archived: boolean }>, assigned: readonly TaskT[], assignee: string | undefined): SummaryRoles | undefined {
+  const checks = reviewStatuses(config);
+  if (checks.length === 0 && config.create_by === undefined) return undefined;
+  const waiting = assignee === undefined ? [] : tasks.filter(({ task }) => waitsForCheck(config, task, assignee));
+  waiting.sort((a, b) => -byUpdatedDesc(a.task, b.task));
+  const feedback: SummaryRoles['feedback'] = [];
+  for (const task of assigned) {
+    const comment = checks.length === 0 || assignee === undefined ? null : otherComment(task, assignee);
+    if (comment !== null) feedback.push({ id: task.id, comment });
+  }
+  return {
+    checks,
+    checkers: reviewers(config),
+    work_status: workStatusBeforeChecks(config) ?? null,
+    creators: config.create_by === undefined ? null : [...config.create_by],
+    can_create: config.create_by === undefined || (assignee !== undefined && config.create_by.includes(assignee)),
+    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => toListItem(task, archived)),
+    waiting_total: waiting.length,
+    feedback,
+  };
 }
 
 // Is the store at `dir` in the machine registry under `home` (by canonicalPath, as liveBoards)? null without `home`. A registry that
@@ -447,6 +500,7 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       ? []
       : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? ''));
   resumable.sort((a, b) => byUpdatedDesc(a.task, b.task));
+  const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee);
   return {
     data: {
       prefix: config.prefix,
@@ -464,6 +518,7 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       unassigned_total: free.length,
       resumable: resumable.slice(0, SUMMARY_RESUMABLE_MAX).map(({ task, archived }) => toListItem(task, archived)),
       registered: inRegistry(ctx.home, ctx.store.dir, warnings),
+      ...(roles === undefined ? {} : { roles }),
     },
     warnings,
   };

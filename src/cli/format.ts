@@ -1,6 +1,6 @@
 // Output for the CLI: JSON envelopes, human text and error blocks (the fixes themselves are built in argv.ts).
 import { fieldsLine, LaneboardError, shellQuote, shortRuleForms, toErrorObject, WAITING_OWNER_LABEL } from '../core/index.ts';
-import type { DoctorResult, EventsResult, FieldInfo, LastComment, LinkedTask, LinkT, ListItem, ListResult, OverviewBoard, OverviewCard, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
+import type { DoctorResult, EventsResult, FieldInfo, LastComment, LinkedTask, LinkT, ListItem, ListResult, OverviewBoard, OverviewCard, SummaryRoles, TaskDetail, TaskRef, TaskView } from '../core/index.ts';
 import type { ImportData } from '../import/index.ts';
 import { age, fit as fitChars, shortName } from './board-view.ts';
 import { safeData, safeText } from './display.ts';
@@ -242,6 +242,9 @@ export interface PrimeData {
   resumable: ListItem[];
   // Only with --all-boards: every board of the machine (ADR §29), the current one first.
   boards?: OverviewBoard[];
+  // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, the newest
+  // comment of another name on each own task.
+  roles?: SummaryRoles;
 }
 
 // Always under the session default name: the parent session, its subagents and parallel workers share it (LB-8, review S2g),
@@ -278,9 +281,10 @@ function claimCommand(d: PrimeData, dir: string): string {
   return `laneboard claim <ID>${work === undefined ? '' : ` --status ${shellQuote(work)}`}${asOption(d)}${dir} --json`;
 }
 
-// The status work goes on in: the second configured status, unless it is the final one (a board of two statuses has none).
-// Review statuses (P1) will name the one before the first of them.
+// The status work goes on in: the second configured status, unless it is the final one (a board of two statuses has none); on a board
+// with checks the one before the first check (P1, A-U3; none when that is the first status).
 function workStatus(d: PrimeData): string | undefined {
+  if (d.roles !== undefined && d.roles.checks.length > 0) return d.roles.work_status ?? undefined;
   const second = d.statuses[1]?.status;
   return second === undefined || second === d.final_status ? undefined : second;
 }
@@ -304,10 +308,37 @@ function withTasks(text: string, items: readonly ListItem[], total: number, more
   return total > items.length ? out + more(total - items.length) : out;
 }
 
-// What else prime lists for an agent without a task in progress: tasks of its earlier sessions, free tasks.
+// What else prime lists for an agent without a task in progress: tasks of its earlier sessions, free tasks, tasks waiting for its check.
 interface Choices {
   resume: boolean;
   free: boolean;
+  check: boolean;
+}
+
+// A checker's finish of a task waiting for its check (P1): passes it on, from the last check accepts it.
+function checkCommand(d: PrimeData, dir: string): string {
+  return `laneboard finish <ID> --result "<result of your check>"${asOption(d)}${dir} --json`;
+}
+
+// Longest roles line of prime, and longest list of names in it (checkers, creators): a long list is cut, never the rest of the line.
+const ROLES_LINE_MAX = 700;
+const NAMES_MAX = 160;
+
+// The line under the store on a board with checks or create_by (S6m, P1/P2): the checks and who makes them, how work is handed in
+// and returned, who creates tasks.
+function rolesLine(d: PrimeData): string {
+  const r = d.roles;
+  if (r === undefined) return '';
+  const parts: string[] = [];
+  if (r.checks.length > 0) {
+    const by = r.checkers.length > 0 ? fit(r.checkers.join(', '), NAMES_MAX) : 'anybody but the author of the work';
+    const back = r.work_status === null ? '' : `; return work: comment why, then update --status ${shellQuote(r.work_status)}`;
+    parts.push(
+      `Checks: ${[...r.checks, d.final_status ?? '-'].join(' -> ')}, by ${by}. The author's finish hands in to ${r.checks[0] ?? '-'}; a checker's finish passes on or accepts, never its own work${back}.`,
+    );
+  }
+  if (r.creators !== null) parts.push(`Only ${fit(r.creators.join(', '), NAMES_MAX)} create tasks here${r.can_create ? '' : ' (not you)'}.`);
+  return fit(parts.join(' '), ROLES_LINE_MAX);
 }
 
 // What to do when the agent has no task in progress: the exact create command (and how to keep a name without one); `dir` is
@@ -324,19 +355,34 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
   const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${as}${dir} --json`;
   const claim = claimCommand(d, dir);
   const keepName = 'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).';
-  if (!choices.resume && !choices.free) {
+  // create_by without this name (P2): no create command, the way to get a task instead.
+  const creators = d.roles?.creators ?? null;
+  const ask =
+    creators === null || d.roles?.can_create !== false
+      ? undefined
+      : `Only ${fit(creators.join(', '), NAMES_MAX)} create tasks on this board: ask whoever started you for a task id (never create it under another name), then: ${claim}`;
+  if (!choices.resume && !choices.free && !choices.check) {
+    if (ask !== undefined) return [d.agent === null ? 'You have no task in progress (your name is not set).' : 'You have no task in progress.', ask, ...(d.agent === null ? [keepName] : [])].join('\n');
     if (d.agent === null) return ['You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:', create, keepName].join('\n');
     return ['You have no task in progress. Create one now:', create, `Given a task id instead: ${claim}`].join('\n');
   }
   const ways = [`The request names a task id: ${claim}`];
+  if (choices.check) ways.push(`A task below waits for your check: ${checkCommand(d, dir)}`);
   if (choices.resume) ways.push(`Your own earlier-session task (below) fits the request: laneboard claim <ID> --resume${dir} --json`);
   if (choices.free) ways.push('A free task below fits the request: as in 1.');
+  if (ask !== undefined) {
+    ways.push(`Otherwise: ${ask}`);
+    return [noTaskIntro(d), ...ways.map((w, i) => `${i + 1}. ${w}`), ...(d.agent === null ? [keepName] : [])].join('\n');
+  }
   ways.push('Otherwise create one:');
-  const intro =
-    d.agent === null
-      ? 'You have no task in progress (your name is not set). Start one the first way that fits, with a name you keep for the whole session:'
-      : 'You have no task in progress. Start one the first way that fits:';
-  return [intro, ...ways.map((w, i) => `${i + 1}. ${w}`), create, ...(d.agent === null ? [keepName] : [])].join('\n');
+  return [noTaskIntro(d), ...ways.map((w, i) => `${i + 1}. ${w}`), create, ...(d.agent === null ? [keepName] : [])].join('\n');
+}
+
+// The first line of the numbered ways to start a task.
+function noTaskIntro(d: PrimeData): string {
+  return d.agent === null
+    ? 'You have no task in progress (your name is not set). Start one the first way that fits, with a name you keep for the whole session:'
+    : 'You have no task in progress. Start one the first way that fits:';
 }
 
 // Free tasks prime always lists (when there are that many), with the footer command for the rest.
@@ -433,11 +479,13 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   // Under a warning that the store looks like another project's, no claim command for it (as noTaskText).
   const resume = noTask && d.store_warning === null && d.session_base !== null && d.resumable.length > 0;
   const free = d.store_warning === null && d.unassigned_total > 0;
+  // Tasks waiting for the agent's check (S6m, B-U6): a checker without work of its own is not told to create one first.
+  const waits = d.store_warning === null && (d.roles?.waiting_total ?? 0) > 0;
   // Without a name the agent's own tasks are unknown, so the ways to start one are always shown.
   const closing = [
     d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent) : '',
     dirLine,
-    noTask ? noTaskText(d, dir, { resume, free }) : '',
+    noTask ? noTaskText(d, dir, { resume, free, check: waits }) : '',
     listed ? `Your active tasks (${d.agent}), newest update first:` : '',
   ]
     .filter(Boolean)
@@ -448,6 +496,16 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
     : '';
   const titleMax = squeeze.shortTitles ? SHORT_TITLE : Infinity;
   const line = (t: ListItem): string => taskLine(t, titleMax);
+  // An own task on a board with checks: the newest comment of another name under it (a checker's reason to return it, B-U6).
+  const feedback = new Map((d.roles?.feedback ?? []).map((f) => [f.id, f.comment]));
+  const ownLine = (t: ListItem): string => {
+    const c = feedback.get(t.id);
+    return c === undefined ? line(t) : `${line(t)}\n    last comment by ${c.actor}: ${fit(commentLine(c), titleMax)}`;
+  };
+  const waitHead = !waits ? '' : noTask ? '\nWaiting for your check:' : `\nWaiting for your check; check one: ${checkCommand(d, dir)}`;
+  // The note goes before the command, so the copied command line stays valid in a shell (LB-11 b).
+  const waitMore = (n: number): string => `\n... ${n} more (rows with handed_in): laneboard list${d.roles?.checks.map((st) => ` --status ${shellQuote(st)}`).join('') ?? ''}${dir} --json`;
+  const roles = rolesLine(d);
   // The holder differs only in its session part: `<base>:<session>`.
   const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${fit(t.title, titleMax)}`;
   // Without a task in progress the numbered ways above carry the claim command, so the header gives no second order.
@@ -460,9 +518,11 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   // /clear or a restart most likely resumes), the first free tasks; each with its footer.
   const freeKeep = free ? freeHead.length + sectionMin(d.unassigned, d.unassigned_total, freeMore, PRIME_MIN_FREE, line) : 0;
   const resumeKeep = resume ? resumeHead.length + sectionMin(d.resumable, d.resumable.length, resumeMore, 1, resumeLine) : 0;
-  const ownKeep = listed ? sectionMin(d.tasks, d.tasks.length, more, 1, line) : 0;
-  // Five newlines join the six blocks below.
-  const others = head.length + BOARD_DATA_NOTE.length + storeHead.length + warning.length + closing.length + 5 + ownKeep + resumeKeep + freeKeep;
+  const ownKeep = listed ? sectionMin(d.tasks, d.tasks.length, more, 1, ownLine) : 0;
+  const waiting = d.roles?.waiting ?? [];
+  const waitKeep = waits ? waitHead.length + sectionMin(waiting, d.roles?.waiting_total ?? 0, waitMore, 1, line) : 0;
+  // Five newlines join the six blocks below (a sixth one before the roles line, when there is one).
+  const others = head.length + BOARD_DATA_NOTE.length + storeHead.length + warning.length + closing.length + 5 + (roles ? roles.length + 1 : 0) + ownKeep + waitKeep + resumeKeep + freeKeep;
   if (squeeze.cutLines && others + status.length + fields.length > PRIME_MAX_CHARS) {
     // The board goes first here (cutBoard is on); the field line gets at most a third of the room, the status line the rest.
     const left = Math.max(0, PRIME_MAX_CHARS - others - 1);
@@ -474,9 +534,10 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const boardRoom = PRIME_MAX_CHARS - required;
   // A board line cut below a few words says nothing: then it goes.
   if (squeeze.cutBoard && board.length > boardRoom) board = boardRoom >= 12 ? fit(board, boardRoom) : '';
-  let text = [head, BOARD_DATA_NOTE, `${storeHead}${board}${warning}`, status, fields, closing].join('\n');
+  let text = [head, BOARD_DATA_NOTE, `${storeHead}${board}${warning}`, status, fields, ...(roles ? [roles] : []), closing].join('\n');
   // The agent's own tasks first; the later sections keep their room.
-  if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, resumeKeep + freeKeep, 1, line);
+  if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, waitKeep + resumeKeep + freeKeep, 1, ownLine);
+  if (waits) text = withTasks(text + waitHead, waiting, d.roles?.waiting_total ?? 0, waitMore, resumeKeep + freeKeep, 1, line);
   if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeKeep, 1, resumeLine);
   if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0, PRIME_MIN_FREE, line);
   return { text, fits: required + board.length <= PRIME_MAX_CHARS };

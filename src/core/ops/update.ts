@@ -427,21 +427,72 @@ function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string
   const review = reviewStatuses(config);
   if (review.length === 0) return;
   const final = finalStatuses(config.statuses)[0] ?? '';
-  const by = reviewers(config);
-  checkAuthorMove(config, task, actor, to);
-  if (to === final && by.length > 0 && !by.includes(actor)) throw notChecker(task.id, task.assignee, actor, by);
-  if (to === final && takes) throw handInToFirstCheck(task.id, final, review, final, actor, 'update');
+  const refusal = reviewMoveRefusal(config, task, actor, to, takes);
+  if (refusal === 'author') throw handInToFirstCheck(task.id, to, review, final, actor, 'update');
+  if (refusal === 'not-checker') throw notChecker(task.id, task.assignee, actor, reviewers(config));
+  if (refusal === 'holder') throw handInToFirstCheck(task.id, final, review, final, actor, 'update');
   if (handedIn(task)) warnings.push(handInLostWarning(task.id));
+}
+
+// Why a board with checks refuses to put `task` into `to` by `actor` (P1, P2): 'author' - the author of the work (authorMoves);
+// 'not-checker' - the final status by a name not in review.by (when set); 'holder' - the final status by the actor that holds the
+// task after the write (`takes`). undefined: allowed, and always without checks (0.3.1, ADR §22). One rule for update, claim (each
+// with its error, checkReviewMove) and create and import of a task right into a later check or the final status (S6m).
+export type ReviewRefusal = 'author' | 'not-checker' | 'holder';
+
+// The refusal of the move, or undefined (see ReviewRefusal).
+export function reviewMoveRefusal(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean): ReviewRefusal | undefined {
+  if (reviewStatuses(config).length === 0) return undefined;
+  if (authorMoves(config, task, actor, to)) return 'author';
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const by = reviewers(config);
+  if (to === final && by.length > 0 && !by.includes(actor)) return 'not-checker';
+  if (to === final && takes) return 'holder';
+  return undefined;
+}
+
+// Why a refusal of reviewMoveRefusal, for the messages of create and import (S6m): the checks of the board, who sets `to`.
+export function reviewRefusalText(config: ConfigT, refusal: ReviewRefusal, to: string): string {
+  const review = reviewStatuses(config);
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const checks = `on this board ${to} is set by a check (${checksLine(review, final)})`;
+  if (refusal === 'not-checker') return `${checks}, only by ${reviewers(config).join(', ')} (config review.by)`;
+  return `${checks}: the author of the work hands it in to ${review[0] ?? ''} with finish, a checker passes it on and accepts it`;
+}
+
+// Does `task` wait in a check that `actor` may make (prime's queue for checkers, B-U6): it is in a check status, handed in or passed
+// on (an unassigned one by its events, as checkerFinish), `actor` is in review.by (when set), is not the author of the work (workedOn)
+// and did not pass it on into this status itself (its finish there changes nothing).
+export function waitsForCheck(config: ConfigT, task: TaskT, actor: string): boolean {
+  if (!reviewStatuses(config).includes(task.status)) return false;
+  if (!handedIn(task) && !(task.assignee === null && waitingByEvents(task))) return false;
+  const by = reviewers(config);
+  return (by.length === 0 || by.includes(actor)) && !workedOn(task, actor) && passedBy(task) !== actor;
+}
+
+// The status work goes on in before the checks (P1, A-U3): the one before the first check; undefined without checks or when the
+// first check follows the first status (new tasks start there).
+export function workStatusBeforeChecks(config: ConfigT): string | undefined {
+  const at = config.statuses.indexOf(reviewStatuses(config)[0] ?? '');
+  return at > 1 ? config.statuses[at - 1] : undefined;
+}
+
+// Is this the move the author of the work never makes on a board with checks (review r2): `actor` worked on the task (workedOn) and
+// `to` is a later check or the final status. False without checks (0.3.1, ADR §22).
+function authorMoves(config: ConfigT, task: TaskT, actor: string, to: string): boolean {
+  const review = reviewStatuses(config);
+  if (review.length === 0) return false;
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  return (to === final || review.indexOf(to) > 0) && workedOn(task, actor);
 }
 
 // The one author rule of a board with checks (review r2), for update, claim and a checker's finish alike: the author of the work
 // (workedOn) neither passes the task on to a later check nor sets the final status; it hands in to the first check with finish.
 // INVALID_VALUE with that finish as the fix. Without checks nothing applies (0.3.1, ADR §22).
 function checkAuthorMove(config: ConfigT, task: TaskT, actor: string, to: string): void {
+  if (!authorMoves(config, task, actor, to)) return;
   const review = reviewStatuses(config);
-  if (review.length === 0) return;
-  const final = finalStatuses(config.statuses)[0] ?? '';
-  if ((to === final || review.indexOf(to) > 0) && workedOn(task, actor)) throw handInToFirstCheck(task.id, to, review, final, actor, 'update');
+  throw handInToFirstCheck(task.id, to, review, finalStatuses(config.statuses)[0] ?? '', actor, 'update');
 }
 
 // The checks of a board as one line for messages: `code_review -> qa -> done`.
