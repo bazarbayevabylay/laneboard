@@ -1,29 +1,37 @@
 # laneboard
 
-laneboard — доска задач и CLI, с которыми AI-агенты сами ведут свои задачи: заводят, берут, комментируют и закрывают.
-Человек видит те же задачи и может вмешаться в любой момент.
+laneboard is a task board and CLI with which AI coding agents run their own tasks: they create, claim, comment and close them.
+People see the same tasks and can step in at any moment.
 
-Работает с Claude Code, Codex, Cursor, Gemini CLI и OpenCode. Без сервера и базы данных: хранилище — два JSON-файла в папке проекта.
+It works with Claude Code, Codex, Cursor, Gemini CLI, OpenCode and any other MCP client. No server, no database: the store is
+two JSON files in the project folder.
 
-| Что | Где |
+| What | Where |
 |---|---|
-| Гайд для агентов (на английском): установка, полный цикл задачи, ошибки, настройка, импорт | [docs/agent-guide.md](docs/agent-guide.md) |
-| Архитектурное решение и спецификация | [docs/adr/0001-two-json-store-cli-first.md](docs/adr/0001-two-json-store-cli-first.md) |
-| Лицензия | MIT, [LICENSE](LICENSE) |
+| Guide for agents: install, the task cycle, errors, configuration, import | [docs/agent-guide.md](docs/agent-guide.md) (in the package) |
+| What changed in each version | [CHANGELOG.md](CHANGELOG.md) (in the package) |
+| Architecture decision and specification | [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) |
+| Russian version of this file | [README.ru.md](README.ru.md) |
+| License | MIT, [LICENSE](LICENSE) |
 
-## Установка
+Every `sh` block of this file runs in laneboard's test suite, in order, in a fresh project, so the commands and exit codes are real.
 
-Нужен Node.js 22 или новее, macOS или Linux. CLI ставится один раз на машину.
-Проверка версии — `node --version`. Если nvm по умолчанию даёт версию старее, поставьте 22 и сделайте её умолчанием (агенты в новых терминалах берут именно её): `nvm install 22 && nvm alias default 22 && nvm use 22`.
+## Install
 
-Глобальный пакет ставится в ту версию Node, что активна сейчас: после смены версии CLI ставят заново.
+Node.js 22 or newer, on macOS or Linux. The CLI is installed once per machine.
+Windows is not supported: npm refuses the package there with `EBADPLATFORM`.
+On an older Node.js every command prints one warning line (`warnings` with `--json`): install Node.js 22 and the CLI again.
+
+Check with `node --version`. When nvm's default is older, install 22 and make it the default (agents start new shells with it):
+`nvm install 22 && nvm alias default 22 && nvm use 22`. A global package belongs to the Node.js version active at install time:
+after switching versions, install the CLI again.
 
 <!-- guide:skip installs globally -->
 ```sh
 npm i -g laneboard
 ```
 
-Без реестра npm — из git: склонировать, собрать и поставить из папки или из архива.
+Without the npm registry, install from git: clone, build, then install the folder or a tarball.
 
 <!-- guide:skip installs globally -->
 ```sh
@@ -32,218 +40,314 @@ cd laneboard && npm ci && npm run build
 npm i -g .
 ```
 
-| Способ | Что получится |
+| Way | Result |
 |---|---|
-| `npm i -g .` | ссылка на папку клона: `git pull && npm ci && npm run build` обновляет CLI |
-| `npm pack && npm i -g ./laneboard-*.tgz` | копия из архива: папку клона потом можно удалить |
+| `npm i -g .` | a link to the clone: `git pull && npm ci && npm run build` updates the CLI |
+| `npm pack && npm i -g ./laneboard-*.tgz` | a copy from the tarball: the clone can be deleted afterwards |
 
-Проверка: команда печатает версию.
+Check: the command prints the version (`-v` too). `laneboard` alone prints the help.
 
 ```sh
 laneboard --version
 ```
 
-## Быстрый старт
+## Quick start
 
-Три шага в корне проекта. `init` создаёт доску `./.laneboard` и заносит её в реестр машины, `setup` подключает харнес, дальше агент работает сам.
-У доски есть имя и описание в одну строку: чей проект и что за работа. Префикс id выводится из имени, до 4 символов: инициалы слов (`my-web-app` → `MWA-1`) или начало одного слова (`laneboard` → `LANE-1`), число в конце сохраняется (`agent-2` → `AGE2`).
-Свой префикс — `init --prefix WEB`; пока на доске нет ни одной задачи, его меняет `laneboard config --prefix WEB`. Префикс не должен совпадать с префиксом другой доски на машине.
-Это проверяют `init`, `config` и `setup`: копия папки проекта вместе с `.laneboard` в реестр не попадёт, пока у неё не будет своего префикса.
+Two commands in the project root. `init` creates the board `./.laneboard` and adds it to this machine's registry; `setup` connects a
+harness; from then on the agent works by itself.
+
+A board has a name and a one-line description: whose project, what work. The id prefix comes from the name, at most 4 characters:
+the initials of its words (`my-web-app` -> `MWA-1`) or the start of one word (`laneboard` -> `LANE-1`), a trailing number kept.
+Your own prefix: `init --prefix WEB`; `laneboard config --prefix WEB` changes it while the board has no task. It must differ from every
+other board's prefix on this machine (`init`, `config` and `setup` check it).
 
 ```sh
-laneboard init --name web --description "Интернет-магазин ACME: витрина и корзина"
+laneboard init --name web --description "ACME web shop: catalog and cart"
 laneboard setup claude-code
 ```
 
-Другой харнес — то же с его именем: `codex`, `cursor`, `gemini`, `opencode`. В один проект можно подключить несколько.
+This is the agent's work; it runs the same commands itself:
+
+```sh
+laneboard create "Fix the redirect after login" --status todo --assignee dev-1 --as dev-1 --json
+laneboard claim WEB-1 --status in_progress --as dev-1 --json
+laneboard comment WEB-1 "Cause: the redirect drops the query string" --as dev-1 --json
+laneboard update WEB-1 --append-description "Repro: log in from /cart" --as dev-1 --json
+laneboard finish WEB-1 --result "Fixed, redirect test added" --as dev-1 --json
+laneboard list --scope all --json
+```
+
+`create` needs `--status` (no default): without it the error's `fix` is the same command with the first configured status.
+The title is an argument, not an option: `create --title X` fails with the right command as its fix.
+Every write replies short: `id`, the new `rev`, `status`, `assignee` (`attach` adds `attachment`, `finish` adds `commit`);
+the whole task is `laneboard get WEB-1` or `--full` on the write. People read better without `--json`: `list`, `get`, `events`, `view`.
+
+## Connect a harness
+
+`laneboard setup <harness>` in the project root registers the MCP server `laneboard`, adds a 3-line instruction block and pins the
+project to its board. Several harnesses per project are fine. A second run reports `unchanged`; `--dry-run` writes nothing.
 
 ```sh
 laneboard setup codex
 ```
 
-Что делает `setup`:
+| Harness | MCP entry | Instructions | Board pin |
+|---|---|---|---|
+| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (kept out of git by `.git/info/exclude`), plus the SessionStart and PostToolUse hooks in `.claude/settings.json` |
+| codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<board>` in the instructions; the entry forwards `LANEBOARD_DIR` |
+| cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <board>` in the entry and the instructions |
+| gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <board>` in the entry and the instructions |
+| opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <board>` in the entry and the instructions |
 
-| Что | Где |
-|---|---|
-| MCP-сервер `laneboard` | `.mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`, `opencode.json`; для Codex — глобальный `~/.codex/config.toml` |
-| Блок из трёх строк с правилами: что за инструмент, какое хранилище, «без задачи не работать» | `CLAUDE.md`, `AGENTS.md` или `GEMINI.md`, между метками `laneboard:start` / `laneboard:end` |
-| Хуки Claude Code: правила в начале сессии, напоминание после правки файла без задачи | `.claude/settings.json` |
-| Привязка проекта к хранилищу и имя агента по умолчанию (Claude Code) | `env.LANEBOARD_DIR` и `env.LANEBOARD_DEFAULT_AGENT` в `.claude/settings.local.json`, который `setup` исключает из git блоком в `.git/info/exclude`; в папке внутри чужого git-репозитория и в корне репозитория, где есть другие доски, — в `.claude/settings.json` |
-| Привязка для остальных харнесов | `mcp --dir` в записях Cursor, Gemini, OpenCode, строка `LANEBOARD_DIR=…` в блоке |
+- Claude Code hooks: SessionStart prints the rules, the board and your tasks (`laneboard prime --hook`); after `Edit`, `Write`,
+  `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
+- A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
+- Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
+  `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks.
+- A symlink inside the project is followed (`CLAUDE.md -> AGENTS.md` puts the block into `AGENTS.md`). A link leading outside the
+  project, a dangling one or one into `.git` is refused (`SETUP_CONFLICT`), nothing written.
+- Text you put between `<!-- laneboard:start -->` and `<!-- laneboard:end -->` is never deleted: setup refuses and names the lines.
+- `.git/info/exclude` gets a laneboard block: the local settings, `*.laneboard.bak` backups and `.laneboard-created` markers stay out of git.
 
-Агенту больше ничего не нужно: правила приходят из блока и из `laneboard prime`.
-Так выглядит работа агента — те же команды он выполняет сам:
+## Any MCP client
 
-```sh
-laneboard create "Починить редирект после входа" --status todo --assignee dev-1 --as dev-1 --json
-laneboard claim WEB-1 --status in_progress --as dev-1 --json
-laneboard comment WEB-1 "Причина: редирект теряет query string" --as dev-1 --json
-laneboard update WEB-1 --append-description "Шаги: войти со страницы /cart" --as dev-1 --json
-laneboard finish WEB-1 --result "Исправлено, тест на редирект добавлен" --as dev-1 --json
-laneboard list --scope all --json
+Any client that starts stdio MCP servers can use laneboard. Give the server the board and a default name:
+
+```json
+{ "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
 ```
 
-У `create` статус обязателен, значения по умолчанию нет: без `--status` — ошибка `USAGE`, её `fix` — та же команда с первым статусом из конфига (обычно `todo`).
-Почему и где решено — ADR-0001 §0 и §23.
-
-Подзадача — `create … --parent WEB-1`: только задача этой же доски; цикл и id другой доски — ошибка с `fix`. `get WEB-1` показывает `children`, `list --parent WEB-1` — прямых детей, `update WEB-2 --no-parent` делает задачу верхнего уровня.
-Удаление родителя снимает `parent` у детей; закрыть или архивировать родителя с открытыми детьми можно, с предупреждением.
-`update WEB-1 --append-description "…"` дописывает абзац в конец описания без `--expected-rev`; `--description` по-прежнему заменяет текст целиком.
-
-`finish` закрывает задачу одной записью: комментарий-итог, ссылка на текущий коммит git (`commit=<HEAD>`, если папка в git-репозитории; `--no-commit` — без неё), затем финальный статус.
-Комментарий-итог помечен `result: true` в данных события (`get` пишет `commented (result)`); `comment` такой метки не ставит, так итог отличим от заметок.
-`--status` — любой статус, кроме первого: `--status review` сдаёт работу на проверку, финальный ставит оркестратор.
-Закрыть может исполнитель задачи или кто угодно, если исполнителя нет. `finish` исполнителя в нефинальный статус сдаёт задачу: в событии `status` — `handed_in: true`. Чужую задачу `finish` только принимает, и только сданную так: последнее событие `status` в её текущий статус — `finish` исполнителя с `handed_in`. Тогда — в финальный статус, итог-комментарий без ссылки на коммит (коммит привязал исполнитель); исполнитель остаётся, в событии `status` — `accepted: true` и имя принявшего, в ответе `accepted: true`. Задача в работе или переведённая через `update` (и сданная в 0.2.0, ещё без метки) — `ALREADY_CLAIMED` с fix: попросить исполнителя сдать через `finish --status <статус>`, или закрыть самому `laneboard update <ID> --status done`. Повторная приёмка закрытой задачи ничего не меняет и предупреждает. Повторный `finish` исполнителя в тот же статус (или закрытой задачи) статус и итог не меняет и предупреждает, но новый коммит добавляет ссылкой.
-Если есть незакоммиченные изменения отслеживаемых файлов (в том числе добавленные через `git add`) или коммит HEAD старше `claim`, `finish` предупреждает: ссылка указывает на коммит без вашей работы — закоммитьте и повторите `finish` или передайте `--no-commit`.
-Это `finish` спрашивает у самого git (`rev-parse`, `log`, `status`, по 2 секунды); нет git, он не ответил или упал — задача всё равно закрывается, с предупреждением «could not check git».
-`--expected-rev` не обязателен: он нужен только для правок поверх прочитанного (описание, поля); статус, комментарий, `claim` и `finish` — без него и без `get` ради rev.
-
-Ответ записи короткий: `id`, новый `rev`, `status`, `assignee` (после `attach` ещё `attachment`, после `finish` — `commit`); без `--json` — одна строка.
-Задача целиком — `laneboard get WEB-1` или `--full` у записи (в MCP — `full: true`).
-Человеку удобнее без `--json`: `laneboard list`, `laneboard get WEB-1`, `laneboard events`, а доску целиком показывает `laneboard view` (ниже).
-
-## Имена агентов
-
-Каждая запись подписана именем агента. Имя берётся по порядку: `--as` (в MCP — `actor`), `LANEBOARD_AGENT`, имя по умолчанию.
-
-| Что | Как |
-|---|---|
-| Имя по умолчанию в Claude Code | `claude-code@<git user.name или пользователь ОС>:<8 символов id сессии>`; основу пишет `setup`, id сессии Claude Code даёт сам (`CLAUDE_CODE_SESSION_ID`) |
-| Две параллельные сессии без имён | получают разные имена, поэтому `claim` второй сессии даёт `ALREADY_CLAIMED` |
-| Откуда имя у записи | в каждом событии задачи поле `actor_source`: `explicit` или `default`; `get` помечает такое имя `(default name)` |
-| Сабагенты одной сессии | делят её имя по умолчанию, поэтому передают своё `--as`; `prime` под таким именем всегда начинает с этого, а свободные задачи (без исполнителя) показывает с командой `claim` |
-| После `/clear` | у сессии новый id, значит и новое имя: своя задача в работе выглядит чужой. `prime` показывает незаконченные задачи с той же основой имени и другим id сессии («Your earlier sessions», с возрастом последнего обновления), `claim <ID> --resume` забирает такую; в событиях — `assigned` с `resumed: true`. Забирается только задача, которую прежняя сессия взяла сама под именем по умолчанию (в событии `actor_source: default`); явные имена, даже вида `claude-code@ann:reviewer`, так не забираются, и `ALREADY_CLAIMED` `--resume` не предлагает. Хук SessionStart (`prime --hook`) показывает этот раздел только после `/clear`. Сжатие контекста и `claude --resume <id>` id не меняют |
-| Две живые сессии одного пользователя | у них одна основа имени, поэтому `--resume` — только для своей задачи, которую сессия сама делала до `/clear` и которая совпадает с текущим запросом |
-| Codex, Cursor, Gemini, OpenCode | имени по умолчанию нет: id сессии они не дают, общее имя склеило бы параллельные сессии; нужно `--as` |
+- Call `task_prime` first: it returns the rules for MCP, the statuses in order, the declared fields and your and the free tasks.
+- Without `--dir` the server finds the board from the folder the client starts it in. A server that finds none answers every call with
+  `STORE_NOT_FOUND`: its `fix` says which `args` to set, and `details.boards` lists the boards of this machine.
+- Your name on writes: the tool's `actor`, else `mcp --as`, else `LANEBOARD_AGENT`, else the session's default name.
+- The client cannot find `laneboard`? Put the absolute path from `command -v laneboard` into `command`; with nvm that path changes
+  with the Node.js version, so update it after switching.
+- 12 tools: `task_prime`, `task_create`, `task_get`, `task_list`, `task_update`, `task_claim`, `task_comment`, `task_finish`,
+  `task_attach`, `task_archive`, `task_restore`, `task_events`. `init`, `config`, `setup`, `delete`, `redact`, `import` and `doctor` are CLI-only.
 
 ```sh
-LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "Без имени" --status todo --assignee claude-code@ann:a1b2c3d4 --json
+laneboard mcp --dir .laneboard --as codex-1 < /dev/null
+```
+
+## Agent names
+
+Every write is signed with a name: `--as` (MCP `actor`), else `LANEBOARD_AGENT`, else the session's default name.
+Names use letters, digits and `. _ : @ -`. Names are self-chosen, so every rule about who may do what guards against an agent's
+mistake, not against a hostile agent.
+
+| What | How |
+|---|---|
+| Default name in Claude Code | `claude-code@<base>:<first 8 characters of the session id>`; the base is the global git `user.name` (`~/.gitconfig`, read without running git), else the OS user; `setup` writes it, Claude Code gives the session id |
+| Two parallel sessions | two names, so the second one's `claim` fails with `ALREADY_CLAIMED` |
+| Where a name came from | every event has `actor_source`: `explicit` or `default`; `get` marks `(default name)` |
+| Subagents of one session | share its default name, so each passes its own `--as`; `prime` under the default name says so |
+| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age; `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning |
+| Codex, Cursor, Gemini CLI, OpenCode | no default name (no session id): pass `--as` |
+
+```sh
+LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=a1b2c3d4 laneboard create "No name given" --status todo --assignee claude-code@ann:a1b2c3d4 --json
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard prime
 LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboard claim WEB-2 --resume --json
 ```
 
-## Просмотр досок
+## Finishing work
 
-`laneboard view` показывает доску человеку: колонки по статусам из конфига, в карточке id, заголовок, исполнитель и сколько задача в этом статусе.
-В колонке сверху задачи с меньшим `priority` (0 — самый важный, без поля — ниже), дальше — недавно изменённые. Имя по умолчанию показано коротко, без харнеса: `abylay:f92f65da`.
-Фильтры — `--assignee`, `--label`, `--text`. В узком терминале колонки становятся списком по статусам; без терминала и с `NO_COLOR` цветов нет.
-Под карточкой — последний комментарий одной строкой: `> <текст>`, итог `finish` — `= <текст>`; `list` печатает ту же строку под задачей.
-Во второй строке карточки метки: `waiting-owner` (задача ждёт ответа владельца), `^WEB-3` у подзадачи, `2/5` у родителя (закрыто/всего).
-Активные задачи — не в финальном статусе: внизу «3 active tasks, 12 done». В колонке финального статуса — 5 последних по обновлению и `+7 more: laneboard list --status done` (с фильтрами и `--dir`/`--board` этого `view`); сами они не архивируются — `laneboard archive`.
-`laneboard view --watch` перерисовывает доску после каждой записи в хранилище, выход — Ctrl+C.
+`finish` is one write: the result comment (`result: true` in its event), a link to the current git commit (`commit=<HEAD>`;
+`--no-commit` skips it, outside git there is none), then the status. Commit first: uncommitted changes or a HEAD older than the claim
+give a warning; git is asked with a 2-second limit, and without git the task is still finished.
+
+- `--status` takes any status but the first. The assignee's `finish` into a status that is not final hands the task in (`handed_in: true`).
+  Somebody else's task `finish` only accepts, into the final status, and only after its assignee handed it in (`accepted: true`).
+- Handed in again into the same status with a new result: the result is recorded; the same result again changes nothing.
+- Git worktree: the board of the main checkout is found by itself, and `finish` there links the worktree's HEAD.
+  `finish` in the main checkout while other worktrees have newer commits warns with the fix; `--commit <sha>` names the commit
+  (MCP: `cwd` = your worktree's absolute path, or `commit`).
+- Subtasks: `create ... --parent WEB-1` (a task of the same board); `get` lists `children`, `list --parent WEB-1` the direct ones.
+- `update --append-description` adds a paragraph without `--expected-rev`; `--description` replaces the text and keeps the old one in its event.
+- `--expected-rev` is needed only for edits on top of what you read (description, fields); never for status, comment, claim or finish.
+
+## Orchestrators
+
+### Checks in N steps, reviewers, creators
+
+Optional keys of the board; a board without them works as above. Turning one on writes `config.json` as `laneboard/config@2`
+(laneboard 0.3.x refuses such a board); `none` turns each off again.
+
+```sh
+laneboard config --review-statuses review --reviewers lead --json
+laneboard create "Add rate limiting" --status todo --assignee dev-1 --as lead --json
+laneboard claim WEB-3 --status in_progress --as dev-1 --json
+laneboard finish WEB-3 --result "Limiter added, 5 req/min" --as dev-1 --json
+laneboard finish WEB-3 --status done --result "Self-accept" --as dev-1 --json  # exit 2
+laneboard finish WEB-3 --result "Checked with an admin token" --as lead --json
+laneboard config --review-statuses none --reviewers none --json
+```
+
+- `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
+  to the first check; a checker's `finish` passes the task to the next check and from the last one accepts it into the final status.
+- `--reviewers rev,orch`: who checks (default: anybody but the author of the work). The author never passes on or accepts its own work.
+- `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
+- Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
+- Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the `finish` to run.
+- Boards created before 0.4.0 keep working as they were; checks are turned on only by hand with `laneboard config`.
+
+### Taking over a claimed task
+
+`claim` never takes a task from another name. The orchestrator reassigns it and says why:
+
+```sh
+laneboard create "Profile the export" --status todo --as dev-1 --json
+laneboard claim WEB-4 --status in_progress --as dev-1 --json
+laneboard claim WEB-4 --as dev-2 --json  # exit 4
+laneboard update WEB-4 --assignee dev-2 --as lead --json
+laneboard comment WEB-4 "dev-1 stopped; dev-2 takes over" --as lead --json
+```
+
+### All boards at once
+
+`list --all-boards` merges the tasks of every board of this machine (`--open`: without final statuses). `prime --all-boards` adds a
+section of at most 3000 characters: one counts line per board, then the urgent tasks across boards (`waiting-owner`, handed in, stale =
+in work with no change for 4 hours), each class with `+N more: <command>` when cut. The label `waiting-owner` plus a comment with the
+question marks a task that waits for the owner.
+
+```sh
+laneboard list --all-boards --open --json
+laneboard prime --all-boards --as lead
+```
+
+## Statuses, fields and labels
+
+- Statuses are the board's columns, in order; the last one is final. `init --statuses todo,in_progress,review,done` (the default) sets
+  them, `laneboard config --statuses a,b,c` changes the whole list later (at least 2). A status that active tasks are in is dropped only
+  after they move. Agents never change statuses.
+- Fields are typed extra keys: `laneboard config --field <key>:<type>[:<description>]` declares or changes one (`string`, `number`,
+  `boolean`, `string[]`, `json`), `--drop-field <key>` removes it once no active task holds a value. Number fields take decimal
+  notation only (`-?digits[.digits]`): `0x10`, `1e3` and `Infinity` are refused.
+- Labels: lowercase Latin letters, digits and `. _ -`, starting with a letter or a digit, up to 40 (`ui-bug`, `zone-api`).
+  `zone:api` is refused with a fix that holds the normalized label.
+
+```sh
+laneboard config --field priority:number:"0 = highest" --field area:string --json
+laneboard create "Fix the cart total" --status todo --label ui-bug --field priority=1 --field area=cart --as dev-1 --json
+laneboard create "Zone label" --status todo --label zone:api --as dev-1 --json  # exit 2
+```
+
+## Monorepo and several boards
+
+One board per git repository is the default: a package with its own `AGENTS.md` or `CLAUDE.md` uses the board at the repository root,
+with no warning. Inside git only a `.git` (a nested repository, a submodule) or a board of its own marks another project.
+
+- `setup` in a package pins it to the root's board. Claude Code: the board path goes to the root's `.claude/settings.local.json`
+  (git does not see it); the package commits only the hooks. An older pin in `.claude/settings.json` is moved with a warning: commit that change.
+- A package with a board of its own: `laneboard init --dir packages/<name>/.laneboard`; a plain `init` in a package of a repository
+  whose board lies above is refused with the fix.
+- Which board a command uses: `--dir <path>`, else `LANEBOARD_DIR`, else `.laneboard/` in the current folder or above (a linked git
+  worktree: its main checkout's). Every reply names `store` and `prefix`. Not sure which board is yours: `laneboard boards --json`.
+- `--board <prefix|name|path>` opens another board read-only (`view`, `list`, `get`, `events`, `board`); a write through it is `STORE_READ_ONLY`.
+- A task of another board is linked with `--link task=BILL-1` (`update --add-link`); `get` shows its status.
+
+```sh
+mkdir -p packages/billing
+laneboard init --dir packages/billing/.laneboard --name billing --description "Billing package: invoices and payments"
+laneboard create "Invoice rounding" --status todo --dir packages/billing/.laneboard --as dev-1 --json
+laneboard boards --json
+laneboard list --board BILL --json
+```
+
+## Viewing boards
+
+`laneboard view` draws the board in the terminal: a column per status, cards with id, title, assignee and time in status, the newest
+comment under each (`> text`; finish's result `= text`). Filters: `--assignee`, `--label`, `--text`; `view --watch` redraws after
+every write. `laneboard boards` lists the boards of this machine (`~/.laneboard/boards.json`); a path without a board any more is `missing`.
 
 ```sh
 laneboard view
 laneboard view --assignee dev-1
 ```
 
-`laneboard boards` — все доски машины из реестра `~/.laneboard/boards.json` (его пополняют `init` и `setup`): префикс, имя, задачи по статусам, последнее изменение, путь и описание.
-Путь, где доски больше нет, помечен как `missing`. `--board <префикс|имя|путь>` открывает чужую доску только на чтение: `view`, `list`, `get`, `events`, `board`; запись через `--board` отклоняется (`STORE_READ_ONLY`). Зависимость от задачи другой доски — ссылка `--link task=WEB-3` (`update --add-link`): её проверяют на доске WEB, `get` показывает её статус; id чужой доски в команде этой доски даёт `TASK_NOT_FOUND` с той же командой и `--board WEB` (чтение) или `--dir <её путь>` (запись).
-Имя и описание своей доски меняет `laneboard config --name … --description …`; префикс — `config --prefix`, только пока на доске нет задач (в том числе в архиве).
+### Board in the browser
 
-Статусы — это колонки доски. Их задаёт `init --statuses todo,in_progress,review,done` (это и есть список по умолчанию), а потом меняет владелец или оркестратор: `laneboard config --statuses backlog,todo,in_progress,review,done`. Агенты статусы не меняют.
-`--statuses` — весь список по порядку, последний — финальный. Добавлять и переставлять можно свободно; без опций `config` показывает текущий список.
-Статус, в котором есть активные задачи, убрать нельзя: ошибка называет их число и id, её `fix` — команда `list` с этими задачами. Сначала переведите их (`update <ID> --status …`), потом повторите `config`.
-Задачи в архиве статус не держат: они остаются со старым статусом и читаются как «неизвестный статус». Переименовать статус — добавить новый, перевести задачи, убрать старый.
-Если сменился последний статус, `config` предупреждает: задачи в старом финальном больше не считаются закрытыми, приёмка, «в работе» и «залипшие» считаются от нового.
+The browser board is read-only by design: tasks change through agents, the CLI and MCP. `laneboard board` in the project folder
+prints `http://127.0.0.1:7420/` and serves until Ctrl+C.
 
-Оркестратору — все доски сразу. `list --all-boards` сводит задачи всех досок машины, `--open` убирает финальные статусы.
-`prime --all-boards` дописывает к обычному `prime` сводку до 3000 символов: по каждой доске счётчики и незакрытые задачи, срочные первыми.
-Срочные — `waiting-owner`, сданные на приёмку и «залипшие» (в работе и без изменений 4 часа).
-
-```sh
-laneboard boards
-laneboard list --all-boards --open --json
-laneboard view --board WEB
-laneboard config --description "Интернет-магазин ACME: витрина, корзина и оплата"
-```
-
-## Доска в браузере
-
-`laneboard board` в папке проекта запускает локальный сервер и печатает адрес `http://127.0.0.1:7420/` — его открывают в браузере.
-Доска только для просмотра: задачи меняют агенты и CLI. Сервер работает, пока открыт терминал; остановка — Ctrl+C.
-
-| Что | Как |
+| What | How |
 |---|---|
-| Порт | `--port N`, иначе `board.port` из `config.json` (7420); занят — ошибка `PORT_IN_USE`, `--port 0` берёт свободный |
-| Какая доска первой вкладкой | своя; `--board <префикс\|имя\|путь>` — другая доска машины |
-| Доступ | только с этой машины: адрес 127.0.0.1, новый токен на каждый запуск, страница получает его сама |
-| Обновление | без перезагрузки: запись агента или CLI видна за 1–2 секунды, раз в минуту доска перечитывается (так появляется «Stale») |
-| Сборка | входит в пакет; в клоне из git — после `npm run build`, без неё `/` отвечает, как собрать или переустановить пакет |
+| Port | `--port N`, else `board.port` of `config.json` (7420); busy: `PORT_IN_USE`, `--port 0` takes a free one |
+| Boards | every board of this machine is a tab; `--board <prefix\|name\|path>` opens another one first |
+| Access | this machine only (127.0.0.1), a new token per run |
+| Live | a write shows within 1-2 s; the page reloads data every minute |
 
-Что видно: вкладки всех досок машины, колонки по статусам, фильтры по исполнителю, метке и тексту, свёрнутая финальная колонка и поиск по архиву.
-На карточке — «Waiting for acceptance» (исполнитель сдал задачу `finish` и ждёт приёмки), «Stale» (в работе и без изменений 4 часа), метка `waiting-owner`, `^SHOP-4` у подзадачи, `1/2` у родителя и последний комментарий; у заголовка доски — счётчики этих отметок.
-Панель задачи: поля, родитель и подзадачи, «Result» — итог `finish`, описание, история и вложения: картинки png, jpeg, gif, webp — с превью, остальные файлы — скачать.
+Read the same data over HTTP (a check script, a test): take the token from `<meta name="laneboard-token" content="...">` of the page
+`/`, send it as the header `X-Laneboard-Token`. Read-only `GET` routes: `/api/boards`, `/api/board` (`?board=`, `assignee`, `label`,
+`text`), `/api/tasks` (`scope`, `status`, `limit`, `offset`), `/api/tasks/<id>`; `/api/events` streams changes (token as `?token=`).
 
-## Как устроено хранилище
+## Storage and safety
 
-Всё лежит в `.laneboard/` проекта; `init` кладёт туда `.gitignore`, чтобы хранилище не попало в git.
+Everything lives in the project's `.laneboard/`: `config.json` (settings), `active.json`, `archive.json`, their `.bak` (the previous
+version), `attachments/<id>/`, and a `lock` folder only while a write runs. Every write takes the lock, reads fresh, checks and replaces
+the file atomically, so many agents write at once without losing data; a stale `--expected-rev` is `REV_CONFLICT`.
 
-| Что | Где |
-|---|---|
-| Настройки: префикс id, статусы по порядку (последний — финальный), поля задач с типами | `config.json` — единственный файл, который правят руками |
-| Активные задачи | `active.json` |
-| Архив: закрытые задачи, только чтение | `archive.json` |
-| Предыдущая целая версия каждого файла | `active.json.bak`, `archive.json.bak` |
-| Вложения | `attachments/<id>/<имя>` |
-| Блокировка на время записи | каталог `lock`, существует только пока идёт запись |
-
-Каждая запись проходит одним путём: блокировка → свежее чтение → проверка → атомарная запись (временный файл + rename).
-Поэтому десятки агентов и сессий пишут одновременно без потерь. Устаревший `--expected-rev` даёт `REV_CONFLICT`, а не тихую перезапись.
-
-Архив: `laneboard archive <id>` переносит задачу в `archive.json`, `restore` возвращает. Поиск по архиву — `list --scope all --text <слова>`.
-Вложения: `laneboard attach <id> <файл>`; файлы вроде `.env*` и ключей отклоняются по списку `attachments.deny_names`.
-
-Проверка и ремонт: `laneboard doctor` (только читает), `doctor --fix`, `doctor --restore-backup`.
+- Do not commit `.laneboard/`: `init` puts a `.gitignore` there. A board in git is not supported: a merge can give two tasks one id;
+  `laneboard doctor --fix` gives the later copy a new id and names the tasks that point to the old one.
+- One machine. The lock is a folder, so network drives and folders synced between machines (Dropbox, iCloud) are not supported.
+- A full disk: the command fails with `INTERNAL` and "free disk space"; the board and its `.bak` stay whole. File modes follow your umask.
+- `laneboard doctor` checks and exits 6 while a problem is left; `--fix` repairs what it can (attachment files without metadata go
+  to `attachments/.orphaned/`, never deleted); `--restore-backup` brings back the `.bak` version. A lock with a time in the future is
+  removed after 10 s without change.
+- `laneboard delete <ID> --confirm <ID>` is for people: the archive keeps a trace (id, title, who and when). A pasted secret:
+  `laneboard redact <ID> --text-file <file>` removes it from the task and from the `.bak`; redact first, then delete.
+- Attachments named like keys or secrets (`.env*`, `*.pem`, `id_rsa*`, `*credentials*`, `.npmrc` and more, `attachments.deny_names`)
+  are refused; `*credentials*` may refuse a harmless name too: rename the file.
 
 ```sh
 laneboard doctor
 ```
 
-## Несколько проектов и агентов
+## Moving a folder or a machine
 
-У каждого проекта своё хранилище и свой префикс id: `WEB-12` и `API-12` не спутать. Ответ каждой команды называет `store` и `prefix`.
+A moved project folder: run `laneboard setup <harness>` in the new folder (it re-pins), then `laneboard boards --forget <old path>/.laneboard`.
+Another machine: copy the project with its `.laneboard/`, install the CLI, run `laneboard setup <harness>` there: the board path in the
+project's files is this machine's.
 
-| Что | Как |
-|---|---|
-| Какое хранилище берёт команда | `--dir <путь>`, иначе `LANEBOARD_DIR`, иначе `.laneboard/` в текущей папке или выше |
-| Проект привязан к своему хранилищу | `setup` записывает путь (`env`, `--dir`, блок инструкций), поиск вверх ему не нужен |
-| Хранилище нашлось выше, а между ним и текущей папкой есть признак своего проекта (`.git`, `.claude`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) | каждая команда предупреждает: это доска другого проекта; хук Claude Code не просит завести в ней задачу |
-| Обычная подпапка того же проекта | без предупреждения |
-| Агент не уверен, какая доска его | `laneboard boards --json`, выбрать по описанию и пути; своей нет — `init --name … --description …` в корне своего проекта |
-| Несколько агентов в одном хранилище | у каждого своё имя (см. «Имена агентов»); `claim` не даёт взять чужую задачу (`ALREADY_CLAIMED`) |
+## Import existing tasks
+
+`laneboard import markdown <folder>` (files with YAML frontmatter), `import json <folder|file>` (task files with history) and
+`import checklist TODO.md --status todo` (a Markdown TODO list: an item is a task, `[x]` the final status, an indented item a subtask).
+An unknown key or status stops the import and lists every value; `--dry-run` writes nothing; a second run skips what it imported.
+Options and examples: [docs/agent-guide.md](docs/agent-guide.md#4-migrate-import-existing-tasks).
 
 ```sh
-mkdir -p agents/reviewer
-(cd agents/reviewer && laneboard init --prefix REV --description "Агент-ревьюер: замечания к PR" && laneboard setup gemini)
-laneboard list --dir agents/reviewer/.laneboard --json
-laneboard boards --json
+printf '# TODO\n- [x] Set up the schema\n- [ ] Dark mode toggle\n  - [ ] Keep the choice after a reload\n' > TODO.md
+laneboard import checklist TODO.md --status todo --as dev-1 --json
 ```
 
-## Перенос существующих задач
+## Uninstall
 
-`laneboard import markdown <папка>` переносит md-файлы с YAML-frontmatter, `laneboard import json <папка|файл>` — JSON-файлы задач с историей.
-Неизвестный ключ или статус останавливает импорт со списком всего найденного, `--dry-run` ничего не пишет, повторный запуск пропускает уже перенесённые файлы.
-Флаги и примеры — в [docs/agent-guide.md](docs/agent-guide.md#4-migrate-import-existing-tasks).
-
-## Удаление
-
-`setup <харнес> --remove` убирает только то, что записал `setup`, и возвращает исходные байты файлов, которые были до него.
-Каталог удаляется, только если его создал `setup` и в нём больше ничего нет.
+`setup <harness> --remove` takes out only what setup wrote and restores the bytes files had before it. Codex keeps the global entry
+while another project of the machine still uses it; `setup codex --remove --global` removes it anyway.
 
 ```sh
 laneboard setup codex --remove
 laneboard setup claude-code --remove
 ```
 
-Затем, если инструмент больше не нужен: удалить папку `.laneboard/` проекта и сам CLI (`npm uninstall -g laneboard`).
+Then, if laneboard is no longer needed: delete the project's `.laneboard/` and the CLI (`npm uninstall -g laneboard`).
 
-## Ограничения
+## Upgrading from 0.3.x
 
-| Что | Почему |
+- Boards of 0.3.x open as they are: store and `config.json` keep their format; the new config keys (checks, reviewers, creators) are
+  optional, and `config@2` is written only when you turn one on. 0.3.x reads every board that has none of them.
+- MCP: `task_delete` is gone (delete is for people, CLI-only); `task_prime` is new.
+- Re-run `laneboard setup <harness>` in each project: the instruction block, the hook matcher and the Claude Code pin are updated in place.
+- The new `deny_names` defaults apply to boards created by 0.4.0; an older board keeps its list.
+
+## Limits
+
+| What | Why |
 |---|---|
-| Только macOS и Linux | атомарный rename и блокировка проверены только там; Windows нет в CI |
-| Одна машина | блокировка — каталог в файловой системе; сетевые диски и синхронизация папок между машинами не поддерживаются |
-| До ~10 000 задач в хранилище | каждая команда читает файл целиком; старые задачи стоит архивировать |
-| Абсолютный путь хранилища в файлах проекта | Claude Code в корне репозитория (без вложенных досок) или без git — путь только в `.claude/settings.local.json`; в остальных случаях и для других харнесов `setup` пишет путь этой машины в файлы проекта, на другой машине его нужно запустить заново |
-| Доска в браузере только для просмотра | V1: правят задачи агенты, CLI и MCP; перетаскивания, правки и загрузки файлов в браузере нет |
+| macOS and Linux only | the atomic rename and the lock are tested there; Windows is not in CI |
+| One machine, local disks | the lock is a folder in the file system |
+| Up to about 10 000 tasks per board | every command reads the file whole; archive old tasks |
+| The board path of this machine in project files | `setup` pins it; on another machine run `setup` again |
+| The browser board is read-only | agents, the CLI and MCP change tasks |

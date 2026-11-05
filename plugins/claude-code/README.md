@@ -1,10 +1,10 @@
 # laneboard plugin for Claude Code
 
-laneboard is a task board and CLI for AI coding agents. This plugin gives Claude Code three things:
+laneboard is a task board and CLI for AI coding agents. This plugin gives Claude Code four things:
 
 - the `laneboard` skill with the agent rules (how to claim, comment, finish, attach and archive tasks);
-- a SessionStart hook that runs `laneboard prime --hook`, so every session starts with the rules and your active tasks (after `/clear` also your own unfinished task of the session before, with `claim --resume`) (in a project without a laneboard board it prints one neutral line: no board here, and how to create one if you want it);
-- a PostToolUse hook after Edit/Write that runs `laneboard prime --edit-hook`: a one-line reminder for Claude when no task is in progress (it never blocks, and prints nothing otherwise);
+- a SessionStart hook that runs `laneboard prime --hook`, so every session starts with the rules and your active tasks (after `/clear` or a restart also your own unfinished tasks of earlier sessions, with `claim --resume`); in a project without a laneboard board, or with a board not in this machine's registry (a cloned one), it prints one neutral line;
+- a PostToolUse hook after Edit, Write, MultiEdit and NotebookEdit that runs `laneboard prime --edit-hook`: a one-line reminder for Claude when no task is in progress (it never blocks, and prints nothing otherwise);
 - the laneboard MCP server (`laneboard mcp`, tools `task_*`).
 
 The plugin does not install the CLI. Install it first: `npm i -g laneboard`, then in your project root run
