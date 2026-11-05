@@ -155,7 +155,7 @@ export async function runCli(io: CliIo): Promise<number> {
     const discovery = discoveryFor(typeof values.dir === 'string' ? values.dir : undefined);
     if (positionals.length < command.args.min || positionals.length > command.args.max) {
       throw new LaneboardError('USAGE', `wrong number of arguments for ${command.name} (got ${positionals.length}): laneboard ${command.usage}`, {
-        fix: argumentsFix(command.name, rest, parsed.tokens, command.usage, command.args, command.required?.(discovery)),
+        fix: argumentsFix(command.name, rest, parsed.tokens, command.usage, command.args, command.required?.(discovery), command.textOption),
       });
     }
     const board = typeof values.board === 'string' ? values.board : undefined;

@@ -232,8 +232,9 @@ interface ArgvToken {
   index: number;
 }
 
-// A wrong number of arguments: the missing ones as placeholders at the end, or the extra words joined into the text (title, text) or dropped;
-// options the command cannot run without (`required`, like create's `--status <first status>`) are added when absent, so one fix runs.
+// A wrong number of arguments: the missing ones as placeholders at the end, or the extra words joined into the text (title, text), into
+// the command's text option when argv lacks it (`textOption`: finish's `--result=<words>`, S6w U4), or dropped; options the command
+// cannot run without (`required`, like create's `--status <first status>`) are added when absent, so one fix runs.
 export function argumentsFix(
   command: string,
   args: readonly string[],
@@ -241,13 +242,24 @@ export function argumentsFix(
   usage: string,
   count: { min: number; max: number },
   required: ReadonlyArray<{ name: string; value: string }> = [],
+  textOption?: string,
 ): string {
   const names = usageArgs(usage);
   const at = tokens.filter((t) => t.kind === 'positional').map((t) => t.index);
   const added = required.filter((r) => !tokens.some((t) => t.kind === 'option' && t.name === r.name)).flatMap((r) => [`--${r.name}`, r.value]);
   let out: string[];
   let placeholders: number[];
-  if (at.length < count.min) {
+  const given = (name: string): boolean => tokens.some((t) => t.kind === 'option' && t.name === name);
+  if (at.length > count.max && textOption !== undefined && !given(textOption)) {
+    // `finish X -- "- added f1.txt"`: the extra words are the text; one `--name=<text>` token keeps a text that starts with "-", and a
+    // `--` left with nothing after it goes.
+    const extra = at.slice(count.max);
+    const kept = args.filter((_, i) => !extra.includes(i));
+    if (kept.at(-1) === '--') kept.pop();
+    const text = [`--${textOption}=${extra.map((i) => args[i]).join(' ')}`];
+    out = [command, ...withOptions(kept, [...text, ...added])];
+    placeholders = addedPlaceholders(added, 2 + optionsAt(kept));
+  } else if (at.length < count.min) {
     const missing = names.slice(at.length, count.min);
     out = [command, ...withOptions(args, added), ...missing];
     placeholders = [...addedPlaceholders(added, 1 + optionsAt(args)), ...addedPlaceholders(missing, out.length - missing.length)];

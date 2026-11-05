@@ -31,7 +31,7 @@ async function handedIn(toQa: boolean): Promise<TestStore> {
   expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'ready'])).code).toBe(0);
   expect((await run(s, 'dev-2', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
   expect((await run(s, 'dev-2', ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data.status).toBe('code_review');
-  if (toQa) expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+  if (toQa) expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
   return s;
 }
 
@@ -103,12 +103,12 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     expect(await task(s, 'API-1')).toMatchObject({ status: 'backlog' });
   });
 
-  it('control: forward requests keep their fix (the next check), and the checker passes on and accepts as before', async () => {
+  it('control: the current check is no pass (S6w I3: the fix reads the task), and the checker passes on and accepts by naming the next status', async () => {
     const s = await handedIn(false);
     const same = await run(s, 'rev', ['finish', 'API-1', '--status', 'code_review', '--result', 'ok']);
-    expect(same.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status qa --result ok --as rev --json' });
-    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
-    expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
+    expect(same.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+    expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'done', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
 });
 
@@ -148,7 +148,7 @@ describe('S6v review r1: a work status between the checks, and a result that sta
 
   it('from qa the work status between the checks is the same return (before the current one), never an acceptance', async () => {
     const s = await inReview();
-    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+    expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
     const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'fixing', '--result', 'no']);
     expect(r.doc.error.fix).toBe('laneboard comment API-1 --as orch -- no && laneboard update API-1 --status fixing --as orch');
   });

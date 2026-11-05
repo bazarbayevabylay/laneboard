@@ -24,6 +24,11 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   already, waits in <check> for the check of <checkers>" with a comment as the fix (ADR §51). Any checker makes any check, both in a
   row too. A checker's `finish` into an earlier check or any work status (also one between two checks) is refused with the return
   for rework as its fix (`comment <ID> --as <checker> -- '<result>' && update --status <work status>`), never an acceptance (ADR §51).
+  A checker names where the task goes: `finish <ID> --status <next>` (the next check, from the last one the final status); without
+  `--status`, with the check the task is in or past the next one it is refused, so a second checker on a stale read never skips a
+  check; that fix only reads the task (`laneboard get <ID>`) and the message names the pass and the return. A task enters a check only
+  with `finish`: `update`, `claim`, `create` and `import` into a check are refused. `prime` prints the ready pass command under each
+  waiting task, `task_prime` `roles.waiting[].next_status` (ADR §51).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming
@@ -63,6 +68,8 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
 - A finish with a new result into the same status records it (rework handed in again); the same result is still "no changes" (ADR §41).
 - `finish --status <first status>`: the fix goes back to the start (`comment ... && update --status <first status>`), no longer
   `finish --status <final status>` (ADR §51).
+- `finish <ID> -- "- text"` (the result as an argument, no `--result`): the fix is `finish <ID> '--result=- text'`, runnable as
+  printed; before, it dropped the text (ADR §51).
 - The instruction block of codex, cursor, gemini and opencode names the board as a prefix of each command and no longer advises
   `export LANEBOARD_DIR` (exported, other projects wrote to this board); `setup` rewrites an older block (ADR §51).
 - The PostToolUse matcher is `Edit|Write|MultiEdit|NotebookEdit` (setup and plugin) (ADR §39).

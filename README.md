@@ -185,23 +185,30 @@ laneboard create "Add rate limiting" --status todo --assignee dev-1 --as lead --
 laneboard claim WEB-3 --status in_progress --as dev-1 --json
 laneboard finish WEB-3 --result "Limiter added, 5 req/min" --as dev-1 --json
 laneboard finish WEB-3 --status done --result "Self-accept" --as dev-1 --json  # exit 2
-laneboard finish WEB-3 --result "Checked with an admin token" --as lead --json
+laneboard finish WEB-3 --result "Checked again" --as lead --json  # exit 2
+laneboard finish WEB-3 --status done --result "Checked with an admin token" --as lead --json
 laneboard config --review-statuses none --reviewers none --json
 ```
 
 - `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
-  to the check the task is in, else the first check; a checker's `finish` passes the task to the next check and from the last one
-  accepts it into the final status.
+  to the check the task is in, else the first check. A checker names where the task goes: `finish <ID> --status <next>` passes it to
+  the next check, from the last one `--status <final>` accepts it.
+- A checker's `finish` without `--status`, with the check the task is in or past the next one is refused: the task may have moved on
+  since your read (two checkers on one queue). Its fix only reads the task (`laneboard get <ID>`); the message names both commands,
+  the pass (`finish --status <next>`) and the return for rework. No fix of a checker's refusal passes on or accepts a task.
 - `--reviewers rev,orch`: who checks (default: anybody but the author of the work). The author never passes on or accepts its own work.
 - Any of the reviewers makes any check, both in a row too: the two lists are not paired (`rev` is not bound to `code_review`).
   A checker's `finish` applies to the check the task is in now, whoever passed it there.
 - A task waiting in a check is handed in: the author's `finish`, `update` or `claim` into another check or the final status gets
   `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment. Never back to an earlier check.
+- A task enters a check only with `finish`, so the checkers always see it: `update`, `claim`, `create` and `import` into a check are
+  refused. The holder's fix is the hand-in with `finish`; a checker's is `get` with both commands; anybody else's a comment to the holder.
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
   A checker's `finish --status` with an earlier check or any work status (also one between two checks) is refused; its fix is that
   comment and update in one line.
-- Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the `finish` to run.
+- Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the ready
+  `pass: laneboard finish <ID> --status <next> ...` under each task (MCP `task_prime`: `roles.waiting[].next_status`).
 - Boards created before 0.4.0 keep working as they were; checks are turned on only by hand with `laneboard config`.
 
 ### Taking over a claimed task

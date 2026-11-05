@@ -141,9 +141,12 @@ describe('S6j tail: create and import right past the checks follow the author ru
       expect(r.stderr).toContain(`on this board ${status} is set by a check (code_review -> qa -> done): the author of the work hands it in to code_review with finish`);
       expect(r.stderr).toContain('fix: laneboard create Mine --status dev --assignee dev-a --as dev-a');
     }
-    // The first check is a hand-in place like update's: allowed; nothing else was written.
-    expect((await run(s, 'dev-a', ['create', 'Review me', '--status', 'code_review', '--assignee', 'dev-a'])).code).toBe(0);
-    expect(await ids(s)).toEqual(['API-1', 'API-2']);
+    // S6w I1: the first check too (a task enters a check only handed in with finish, else no checker sees it); nothing was written.
+    const first = await cli(['create', 'Review me', '--status', 'code_review', '--assignee', 'dev-a', '--as', 'dev-a'], { cwd: s.root });
+    expect(first.code).toBe(2);
+    expect(first.stderr).toContain('on this board code_review is a check (code_review -> qa -> done): a task enters it only handed in by its assignee with finish');
+    expect(first.stderr).toContain("fix: laneboard create 'Review me' --status dev --assignee dev-a --as dev-a");
+    expect(await ids(s)).toEqual(['API-1']);
   });
 
   it('into the final status: a name not in review.by is refused, a checker creates it unassigned or for another name', async () => {
@@ -214,18 +217,20 @@ describe('B-U6 and P1 (6): prime on a board with checks', () => {
     const s = await board();
     expect((await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit'])).code).toBe(0);
     const rev = await primeText(s, 'rev');
-    expect(rev).toContain('2. A task below waits for your check: laneboard finish <ID> --result "<result of your check>" --as rev --json');
-    expect(rev).toContain('Waiting for your check:\n  API-1  [code_review]');
+    // S6w I2: each waiting task with its ready pass command, --status naming where it goes.
+    expect(rev).toContain('2. A task below waits for your check: run the pass command under it (--status names where it goes)');
+    expect(rev).toMatch(/Waiting for your check:\n {2}API-1 {2}\[code_review\] {2}rev \d+ {2}Add endpoint\n {4}pass: laneboard finish API-1 --status qa --result "<result of your check>" --as rev --json/);
     // A name outside review.by and the author see no queue.
     expect(await primeText(s, 'dev-b')).not.toContain('Waiting for your check');
     expect(await primeText(s, 'dev-a')).not.toContain('Waiting for your check');
     // rev passed it to qa: orch's check now, not rev's again.
-    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'ok'])).code).toBe(0);
+    expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'ok'])).code).toBe(0);
     expect(await primeText(s, 'rev')).not.toContain('Waiting for your check');
     expect(await primeText(s, 'orch')).toContain('Waiting for your check:\n  API-1  [qa]');
+    expect(await primeText(s, 'orch')).toContain('    pass: laneboard finish API-1 --status done --result "<result of your check>" --as orch --json');
     const json = (await run(s, 'orch', ['prime'])).doc.data;
     expect(json.roles).toMatchObject({ checks: ['code_review', 'qa'], checkers: ['rev', 'orch'], work_status: 'dev', creators: null, can_create: true, waiting_total: 1 });
-    expect(json.roles.waiting.map((t: { id: string }) => t.id)).toEqual(['API-1']);
+    expect(json.roles.waiting.map((t: { id: string; next_status: string }) => [t.id, t.next_status])).toEqual([['API-1', 'done']]);
   });
 
   it('without review.by anybody but the author of the work sees the queue; the roles line says so', async () => {
@@ -242,7 +247,8 @@ describe('B-U6 and P1 (6): prime on a board with checks', () => {
     expect((await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit'])).code).toBe(0);
     expect((await run(s, 'orch', ['create', 'Own', '--status', 'dev', '--assignee', 'rev'])).code).toBe(0);
     const rev = await primeText(s, 'rev');
-    expect(rev).toContain('Waiting for your check; check one: laneboard finish <ID> --result "<result of your check>" --as rev --json\n  API-1  [code_review]');
+    expect(rev).toContain('Waiting for your check; check one with the pass command under it:\n  API-1  [code_review]');
+    expect(rev).toContain('    pass: laneboard finish API-1 --status qa --result "<result of your check>" --as rev --json');
   });
 
   it('P1 (6): after rev returns the task, prime of dev-a shows rev\'s comment under it, also when dev-a commented later', async () => {

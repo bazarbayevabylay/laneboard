@@ -10,7 +10,7 @@ import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, deletedField, 
 import type { DeletedMark, FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
-import { handedIn, waitsForCheck, workStatusBeforeChecks } from './update.ts';
+import { handedIn, nextAfterCheck, waitsForCheck, workStatusBeforeChecks } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
 
@@ -423,7 +423,8 @@ export interface SummaryRoles {
   // May `assignee` create tasks (no create_by, or a name in it); false without a name on a board with create_by.
   can_create: boolean;
   // Tasks waiting in a check that `assignee` may make (waitsForCheck), oldest update first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
-  waiting: ListItem[];
+  // `next_status`: what the checker's finish names to pass it (S6w I2: finish --status <next_status>, the next check or the final status).
+  waiting: Array<ListItem & { next_status: string }>;
   waiting_total: number;
   // Each task of `assigned` with a comment by another name: the newest such comment (a checker's reason to return it, B-U6).
   feedback: Array<{ id: string; comment: LastComment }>;
@@ -455,7 +456,7 @@ function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archi
     work_status: workStatusBeforeChecks(config) ?? null,
     creators: config.create_by === undefined ? null : [...config.create_by],
     can_create: config.create_by === undefined || (assignee !== undefined && config.create_by.includes(assignee)),
-    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => toListItem(task, archived)),
+    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => ({ ...toListItem(task, archived), next_status: nextAfterCheck(config, task.status) })),
     waiting_total: waiting.length,
     feedback,
   };

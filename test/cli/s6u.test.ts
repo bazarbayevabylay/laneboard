@@ -27,7 +27,7 @@ async function inQa(): Promise<TestStore> {
   expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'ready'])).code).toBe(0);
   expect((await run(s, 'dev-2', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
   expect((await run(s, 'dev-2', ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data.status).toBe('code_review');
-  expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+  expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
   return s;
 }
 
@@ -66,7 +66,7 @@ describe('S6u B-U1: no hand-in back into a check the task passed', () => {
     const fixed = await cli(['comment', 'API-1', '<note for the check>', '--as', 'dev-2', '--json'], { cwd: s.root });
     expect(fixed.code).toBe(0);
     expect(await task(s, 'API-1')).toMatchObject({ status: 'qa' });
-    expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
+    expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'done', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
 
   it('r1: update and claim of the author back into the first check (qa -> code_review) are refused; the task stays in qa, rev unchanged', async () => {
@@ -107,12 +107,13 @@ describe('S6u B-U1: no hand-in back into a check the task passed', () => {
     expect(ev.filter((e) => e.data.result === true).map((e) => e.data.text)).toEqual(['work', 'review ok', 'v2 after a note', 'v3']);
   });
 
-  it('a task put into qa by update (not handed in): the author hands it in there, never back to code_review', async () => {
+  it('a task in qa not handed in (moved there before the checks were on): the author hands it in there, never back to code_review', async () => {
+    // S6w I1: update never puts a task into a check on a board with checks; such a task comes from before `config --review-statuses`.
     const s = await newStore({ prefix: 'API', statuses: FLOW });
-    await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch']);
     await run(s, 'orch', ['create', 'Hotfix', '--status', 'ready']);
     await run(s, 'dev-2', ['claim', 'API-1', '--status', 'dev']);
     expect((await run(s, 'orch', ['update', 'API-1', '--status', 'qa'])).doc.data.status).toBe('qa');
+    await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch']);
     const back = await run(s, 'dev-2', ['finish', 'API-1', '--status', 'code_review', '--result', 'r', '--no-commit']);
     expect(back.code).toBe(2);
     expect(back.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status qa --result r --no-commit --as dev-2 --json' });
@@ -120,6 +121,6 @@ describe('S6u B-U1: no hand-in back into a check the task passed', () => {
     expect(checker.doc.error.fix).toBe('laneboard comment API-1 "hand it in: laneboard finish API-1 --status qa --result <result>" --as rev');
     const handIn = await run(s, 'dev-2', ['finish', 'API-1', '--result', 'r', '--no-commit']);
     expect(handIn.doc.data).toMatchObject({ status: 'qa' });
-    expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
+    expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'done', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
 });

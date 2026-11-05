@@ -146,7 +146,7 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
   not in the final status and the free ones (no assignee, not final) with the claim command.
 - A board with checks or `create_by` (3.7): `prime` names the checks, who makes them and who creates tasks. Your `finish` hands your work in
-  to the check the task is in, else the first check; a checker's `finish` passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
+  to the check the task is in, else the first check; a checker's `finish --status <next>` (the command `prime` prints under the task) passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
 
 ### 2.2 A task from start to end
 
@@ -490,8 +490,17 @@ For an orchestrator that runs subagents. Both keys are optional; a board without
 against an agent's mistake, not against a hostile agent.
 
 - `--review-statuses a,b`: the checks in order, statuses between the first and the final one. The assignee's `finish` hands in to the
-  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker's `finish` passes the handed-in task on to the next check
-  (reply `passed: true`, `from`; still handed in, not in work) and from the last one accepts it into the final status (`accepted: true`).
+  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker names where the task goes:
+  `finish <ID> --status <next>` passes the handed-in task on to the next check (reply `passed: true`, `from`; still handed in, not in work)
+  and from the last one `--status <final>` accepts it (`accepted: true`).
+- A checker's `finish` without `--status`, with the check the task is in, or past the next status is refused (`INVALID_VALUE`): it may
+  come from a read before another checker passed the task on, so it would pass the next check unseen. The fix only reads the task,
+  `laneboard get <ID>`; the message names both exact commands, the pass (`finish <ID> --status <next> --result "<result of your check>"`)
+  and the return for rework (below). The same command run again after a lost reply (the same `--status`) changes nothing.
+- A task enters a check only with `finish` (handed in by its holder, or passed on by the check before), so it always shows in the
+  checkers' queue: `update`, `claim`, `create` and `import` into a check are refused. The fix of the holder (or of anybody for an
+  unassigned task) is the hand-in, `laneboard finish <ID> --status <check> --result "<what you did, how you checked it>"`; of a checker
+  of a waiting task `laneboard get <ID>` with both commands; of anybody else a comment that asks the holder to hand it in.
 - `--reviewers x,y`: who checks (default: anybody but the author of the work). Any of them makes any check, both in a row too: the
   two lists are not paired. A checker's `finish` applies to the check the task is in now, whoever passed it there. The author of the
   work (any name that held the task or handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
@@ -506,7 +515,8 @@ against an agent's mistake, not against a hostile agent.
   that passes the task on or accepts it. A fix never changes what the refused command meant.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
-- `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check with the `finish` that checks them, and
+- `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check, each with its ready command
+  (`pass: laneboard finish <ID> --status <next> --result "<result of your check>"`; MCP `task_prime`: `roles.waiting[].next_status`), and
   claims into the status before the first check. `none` turns each key off (`config@1` again when all are off).
 
 ```sh
@@ -521,7 +531,8 @@ laneboard comment DEMO-6 "Admins need a higher limit" --as lead --json
 laneboard update DEMO-6 --status in_progress --as lead --json
 laneboard prime --as dev-3
 laneboard finish DEMO-6 --result "Admins get 50 req/min" --no-commit --as dev-3 --json
-laneboard finish DEMO-6 --result "Checked with an admin token" --as lead --json
+laneboard finish DEMO-6 --result "Checked with an admin token" --as lead --json  # exit 2
+laneboard finish DEMO-6 --status done --result "Checked with an admin token" --as lead --json
 laneboard config --review-statuses none --reviewers none --creators none --json
 ```
 
@@ -530,8 +541,8 @@ laneboard config --review-statuses none --reviewers none --creators none --json
 `laneboard import` creates tasks from another tracker's files, in one write. Each task gets the link `file=<path from the project folder>`,
 so a second run skips files imported before and creates only new ones. An undeclared key or a status that is neither configured
 nor mapped stops the import before anything is written and lists every value found; `--dry-run` shows the result without writing.
-On a board with `create_by` only those names import; a task imported right into a later check or the final status follows the rule of
-`create` (3.7): not by its assignee, and into the final status only by a checker.
+On a board with `create_by` only those names import; a task imported right into a check or the final status follows the rule of
+`create` (3.7): never into a check (a task enters one only with `finish`), and into the final status only by a checker, not by its assignee.
 
 | Option | Meaning |
 |---|---|

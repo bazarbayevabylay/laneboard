@@ -323,9 +323,10 @@ interface Choices {
   check: boolean;
 }
 
-// A checker's finish of a task waiting for its check (P1): passes it on, from the last check accepts it.
-function checkCommand(d: PrimeData, dir: string): string {
-  return `laneboard finish <ID> --result "<result of your check>"${asOption(d)}${dir} --json`;
+// A checker's finish of task `id` waiting for its check (P1): passes it on to `next`, from the last check accepts it. --status names
+// where it goes (S6w I2), so the command run after another checker passed the task on is refused instead of passing the next check.
+function passCommand(d: PrimeData, id: string, next: string, dir: string): string {
+  return `laneboard finish ${id} --status ${shellQuote(next)} --result "<result of your check>"${asOption(d)}${dir} --json`;
 }
 
 // Longest roles line of prime, and longest list of names in it (checkers, creators): a long list is cut, never the rest of the line.
@@ -375,7 +376,7 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
     return ['You have no task in progress. Create one now:', create, `Given a task id instead: ${claim}`].join('\n');
   }
   const ways = [`The request names a task id: ${claim}`];
-  if (choices.check) ways.push(`A task below waits for your check: ${checkCommand(d, dir)}`);
+  if (choices.check) ways.push('A task below waits for your check: run the pass command under it (--status names where it goes)');
   if (choices.resume) ways.push(`Your own earlier-session task (below) fits the request: laneboard claim <ID> --resume${dir} --json`);
   if (choices.free) ways.push('A free task below fits the request: as in 1.');
   if (ask !== undefined) {
@@ -510,7 +511,10 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
     const c = feedback.get(t.id);
     return c === undefined ? line(t) : `${line(t)}\n    last comment by ${c.actor}: ${fit(commentLine(c), titleMax)}`;
   };
-  const waitHead = !waits ? '' : noTask ? '\nWaiting for your check:' : `\nWaiting for your check; check one: ${checkCommand(d, dir)}`;
+  const waitHead = !waits ? '' : noTask ? '\nWaiting for your check:' : '\nWaiting for your check; check one with the pass command under it:';
+  // Each waiting task with its ready pass command (S6w I2): the next status after its check, or the final one from the last check.
+  const nextOf = new Map((d.roles?.waiting ?? []).map((w) => [w.id, w.next_status]));
+  const waitLine = (t: ListItem): string => `${line(t)}\n    pass: ${passCommand(d, t.id, nextOf.get(t.id) ?? '<next status>', dir)}`;
   // The note goes before the command, so the copied command line stays valid in a shell (LB-11 b).
   const waitMore = (n: number): string => `\n... ${n} more (rows with handed_in): laneboard list${d.roles?.checks.map((st) => ` --status ${shellQuote(st)}`).join('') ?? ''}${dir} --json`;
   const roles = rolesLine(d);
@@ -528,7 +532,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const resumeKeep = resume ? resumeHead.length + sectionMin(d.resumable, d.resumable.length, resumeMore, 1, resumeLine) : 0;
   const ownKeep = listed ? sectionMin(d.tasks, d.tasks.length, more, 1, ownLine) : 0;
   const waiting = d.roles?.waiting ?? [];
-  const waitKeep = waits ? waitHead.length + sectionMin(waiting, d.roles?.waiting_total ?? 0, waitMore, 1, line) : 0;
+  const waitKeep = waits ? waitHead.length + sectionMin(waiting, d.roles?.waiting_total ?? 0, waitMore, 1, waitLine) : 0;
   // Five newlines join the six blocks below (a sixth one before the roles line, when there is one).
   const others = head.length + BOARD_DATA_NOTE.length + storeHead.length + warning.length + closing.length + 5 + (roles ? roles.length + 1 : 0) + ownKeep + waitKeep + resumeKeep + freeKeep;
   if (squeeze.cutLines && others + status.length + fields.length > PRIME_MAX_CHARS) {
@@ -545,7 +549,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   let text = [head, BOARD_DATA_NOTE, `${storeHead}${board}${warning}`, status, fields, ...(roles ? [roles] : []), closing].join('\n');
   // The agent's own tasks first; the later sections keep their room.
   if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, waitKeep + resumeKeep + freeKeep, 1, ownLine);
-  if (waits) text = withTasks(text + waitHead, waiting, d.roles?.waiting_total ?? 0, waitMore, resumeKeep + freeKeep, 1, line);
+  if (waits) text = withTasks(text + waitHead, waiting, d.roles?.waiting_total ?? 0, waitMore, resumeKeep + freeKeep, 1, waitLine);
   if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeKeep, 1, resumeLine);
   if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0, PRIME_MIN_FREE, line);
   return { text, fits: required + board.length <= PRIME_MAX_CHARS };
