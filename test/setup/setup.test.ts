@@ -679,12 +679,12 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
     const rootLocal = path.join(root, '.claude', 'settings.local.json');
     expect(JSON.parse(fs.readFileSync(rootLocal, 'utf8')).env.LANEBOARD_DIR).toBe(path.join(root, '.laneboard'));
-    // Without its own store yet: the fix creates it first.
-    const early = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
-    expect(early.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: rootLocal, value: path.join(root, '.laneboard') } });
-    expect(early.error.fix).toBe(`laneboard init --name <name> --description "<whose project, what work>" && cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code`);
+    // Without its own store yet the folder is part of the repository's board (S6k P3): setup pins the root's store, so no conflict.
+    const early = JSON.parse((await cli(['setup', 'claude-code', '--json', '--dry-run'], { cwd: nested, env })).stdout);
+    expect(early).toMatchObject({ ok: true, data: { store: path.join(root, '.laneboard') } });
     expect(fs.existsSync(path.join(nested, '.claude'))).toBe(false);
-    expect((await cli(['init', '--description', 'agent b'], { cwd: nested, env })).code).toBe(0);
+    // A board of its own in a folder of the same repository is made by --dir (a bare init there is refused).
+    expect((await cli(['init', '--dir', path.join(nested, '.laneboard'), '--description', 'agent b'], { cwd: nested, env })).code).toBe(0);
     const refused = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
     expect(refused.error.fix).toBe(`cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code`);
     // Run as the fix says: the root sees agent-b's board in the registry, so its env leaves the local file for its settings.json.
@@ -710,7 +710,7 @@ describe('Claude Code store pin and default name (S2c)', () => {
     const env = { HOME: home, USER: 'tester' };
     expect((await cli(['init', '--description', 'orchestrator'], { cwd: root, env })).code).toBe(0);
     expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
-    expect((await cli(['init', '--description', 'agent b'], { cwd: nested, env: { HOME: tempDir() } })).code).toBe(0);
+    expect((await cli(['init', '--dir', path.join(nested, '.laneboard'), '--description', 'agent b'], { cwd: nested, env: { HOME: tempDir() } })).code).toBe(0);
     const refused = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
     expect(refused.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code` });
     // The refusal registered agent-b's board, so the fix's root setup moves the root's env out of the local file.

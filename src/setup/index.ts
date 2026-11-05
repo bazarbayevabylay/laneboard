@@ -1,7 +1,7 @@
 // `laneboard setup <harness> [--remove [--global]] [--dry-run]`: write (or roll back) laneboard's MCP entry and instruction block for one harness.
 import fs from 'node:fs';
 import path from 'node:path';
-import { isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, STORE_DIR_NAME, storeState, suggestClosest } from '../core/index.ts';
+import { isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, shellQuote, STORE_DIR_NAME, storePrefix, storeState, suggestClosest } from '../core/index.ts';
 import type { BoardEntry } from '../core/index.ts';
 import { applyPlan, planAdd, planKeep, planRemove, readText } from './files.ts';
 import type { FileResult, PlannedFile } from './files.ts';
@@ -29,8 +29,10 @@ export interface SetupInput {
   dryRun: boolean;
   // Project root (setup runs there).
   cwd: string;
-  // Store the project is pinned to (absolute): --dir, else LANEBOARD_DIR, else <cwd>/.laneboard.
+  // Store the project is pinned to (absolute): --dir, else LANEBOARD_DIR, else the board of cwd's git repository, else <cwd>/.laneboard.
   storeDir: string;
+  // The store is the board of cwd's git repository found above cwd (a package of a monorepo, a linked worktree): named in a warning.
+  storeAbove?: boolean;
   env: Record<string, string | undefined>;
 }
 
@@ -277,6 +279,14 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const excludeAt = files.findIndex((f) => f === gitExclude && applies(f));
   const exclude = input.remove || excludeAt < 0 ? undefined : plan[excludeAt]?.shown;
   const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects, checkouts }, exclude), ...harnessWarnings];
+  // A package of a monorepo shares the repository's board (P3): say which one, and how a separate project gets its own.
+  if (!input.remove && input.storeAbove) {
+    const prefix = storePrefix(context.storeDir);
+    const own = path.join(cwd, STORE_DIR_NAME);
+    warnings.push(
+      `pinned to the board of this git repository, ${context.storeDir}${prefix ? ` (prefix ${prefix})` : ''}, found above ${cwd}; only if this folder is a separate project: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>", then laneboard setup ${harness.name} --dir ${shellQuote(own)}`,
+    );
+  }
   // The pin is written either way (init may follow), but a pin to nothing makes every laneboard command fail until then.
   if (!input.remove && !fs.existsSync(path.join(context.storeDir, 'config.json'))) {
     warnings.push(
