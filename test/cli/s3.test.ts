@@ -263,7 +263,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     await rejectsWith(claimTask(as(s, NAME_B, { actorSource: 'default', sessionBase: BASE }), { id: 'LB-2', resume: true }), 'ALREADY_CLAIMED');
   });
 
-  it('at the size limit (long store path, long board description) the newest earlier-session task is still listed', async () => {
+  it('at the size limit (long store path, long board description) the oldest earlier-session task is still listed', async () => {
     const s = await newStore();
     // Since S3b resume is decided by the events: session A took its tasks under its default name.
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Add discount to total()', status: 'in_progress', assignee: NAME_A });
@@ -271,8 +271,8 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     const data = JSON.parse((await cli(['prime', '--json'], { cwd: s.root, env: SESSION_B })).stdout).data as PrimeData;
     const text = primeText({ ...data, store: `/${'p'.repeat(150)}/.laneboard`, name: 'n'.repeat(60), description: 'd'.repeat(200) });
     expect(text.length).toBeLessThanOrEqual(4000);
-    // Rewritten in S3b: the short forms of the repeated rules make room, so both tasks are listed now, the newest first.
-    expect(text).toContain('  LB-2  [in_progress]  <1m ago  session aaaa1111  Newest work\n  LB-1  [in_progress]  <1m ago  session aaaa1111  Add discount to total()');
+    // Rewritten in S3b: the short forms of the repeated rules make room, so both tasks are listed now; S6x A-U1: the oldest first.
+    expect(text).toContain('  LB-1  [in_progress]  <1m ago  session aaaa1111  Add discount to total()\n  LB-2  [in_progress]  <1m ago  session aaaa1111  Newest work');
   });
 
   it('MCP task_claim resume: true under the server session default name', async () => {

@@ -83,7 +83,8 @@ async function editHook(op: () => OpContext, agent: string | undefined, cwd: str
 }
 
 // The `source` of the Claude Code SessionStart hook input on stdin (startup, resume, clear, compact, fork:
-// code.claude.com/docs/en/hooks); undefined without input (a terminal, another harness, not JSON).
+// code.claude.com/docs/en/hooks); undefined without input (a terminal, another harness, not JSON). Its `session_id` is never read
+// (S6x r1, ADR §52): the hook's name comes from CLAUDE_CODE_SESSION_ID only, as the name of every later Bash command does.
 function sessionStartSource(io: CommandContext['io']): string | undefined {
   if (io.stdinIsTTY === true) return undefined;
   let input: unknown;
@@ -199,6 +200,7 @@ export const prime: CommandDef = {
       unassigned_total: summary?.unassigned_total ?? 0,
       session_base: named.sessionBase ?? null,
       resumable: resumeShown ? (summary?.resumable ?? []) : [],
+      resumable_total: resumeShown ? (summary?.resumable_total ?? 0) : 0,
       ...(summary?.roles === undefined ? {} : { roles: summary.roles }),
     };
     // The plugin hook runs in every session of every project: where laneboard is not used it prints one neutral line, not the rules.

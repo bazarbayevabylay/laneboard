@@ -20,12 +20,13 @@ function listContext(c: CommandContext, allBoards: boolean): ListContext {
 
 export const list: CommandDef = {
   name: 'list',
-  usage: 'list [--status S]... [--open] [--assignee A | --unassigned] [--label L]... [--text Q] [--parent ID] [--all-boards] [--scope active|archive|all] [--limit N] [--offset N]',
-  summary: 'List tasks, newest update first (default: scope active, limit 20, or list_limit_max of the board when lower; each item also says handed_in, in_work, stale), each with its newest comment line. --open: not in the final status. --all-boards: every board of this machine (laneboard boards), merged.',
+  usage: 'list [--status S]... [--open] [--assignee A | --unassigned | --sessions-of BASE] [--label L]... [--text Q] [--parent ID] [--all-boards] [--scope active|archive|all] [--limit N] [--offset N]',
+  summary: 'List tasks, newest update first (default: scope active, limit 20, or list_limit_max of the board when lower; each item also says handed_in, in_work, stale), each with its newest comment line. --open: not in the final status. --sessions-of <harness>@<user>: the tasks every other session of that default name holds unfinished, not waiting for a check, never yours (what claim --resume takes back; prime counts them). --all-boards: every board of this machine (laneboard boards), merged.',
   options: {
     status: { type: 'string', multiple: true },
     assignee: { type: 'string' },
     unassigned: { type: 'boolean' },
+    'sessions-of': { type: 'string' },
     label: { type: 'string', multiple: true },
     text: { type: 'string' },
     parent: { type: 'string' },
@@ -43,6 +44,7 @@ export const list: CommandDef = {
       status: many(c.values, 'status'),
       assignee: str(c.values, 'assignee'),
       unassigned: flag(c.values, 'unassigned') || undefined,
+      sessions_of: str(c.values, 'sessions-of'),
       labels: many(c.values, 'label'),
       text: str(c.values, 'text'),
       parent: str(c.values, 'parent'),

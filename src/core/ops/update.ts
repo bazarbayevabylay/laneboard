@@ -190,6 +190,8 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const assignee = p.assignee === undefined ? task.assignee : p.assignee;
       const assignChange = assignee !== task.assignee ? { from: task.assignee, to: assignee } : undefined;
       if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, assignee, warnings, ctx.sessionBase);
+      // A checker that gets a task waiting for its check stops being one (S6x B-U2): told after the write (checkerHoldsWarning).
+      const checkerTakes = assignChange?.to != null && mayCheck(s.config, task, assignChange.to, assignChange.to === actor ? ctx.sessionBase : undefined);
 
       if (!Object.keys(diff).length && !statusChange && !assignChange) {
         warnings.push(`no changes: ${id} already has these values`);
@@ -206,6 +208,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       if (assignChange) {
         task.assignee = assignChange.to;
         addEvent(task, s.config, s.now, actor, 'assigned', assignChange, actorSourceOf(ctx));
+        if (checkerTakes) checkerHoldsWarning(s.config, task, actor, warnings);
       }
       return toTaskView(task, false);
     },
@@ -597,6 +600,34 @@ function noCheckerWarning(config: ConfigT, task: TaskT, warnings: string[]): voi
   if (stuck !== undefined) warnings.push(stuck);
 }
 
+// May `name` check `task` now (S6x B-U2): the task waits in a check, `name` is no author of the work (workedOn; `sessionBase` when it
+// is the actor's own name) and is a checker (in review.by, or anybody when review.by is not set). False without checks.
+function mayCheck(config: ConfigT, task: TaskT, name: string, sessionBase: string | undefined): boolean {
+  if (!waitsInCheck(config, task) || workedOn(task, name, sessionBase)) return false;
+  const by = reviewers(config);
+  return by.length === 0 || by.includes(name);
+}
+
+// The warning of an update that gave a task waiting for a check to a name that could check it (mayCheck before the write, S6x B-U2): the
+// holder is an author of the work from now on (workedOn), so it never checks it, and giving the task to another name later does not
+// change that. The way out, as stuckInChecks: the checkers left, else the owner's config --reviewers. Nothing once it waits no more.
+function checkerHoldsWarning(config: ConfigT, task: TaskT, actor: string, warnings: string[]): void {
+  if (!waitsInCheck(config, task) || task.assignee === null) return;
+  const who = task.assignee === actor ? 'you hold it' : `${task.assignee} holds it`;
+  const left = checkersLeft(config, task);
+  const exit =
+    reviewers(config).length === 0
+      ? 'anybody else but its authors checks it'
+      : left.length > 0
+        ? `the check stays with ${left.join(', ')}`
+        : `no checker is left for it, so the owner adds one: ${addCheckerCommand(config)}`;
+  const next = nextAfterCheck(config, task.status);
+  warnings.push(
+    `${task.id} waits in ${task.status} for a check, and ${who} now: a holder is an author of the work and never checks it (giving it to another name later does not change that); ${exit}. ` +
+      `A check needs no claim or assignment: a checker runs laneboard finish ${task.id} --status ${next} --result "<result of your check>"`,
+  );
+}
+
 // The refusal of a claim of a task that waits for a check (waitsInCheck, S6w r2), for everybody. Its author gets the S6u refusal
 // (alreadyHandedIn: nothing to do, a comment). A checker that may check it (in review.by when set, not an author) gets unclearCheck: the
 // fix reads the task, the message names the pass and the return. Anybody else a comment (ALREADY_CLAIMED when somebody else holds it).
@@ -697,7 +728,8 @@ export function nextAfterCheck(config: ConfigT, status: string): string {
 }
 
 // The work status a return for rework from a check goes to (README "Return for rework"): the one before the checks, else the first.
-function reworkStatus(config: ConfigT): string {
+// Exported for config, which names it (S6x B-U1: claims and returns go there, set by the order of the statuses).
+export function reworkStatus(config: ConfigT): string {
   return workStatusBeforeChecks(config) ?? config.statuses[0] ?? '';
 }
 

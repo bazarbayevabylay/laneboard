@@ -105,7 +105,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   listTasks: {
     name: 'task_list',
-    description: 'List task summaries, newest update first (default scope active, limit 20, or list_limit_max of the board when lower; each item also says handed_in, in_work, stale), each with its newest comment line. all_boards: every board of this machine (registry under HOME), open: only tasks not in their final status. Use task_get for a full task.',
+    description: 'List task summaries, newest update first (default scope active, limit 20, or list_limit_max of the board when lower; each item also says handed_in, in_work, stale), each with its newest comment line. all_boards: every board of this machine (registry under HOME), open: only tasks not in their final status, sessions_of: <harness>@<user> (task_prime session_base) - the unfinished tasks of every other session of that default name, not waiting for a check and not held by you (resume candidates; task_prime resumable_total counts them). Use task_get for a full task.',
     params: ListInput,
     write: false,
   },
@@ -176,7 +176,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   taskSummary: {
     name: 'task_prime',
     description:
-      'Call it first: the agent rules for MCP, the board (store, prefix, name, description), the statuses in order (the last one is final), the declared fields, your active tasks, tasks of your earlier sessions to resume, and free tasks. Read-only; actor: whose tasks to list (default as in the write tools).',
+      'Call it first: the agent rules for MCP, the board (store, prefix, name, description), the statuses in order (the last one is final), the declared fields, your active tasks, tasks of your earlier sessions to resume (oldest first, at most 5; resumable_total counts all, task_list sessions_of lists them), and free tasks. Read-only; actor: whose tasks to list (default as in the write tools).',
     params: z.strictObject({ actor }),
     write: false,
     prime: true,
@@ -248,6 +248,7 @@ function primeReply(summary: SummaryResult, named: ResolvedActor, storeDir: stri
     tasks,
     in_progress: summary.in_progress,
     resumable: summary.resumable,
+    resumable_total: summary.resumable_total,
     unassigned: summary.unassigned,
     unassigned_total: summary.unassigned_total,
     ...(summary.roles === undefined ? {} : { roles: summary.roles }),
@@ -367,8 +368,9 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     const { actor: who, full: wantFull, input } = splitArgs(entry.def, args as Record<string, unknown>);
     store = resolveStore({ dir: env.dir, envDir: env.env.LANEBOARD_DIR, cwd: env.cwd, home: env.env.HOME || undefined });
     // Same order as the CLI: the actor parameter (the server's --as standing in for a missing or empty one), LANEBOARD_AGENT, then the
-    // session's default name (recorded as such on events).
-    const named: ResolvedActor = entry.def.write || entry.def.prime ? resolveActor(who || env.agent, env.env) : {};
+    // session's default name (recorded as such on events). task_list too: sessions_of leaves out the caller's own tasks (S6x r1), as
+    // task_prime's resumable_total does under the same name.
+    const named: ResolvedActor = entry.def.write || entry.def.prime || entry.op === 'listTasks' ? resolveActor(who || env.agent, env.env) : {};
     const ctx: OpContext = { store, ...named, cwd: env.cwd, home: env.env.HOME || undefined, lockWaitMs: env.lockWaitMs };
     const op = OPS[entry.op] as unknown as (c: OpContext, i: unknown) => Promise<OpResult<Record<string, unknown>>>;
     // task_prime asks for the summary of the caller's own tasks, as `laneboard prime` does with its name.

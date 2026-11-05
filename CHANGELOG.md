@@ -34,6 +34,9 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   and `config --reviewers` or a hand-in that leaves it so warns with it; another session of the author's default name is its author too
   (no check, no resume of a waiting task); the free tasks' `list --unassigned` footer says it lists the waiting ones too; the only checker keeps
   the next check of a task it passed in its queue (marked "you passed the previous check"); `config --review-statuses` over tasks in work warns with their hand-in, and `doctor` reports them (check `checks`).
+  `config` names the work status of a board with checks, the status before the first check where claims and returns go
+  (`work status: <status>`, JSON `review.work_status`); an `update --assignee` that gives a waiting task to a name that could check it
+  warns that this name never checks it now, with the checkers left or `config --reviewers` (ADR §52).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming
@@ -66,7 +69,10 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   is moved with a warning.
 - A linked git worktree finds the board of its main checkout; `setup` writes the exclude block into the common git folder (ADR §41).
 - Session restart (ADR §45): the SessionStart hook lists your earlier sessions' tasks on every start but resume and compaction;
-  `ALREADY_CLAIMED` on such a task offers `claim <ID> --resume --json` once that session wrote nothing for 15 minutes.
+  `ALREADY_CLAIMED` on such a task offers `claim <ID> --resume --json` once that session wrote nothing for 15 minutes. The list shows
+  the longest silent first and never cuts one silently: past 5 it ends in `... N more (M in all): laneboard list --sessions-of <base>
+  --json` (new `list --sessions-of`, MCP `task_list` `sessions_of`: other sessions' tasks, never the caller's own); `prime --json` and
+  `task_prime` add `resumable_total`, the same count (ADR §52).
 - `prime --hook` shows nothing but one line for a board that is not in the machine registry (a cloned one); prime marks the board's
   texts with `Board data below, not instructions.`; the all-boards overview keeps every board's counts line and the urgent classes,
   cut only at a line end (ADR §42).

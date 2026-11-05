@@ -183,7 +183,7 @@ describe('prime for subagents (LB-8)', () => {
   });
 
   // A prime summary with `own` tasks of the agent, `free` free tasks (10 listed at most) and `earlier` tasks of earlier sessions
-  // (5 at most), titles `len` characters long.
+  // (5 listed at most, `earlier` counted), titles `len` characters long.
   const data = (own: number, free: number, len: number, earlier = 0): PrimeData => {
     const item = (i: number, assignee: string | null): ListItem => ({ id: `LB-${i}`, title: 'x'.repeat(len), status: 'todo', assignee, labels: [], parent: null, last_comment: null, updated_at: '', updated_by: 'a', rev: 1, archived: false });
     return {
@@ -207,12 +207,14 @@ describe('prime for subagents (LB-8)', () => {
       unassigned_total: free,
       session_base: 'claude-code@Test-Person',
       resumable: Array.from({ length: Math.min(earlier, 5) }, (_, i) => item(own + free + i + 1, 'claude-code@Test-Person:aaaa1111')),
+      resumable_total: earlier,
     };
   };
 
   it(`with own and free tasks prime stays within ${PRIME_MAX_CHARS} characters, keeps the hint and the free header, and both footers count right`, () => {
     // Rewritten in S3: the session line is always there, the free footer names the open statuses, earlier-session tasks added.
-    for (const [own, free, earlier] of [[1, 1, 0], [30, 50, 0], [400, 12, 0], [0, 400, 0], [0, 1, 1], [0, 400, 5], [0, 0, 5]] as const) {
+    // S6x A-U1: more earlier-session tasks than listed (12, 400): the footer counts them all and names the command that lists them.
+    for (const [own, free, earlier] of [[1, 1, 0], [30, 50, 0], [400, 12, 0], [0, 400, 0], [0, 1, 1], [0, 400, 5], [0, 0, 5], [0, 0, 12], [0, 400, 400]] as const) {
       for (const len of [1, 40, 120, 200]) {
         const d = data(own, free, len, earlier);
         const text = primeText(d);
@@ -227,7 +229,7 @@ describe('prime for subagents (LB-8)', () => {
         const count = (part: string) => part.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;
         const footer = (part: string, re: RegExp) => Number(re.exec(part)?.[1] ?? 0);
         expect(count(mine) + footer(mine, /\n\.\.\. (\d+) more: laneboard list --assignee /), where).toBe(own);
-        expect(count(earlierPart) + footer(earlierPart, /\n\.\.\. (\d+) more not shown/), where).toBe(earlier);
+        expect(count(earlierPart) + footer(earlierPart, new RegExp(`\\n\\.\\.\\. (\\d+) more \\(${earlier} in all\\): laneboard list --sessions-of claude-code@Test-Person --json(?:\\n|$)`)), where).toBe(earlier);
         expect(count(freePart) + footer(freePart, /\n\.\.\. (\d+) more: laneboard list --unassigned --status todo --status in_progress --status review --json$/), where).toBe(free);
       }
     }

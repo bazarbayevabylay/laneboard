@@ -34,7 +34,7 @@ import {
 } from './doctor-checks.ts';
 import type { AttachmentMoves, CheckResult, RestorePlan } from './doctor-checks.ts';
 import type { OpContext, OpResult } from './common.ts';
-import { stuckInChecks, unseenInChecks } from './update.ts';
+import { reworkStatus, stuckInChecks, unseenInChecks } from './update.ts';
 
 export const InitInput = z.strictObject({
   // Board name (default: the project folder's name); the prefix is derived from it unless given.
@@ -238,8 +238,9 @@ export interface ConfigureResult {
   statuses: string[];
   // Declared task fields (config.fields): type and optional description per key.
   fields: Record<string, FieldDefT>;
-  // The checks and checkers (config@2 review), only when the board has them.
-  review?: { statuses: string[]; by: string[] };
+  // The checks and checkers (config@2 review), only when the board has them; `work_status`: the status before the first check, where
+  // claims and returns for rework go (S6x B-U1; the first status when the first check follows it), set by the order of the statuses.
+  review?: { statuses: string[]; by: string[]; work_status: string };
   // Who creates tasks (config@2 create_by), only when the board limits it.
   create_by?: string[];
   // Whether config.json was rewritten.
@@ -501,7 +502,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
     prefix: config.prefix,
     statuses: [...config.statuses],
     fields: { ...config.fields },
-    ...(config.review !== undefined ? { review: { statuses: [...config.review.statuses], by: [...(config.review.by ?? [])] } } : {}),
+    ...(config.review !== undefined ? { review: { statuses: [...config.review.statuses], by: [...(config.review.by ?? [])], work_status: reworkStatus(config) } } : {}),
     ...(config.create_by !== undefined ? { create_by: [...config.create_by] } : {}),
     changed,
   });

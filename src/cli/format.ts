@@ -245,9 +245,11 @@ export interface PrimeData {
   // Free work: active tasks without an assignee, not in the final status, not waiting for a check (at most 10, by priority), and how many there are.
   unassigned: ListItem[];
   unassigned_total: number;
-  // The session default name without its session part (null for other names); its other sessions' unfinished tasks are `resumable`.
+  // The session default name without its session part (null for other names); its other sessions' unfinished tasks are `resumable`
+  // (oldest update first, at most 5), `resumable_total` counts all (S6x A-U1; without it: as many as listed).
   session_base: string | null;
   resumable: ListItem[];
+  resumable_total?: number;
   // Only with --all-boards: every board of the machine (ADR §29), the current one first.
   boards?: OverviewBoard[];
   // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, the newest
@@ -411,7 +413,7 @@ export const PRIME_MIN_FREE = 3;
 // What prime gives up, step by step, to stay under PRIME_MAX_CHARS: short forms of the rules (agent-rules.md), the board's name and
 // description, long task titles, then the --dir of each printed command (the Store line names it as `--dir <path>`, a line says to
 // add it; the path is printed once). Never a command,
-// the session line, the first own task, the newest earlier-session task or the first PRIME_MIN_FREE free tasks (review S3). The status and field
+// the session line, the first own task, the oldest earlier-session task or the first PRIME_MIN_FREE free tasks (review S3). The status and field
 // lines are cut last: for a config with very many statuses or fields, or a very long store path named by --dir (the --dir line
 // then takes their room; review S3b MINOR).
 interface Squeeze {
@@ -497,7 +499,9 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   // The free tasks never include one that waits for a check (S6w r2), but list --unassigned prints those too: the note says so (S6w r3).
   const waitNote = (d.roles?.checks.length ?? 0) > 0 ? '(also lists tasks waiting for a check, handed_in true) ' : '';
   const freeMore = (n: number): string => `\n... ${n} more: ${open.note}${waitNote}laneboard list --unassigned${open.options}${dir} --json`;
-  const resumeMore = (n: number): string => `\n... ${n} more not shown`;
+  // Every earlier-session task is counted (S6x A-U1): the footer names the command that lists them all (the same rule, heldBySessionsOf).
+  const resumeTotal = Math.max(d.resumable_total ?? 0, d.resumable.length);
+  const resumeMore = (n: number): string => `\n... ${n} more (${resumeTotal} in all): laneboard list --sessions-of ${shellQuote(d.session_base ?? '<base>')}${dir} --json`;
   const listed = d.agent !== null && d.tasks.length > 0;
   const noTask = d.agent === null || d.in_progress === 0;
   // Under a warning that the store looks like another project's, no claim command for it (as noTaskText).
@@ -544,10 +548,10 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const warning = d.store_warning ? `\nwarning: ${d.store_warning}` : '';
   let status = `Statuses in order (final: ${d.final_status ?? '-'}), ${statusCounts(d)}`;
   let fields = `Fields (--field key=value): ${fieldsLine(d.fields) || 'none declared'}`;
-  // What each list keeps whatever comes before it: the first own task, the newest earlier-session task (the one a session after
-  // /clear or a restart most likely resumes), the first free tasks; each with its footer.
+  // What each list keeps whatever comes before it: the first own task, the oldest earlier-session task (the longest silent: the one a
+  // closed session left, S6x A-U1), the first free tasks; each with its footer.
   const freeKeep = free ? freeHead.length + sectionMin(d.unassigned, d.unassigned_total, freeMore, PRIME_MIN_FREE, line) : 0;
-  const resumeKeep = resume ? resumeHead.length + sectionMin(d.resumable, d.resumable.length, resumeMore, 1, resumeLine) : 0;
+  const resumeKeep = resume ? resumeHead.length + sectionMin(d.resumable, resumeTotal, resumeMore, 1, resumeLine) : 0;
   const ownKeep = listed ? sectionMin(d.tasks, d.tasks.length, more, 1, ownLine) : 0;
   const waiting = d.roles?.waiting ?? [];
   const waitKeep = waits ? waitHead.length + sectionMin(waiting, d.roles?.waiting_total ?? 0, waitMore, 1, waitLine) : 0;
@@ -568,7 +572,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   // The agent's own tasks first; the later sections keep their room.
   if (listed) text = withTasks(text, d.tasks, d.tasks.length, more, waitKeep + resumeKeep + freeKeep, 1, ownLine);
   if (waits) text = withTasks(text + waitHead, waiting, d.roles?.waiting_total ?? 0, waitMore, resumeKeep + freeKeep, 1, waitLine);
-  if (resume) text = withTasks(text + resumeHead, d.resumable, d.resumable.length, resumeMore, freeKeep, 1, resumeLine);
+  if (resume) text = withTasks(text + resumeHead, d.resumable, resumeTotal, resumeMore, freeKeep, 1, resumeLine);
   if (free) text = withTasks(text + freeHead, d.unassigned, d.unassigned_total, freeMore, 0, PRIME_MIN_FREE, line);
   return { text, fits: required + board.length <= PRIME_MAX_CHARS };
 }
