@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { loadConfig } from '../config.ts';
 import { LaneboardError } from '../errors.ts';
-import type { TaskT } from '../schema.ts';
+import type { ConfigT, StoreFileT, TaskT } from '../schema.ts';
 import { shellQuote } from '../shell.ts';
 import { maxIdNumber } from '../store.ts';
 import { transact } from '../transact.ts';
@@ -16,9 +16,11 @@ import {
   checkStatus,
   checkTaskLinks,
   DescriptionInput,
+  finalStatuses,
   IdInput,
   LinkInput,
   linkKey,
+  normalizeId,
   parseFieldArgs,
   parseInput,
   requireActor,
@@ -29,6 +31,8 @@ import {
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 import { checkForeignTaskLinks } from './links.ts';
+import { reviewMoveRefusal, reviewRefusalText, workStatusBeforeChecks } from './update.ts';
+import type { ReviewRefusal as ReviewRefusalT } from './update.ts';
 
 export const CreateInput = z.strictObject({
   title: TitleInput,
@@ -57,6 +61,26 @@ function statusRequired(storeDir: string): LaneboardError {
   });
 }
 
+// Who may create tasks on this board (config@2 create_by, P2): INVALID_VALUE for anybody else, for create, its subtasks and import alike.
+// No create_by: everybody (0.3.1). The fix asks for the task where the creators read: a comment on `parent`, else on the actor's newest
+// task in work; without one, the actor reports to whoever started it. Self-named actors: a guard against mistakes, not a hostile agent.
+export function checkCreator(config: ConfigT, active: StoreFileT, actor: string, parent?: string): void {
+  const creators = config.create_by;
+  if (creators === undefined || creators.includes(actor)) return;
+  const who = creators.join(', ');
+  const finals = finalStatuses(config.statuses);
+  const own = active.tasks.filter((t) => t.assignee === actor && !finals.includes(t.status)).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0]?.id;
+  const on = parent ?? own;
+  const fix =
+    on === undefined
+      ? `report the task you need to whoever started you (${who} create tasks here), then wait for its id: laneboard claim <ID> --as ${shellQuote(actor)}`
+      : `laneboard comment ${on} "<task you need, for ${who} to create>" --as ${shellQuote(actor)}`;
+  throw new LaneboardError('INVALID_VALUE', `on this board only ${who} create tasks (config create_by), and you write as ${actor}; do not create it under another name: ask them`, {
+    details: { create_by: [...creators] },
+    fix,
+  });
+}
+
 // Create a task with the next id; the only event is `created`.
 export async function createTask(ctx: OpContext, input: CreateInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
@@ -73,6 +97,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
     ctx.store,
     { files: ['active', 'archive'] },
     (s) => {
+      checkCreator(s.config, s.active, actor, parentForFix(p.parent, s.config.prefix));
       checkStatus(s.config, p.status);
       const fields = { ...(p.fields ?? {}), ...parseFieldArgs(s.config, p.field_args ?? []) };
       checkFields(s.config, fields);
@@ -108,6 +133,10 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
       };
       const created = { title: task.title, status: task.status, assignee: task.assignee, ...(parent !== undefined ? { parent } : {}) };
       addEvent(task, s.config, s.now, actor, 'created', created, actorSourceOf(ctx));
+      // A task right in a later check or the final status skips the checks: the same rule as update (S6j tail), the creator that is its
+      // assignee holds it after the write.
+      const refusal = reviewMoveRefusal(s.config, task, actor, p.status, task.assignee === actor);
+      if (refusal !== undefined) throw createPastChecks(s.config, refusal, p.status);
       s.active.tasks.push(task);
       return toTaskView(task, false);
     },
@@ -126,4 +155,26 @@ function otherAssignee(task: TaskView, actor: string): string {
     `If it is your task: laneboard update ${task.id} --assignee ${shellQuote(actor)} --expected-rev ${task.rev} --as ${shellQuote(actor)} --json; ` +
     `if ${assignee} is your name: pass --as ${shellQuote(assignee)} on every command`
   );
+}
+
+// The parent id for the fix of checkCreator; undefined when it is no valid id (checkParent names that problem to a creator).
+function parentForFix(raw: string | undefined, prefix: string): string | undefined {
+  if (raw === undefined) return undefined;
+  try {
+    return normalizeId(raw, prefix, 'parent');
+  } catch {
+    // A malformed id: the fix then names the actor's own task instead.
+    return undefined;
+  }
+}
+
+// INVALID_VALUE of a create right into a later check or the final status on a board with checks (reviewMoveRefusal): the work starts
+// before the checks; the CLI rebuilds the command with that status (input), then finish hands the task in.
+function createPastChecks(config: ConfigT, refusal: ReviewRefusalT, status: string): LaneboardError {
+  const work = workStatusBeforeChecks(config) ?? config.statuses[0] ?? '';
+  return new LaneboardError('INVALID_VALUE', `${reviewRefusalText(config, refusal, status)}; create the task in ${work}, then hand it in: laneboard finish <ID> --result "<result>"`, {
+    allowed: [work],
+    input: { field: 'status', value: status, suggestion: work },
+    fix: `create it with status ${work}, then hand it in with laneboard finish <ID> --result "<result>"`,
+  });
 }

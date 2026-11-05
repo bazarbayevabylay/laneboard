@@ -90,7 +90,7 @@ function taskWriteParams(input: z.ZodObject): z.ZodObject {
 export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   createTask: {
     name: 'task_create',
-    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields; parent: id of a task on this board (a subtask). Returns its id, rev, status, assignee (full: the whole task).',
+    description: 'Create a task. status must be a configured status; fields keys must be declared in config.fields; parent: id of a task on this board (a subtask). A board with create_by (task_prime: roles.creators) lets only those names create tasks and subtasks: anybody else gets INVALID_VALUE, ask them (fix). On a board with checks (roles.checks) the author of the work (its assignee) never creates it right into a later check, and the final status is set only by a checker (roles.checkers, anybody when empty) that is not its assignee: create it before the checks, then hand it in with task_finish. Returns its id, rev, status, assignee (full: the whole task).',
     params: taskWriteParams(CreateInput.omit({ field_args: true })),
     write: true,
     taskReply: true,
@@ -118,7 +118,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   claimTask: {
     name: 'task_claim',
     description:
-      'Take a task: assignee := actor, optionally set status (the working one, so the task does not stay in the first). Held by someone else: ALREADY_CLAIMED, do not take it over. resume: true takes over a task of another session of your session default name (your own work before a /clear or a restart, listed by laneboard prime) - only one you did yourself that matches the current request; ALREADY_CLAIMED names it in fix when that session wrote nothing for 15 min, and a resume of a session active less than that warns.',
+      'Take a task: assignee := actor, optionally set status (the working one, so the task does not stay in the first; on a board with checks the one before them, task_prime: roles.work_status). Held by someone else: ALREADY_CLAIMED, do not take it over. On a board with checks claim by the author of the work never sets a later check, and no claim sets the final status (INVALID_VALUE): hand in with task_finish. resume: true takes over a task of another session of your session default name (your own work before a /clear or a restart, listed by laneboard prime) - only one you did yourself that matches the current request; ALREADY_CLAIMED names it in fix when that session wrote nothing for 15 min, and a resume of a session active less than that warns.',
     params: taskWriteParams(ClaimInput),
     write: true,
     taskReply: true,
@@ -132,7 +132,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   finishTask: {
     name: 'task_finish',
-    description: 'Close a task in one call: the result comment (event data result: true, which only finish writes), a link to a git commit, then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). The commit: HEAD of the server folder (often the main checkout, not your git worktree): pass cwd (absolute path of your worktree, its HEAD is linked) or commit (the sha of your work); no_commit: true for none. Without them, in a main checkout whose other worktrees have newer commits: a warning naming them and the fix. Handed in again into the same status: a new result is recorded, the same result again changes nothing; a closed task keeps its result (a warning); a new commit of the assignee is still linked. Returns id, rev, status, assignee, commit.',
+    description: 'Close a task in one call: the result comment (event data result: true, which only finish writes), a link to a git commit, then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else (on a board without checks) only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). The commit: HEAD of the server folder (often the main checkout, not your git worktree): pass cwd (absolute path of your worktree, its HEAD is linked) or commit (the sha of your work); no_commit: true for none. Without them, in a main checkout whose other worktrees have newer commits: a warning naming them and the fix. Handed in again into the same status: a new result is recorded, the same result again changes nothing; a closed task keeps its result (a warning); a new commit of the assignee is still linked. On a board with checks (task_prime: roles.checks, roles.checkers): the assignee\'s finish hands in to the first check (default; a later check or the final status: INVALID_VALUE); a checker\'s finish (roles.checkers when set; never the author of the work) passes a handed-in task on to the next check (reply passed: true, from) and from the last one accepts it (accepted: true); return for rework: task_comment why, then task_update status to the work status. Returns id, rev, status, assignee, commit.',
     params: taskWriteParams(
       FinishInput.extend({
         cwd: FinishInput.shape.cwd.describe('absolute path of the folder with your work (your git worktree): its HEAD is linked instead of the server folder\'s'),
@@ -248,6 +248,7 @@ function primeReply(summary: SummaryResult, named: ResolvedActor, storeDir: stri
     resumable: summary.resumable,
     unassigned: summary.unassigned,
     unassigned_total: summary.unassigned_total,
+    ...(summary.roles === undefined ? {} : { roles: summary.roles }),
   };
 }
 

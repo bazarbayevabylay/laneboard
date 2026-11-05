@@ -12,6 +12,8 @@ import { readBoth, transact } from '../transact.ts';
 import { actorSourceOf, addEvent, DescriptionInput, fieldInfo, MAX_COMMENT_CHARS, matchesType, parseInput, requireActor, TitleInput, txOptions, unique } from './common.ts';
 import type { OpContext, OpResult } from './common.ts';
 import type { ActorSource } from '../agent-name.ts';
+import { checkCreator } from './create.ts';
+import { reviewMoveRefusal, reviewRefusalText } from './update.ts';
 
 // One event of the source's own history, kept with its original time.
 export const ImportEvent = z.strictObject({
@@ -147,12 +149,23 @@ function resolveParents(fresh: readonly ImportTaskT[], known: ReadonlyMap<string
   return out;
 }
 
-// Split into new tasks and skipped ones, and fail when any new task has a problem.
+// A task imported right into a later check or the final status on a board with checks skips them: the rule of create and update
+// (reviewMoveRefusal; the importer that is its assignee is the author of the work). A problem of that task, not a throw.
+function checkChecks(config: ConfigT, t: ImportTaskT, actor: string, problems: Problems): void {
+  if (!config.statuses.includes(t.status)) return;
+  const task = buildTask(config, t, '', undefined, new Date().toISOString(), actor, 'explicit');
+  const refusal = reviewMoveRefusal(config, task, actor, t.status, task.assignee === actor);
+  if (refusal !== undefined) problems.invalid.push({ source: t.source, field: 'status', message: `${reviewRefusalText(config, refusal, t.status)}; import it in a status before the checks` });
+}
+
+// Split into new tasks and skipped ones, and fail when any new task has a problem. `actor`: who imports (undefined in a dry run
+// without a name: the checks of the board are not asked then).
 function plan(
   config: ConfigT,
   active: StoreFileT,
   archive: StoreFileT,
   tasks: readonly ImportTaskT[],
+  actor: string | undefined,
 ): { fresh: ImportTaskT[]; skipped: ImportResult['skipped']; parents: Map<string, string | null> } {
   const known = importedSources([active, archive]);
   const fresh: ImportTaskT[] = [];
@@ -171,6 +184,7 @@ function plan(
     else fresh.push(t);
   }
   for (const t of fresh) checkTask(config, t, problems);
+  if (actor !== undefined) for (const t of fresh) checkChecks(config, t, actor, problems);
   const parents = resolveParents(fresh, known, problems);
   const err = problemsError(config, problems);
   if (err) throw err;
@@ -210,7 +224,9 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
   const warnings: string[] = [];
   if (p.dry_run) {
     const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
-    const { fresh, skipped, parents } = plan(view.config, view.active, view.archive, p.tasks);
+    // Who may create tasks (P2) is asked in a dry run too, when the name is known.
+    if (ctx.actor !== undefined) checkCreator(view.config, view.active, ctx.actor);
+    const { fresh, skipped, parents } = plan(view.config, view.active, view.archive, p.tasks, ctx.actor);
     const created = fresh.map((t) => ({ id: null, source: t.source, title: t.title, ...(parents.has(t.source) ? { parent: parents.get(t.source) ?? null } : {}) }));
     return { data: { dry_run: true, created, skipped }, warnings };
   }
@@ -219,7 +235,8 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
     ctx.store,
     { files: ['active', 'archive'] },
     (s) => {
-      const { fresh, skipped, parents } = plan(s.config, s.active, s.archive, p.tasks);
+      checkCreator(s.config, s.active, actor);
+      const { fresh, skipped, parents } = plan(s.config, s.active, s.archive, p.tasks, actor);
       if (s.active.next_id === undefined) throw new LaneboardError('STORE_INVALID', 'active.json next_id is missing');
       // next_id never decreases and never reuses an id, even after a hand edit (W9).
       const max = maxIdNumber(s.active.tasks, s.archive.tasks);

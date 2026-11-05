@@ -115,6 +115,8 @@ laneboard setup gemini --remove
 - Always pass `--json`. Your name: `--as <name>` or `export LANEBOARD_AGENT=<name>` (MCP: `actor`); without them Claude Code sessions write under their default name (2.5).
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
   not in the final status and the free ones (no assignee, not final) with the claim command.
+- A board with checks or `create_by` (3.7): `prime` names the checks, who makes them and who creates tasks. Your `finish` hands your work in
+  to the first check; a checker's `finish` passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
 
 ### 2.2 A task from start to end
 
@@ -123,7 +125,8 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 `finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
-the final one. The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
+the final one (on a board with checks, 3.7: the first check by default, and the checkers set the rest).
+The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
 Somebody else's task `finish` only accepts, and only a handed-in one (the newest `status` event into its current status is the
 assignee's `finish` with `handed_in`): into the final status, the result comment and no commit link (the assignee linked it); the assignee
 stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`. A task in work or moved by
@@ -420,11 +423,47 @@ label, `^LB-3` on a subtask, `1/2` (children final/total) on a parent and the ne
 board title. The task panel shows fields, parent and subtasks, `Result` (finish's comments, `data.result`), description, history and
 attachments: png, jpeg, gif and webp get a preview, every file has a download link (other types are never shown inline).
 
+### 3.7 Checks in N steps and who creates tasks
+
+For an orchestrator that runs subagents. Both keys are optional; a board without them works as above, and `config.json` stays
+`laneboard/config@1` (with one of them it is `config@2`, which laneboard 0.3.1 refuses). Names are self-chosen (`--as`), so this guards
+against an agent's mistake, not against a hostile agent.
+
+- `--review-statuses a,b`: the checks in order, statuses between the first and the final one. The assignee's `finish` hands in to the
+  first check (a later check or the final status: `INVALID_VALUE`). A checker's `finish` passes the handed-in task on to the next check
+  (reply `passed: true`, `from`; still handed in, not in work) and from the last one accepts it into the final status (`accepted: true`).
+- `--reviewers x,y`: who checks (default: anybody but the author of the work). The author of the work (any name that held the task or
+  handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
+- Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
+  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`.
+- `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
+  a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
+- `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check with the `finish` that checks them, and
+  claims into the status before the first check. `none` turns each key off (`config@1` again when all are off).
+
+```sh
+laneboard config --review-statuses review --reviewers lead --creators lead --json
+laneboard create "Rate limit the API" --status todo --as dev-3 --json  # exit 2
+laneboard create "Rate limit the API" --status todo --assignee dev-3 --as lead --json
+laneboard claim DEMO-6 --status in_progress --as dev-3 --json
+laneboard finish DEMO-6 --result "Limiter added, 5 req/min" --no-commit --as dev-3 --json
+laneboard finish DEMO-6 --status done --result "Self-accept" --no-commit --as dev-3 --json  # exit 2
+laneboard prime --as lead
+laneboard comment DEMO-6 "Admins need a higher limit" --as lead --json
+laneboard update DEMO-6 --status in_progress --as lead --json
+laneboard prime --as dev-3
+laneboard finish DEMO-6 --result "Admins get 50 req/min" --no-commit --as dev-3 --json
+laneboard finish DEMO-6 --result "Checked with an admin token" --as lead --json
+laneboard config --review-statuses none --reviewers none --creators none --json
+```
+
 ## 4. Migrate: import existing tasks
 
 `laneboard import` creates tasks from another tracker's files, in one write. Each task gets the link `file=<path from the project folder>`,
 so a second run skips files imported before and creates only new ones. An undeclared key or a status that is neither configured
 nor mapped stops the import before anything is written and lists every value found; `--dry-run` shows the result without writing.
+On a board with `create_by` only those names import; a task imported right into a later check or the final status follows the rule of
+`create` (3.7): not by its assignee, and into the final status only by a checker.
 
 | Option | Meaning |
 |---|---|
@@ -497,4 +536,23 @@ cat > old-json/T-001.json <<'EOF'
 EOF
 laneboard import json old-json --status-key state --status-map testing=review --assignee-key assignee --labels-key labels --history-key history --field-map id=source_id --field-map acceptance_criteria=acceptance --json
 laneboard list --text "Nightly export" --json
+```
+
+### 4.3 A Markdown TODO list
+
+A Markdown TODO list (`- [ ]` / `- [x]`): `laneboard import checklist TODO.md --status <status> [--done-status <status>] [--heading-labels] --dry-run`,
+then without `--dry-run`. Each item is a task; checked items get the final status (or `--done-status`); an indented item becomes a
+subtask of the item above it. The link `file=TODO.md#<item text>` makes a re-run skip imported items; an edited item text makes a new
+task. `import markdown` reads only files with YAML frontmatter and names this command when it meets checkboxes.
+
+```sh
+cat > TODO.md <<'EOF'
+# TODO
+- [x] Set up the schema
+- [ ] Dark mode toggle
+  - [ ] Keep the choice after a reload
+EOF
+laneboard import checklist TODO.md --status todo --dry-run --json
+laneboard import checklist TODO.md --status todo --json
+laneboard import checklist TODO.md --status todo --json
 ```
