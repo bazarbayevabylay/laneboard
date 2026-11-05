@@ -9,7 +9,9 @@ const [mode, dir = '', arg = '', count = '0', home = ''] = process.argv.slice(2)
 const ctx = { store: { dir }, actor: `worker-${process.pid}` };
 
 if (mode === 'create') {
-  for (let i = 0; i < Number(arg); i++) await createTask(ctx, { title: `t${process.pid}-${i}`, status: 'todo' });
+  // W2 checks the ids of concurrent writers, not the 15 s wait budget (LOCK_TIMEOUT has tests of its own): the lock takes no turns,
+  // and beside two full `npm test` runs one create of 8 writers waited up to 22.6 s (S6q measure, lb-audit/s6q-dev/w2-probe.ts).
+  for (let i = 0; i < Number(arg); i++) await createTask({ ...ctx, lockWaitMs: 120_000 }, { title: `t${process.pid}-${i}`, status: 'todo' });
 } else if (mode === 'flip') {
   for (let i = 0; i < Number(arg); i++) {
     await archiveTasks(ctx, { ids: ['LB-1'] });

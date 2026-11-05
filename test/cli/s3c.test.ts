@@ -1,7 +1,7 @@
 // S3c: review S3b r2. finish asks git itself (rev-parse, log, status with a timeout; no git, a timeout or an error: "could not
 // check git", finish still works), the short forms of the rules live in agent-rules.md next to the full ones, the repeat finish that
 // links a new commit no longer says "no changes", and the stale-commit check counts from the first session's claim across --resume.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -86,17 +86,22 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     expect(doc.warnings).toEqual(['could not check git (git not found in PATH): no commit linked']);
   });
 
-  // A stand-in `git` in a folder of its own: the PATH of the CLI child names only it.
-  function fakeGit(script: string): string {
+  // A stand-in `git` in a folder of its own: the PATH of the CLI child names only it. Run once here before the CLI: on macOS the
+  // first run of a freshly written executable waits for the system's check of the new file, which beside a full `npm test` took
+  // over the CLI's 2 s git timeout (S6q: 23 of 30 parallel first runs timed out, 0 of 30 after one run; lb-audit/s6q-dev).
+  // `warm` false: a git that never answers is meant to time out anyway.
+  function fakeGit(script: string, warm = true): string {
     const bin = tempDir();
-    fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    const file = path.join(bin, 'git');
+    fs.writeFileSync(file, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    if (warm) spawnSync(file, ['--version'], { env: { PATH: bin } });
     return bin;
   }
 
   it('git does not answer in time: finish works after the timeout, links nothing, warns', async () => {
     const s = await newStore();
     await cli(['create', 'T', '--status', 'in_progress', '--assignee', 'dev-1', '--as', 'a', '--json'], { cwd: s.root });
-    const bin = fakeGit('exec /bin/sleep 10');
+    const bin = fakeGit('exec /bin/sleep 10', false);
     const started = Date.now();
     const r = await spawnNode([CLI_SOURCE, 'finish', 'LB-1', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root, env: { PATH: bin, HOME: tempDir() } });
     expect(Date.now() - started).toBeLessThan(8000);
