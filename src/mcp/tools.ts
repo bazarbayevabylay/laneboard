@@ -35,7 +35,6 @@ export interface ToolDef {
   params: z.ZodObject;
   // Writes take `actor`; reads take none.
   write: boolean;
-  destructive?: boolean;
   // The op returns one task: the reply is short (id, rev, status, assignee) unless `full` is passed.
   taskReply?: boolean;
   // task_prime: a read that takes `actor` (whose tasks to list) and answers with the rules next to the board summary.
@@ -203,7 +202,7 @@ export function toolListing(def: ToolDef): { name: string; description: string; 
     name: def.name,
     description: def.description,
     inputSchema: { ...schema, type: 'object' },
-    annotations: { readOnlyHint: !def.write, destructiveHint: def.destructive === true, idempotentHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: !def.write, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   };
 }
 
@@ -315,13 +314,18 @@ function splitArgs(def: ToolDef, args: Record<string, unknown>): { actor?: strin
   return { actor: who, full: wantFull === true, input };
 }
 
+// Tools an earlier laneboard served that are people-only now (CLI): a client that still calls one gets the command, not just "unknown".
+const CLI_ONLY_TOOLS: Readonly<Record<string, string>> = {
+  task_delete: 'delete is for people only, through the CLI: laneboard delete <ID> --confirm <ID> (agents do not delete tasks; archive them with task_archive)',
+};
+
 // Run one tool call: parse arguments, call the core op, map the result (thin adapter).
 export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Promise<ToolResult> {
   const entry = TOOL_LIST.find((t) => t.def.name === name);
   let store: StoreRef | undefined;
   try {
     if (!entry) {
-      throw new LaneboardError('USAGE', `unknown tool "${name}"`, { allowed: TOOL_LIST.map((t) => t.def.name), fix: 'call one of the tools in `allowed`' });
+      throw new LaneboardError('USAGE', `unknown tool "${name}"`, { allowed: TOOL_LIST.map((t) => t.def.name), fix: (Object.hasOwn(CLI_ONLY_TOOLS, name) ? CLI_ONLY_TOOLS[name] : undefined) ?? 'call one of the tools in `allowed`' });
     }
     const args = rawArgs ?? {};
     if (typeof args !== 'object' || Array.isArray(args)) throw new LaneboardError('USAGE', 'arguments must be an object');

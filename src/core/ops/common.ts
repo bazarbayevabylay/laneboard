@@ -611,6 +611,22 @@ export interface TaskView {
   updated_by: string;
   archived_at: string | null;
   archived: boolean;
+  // Only on a tombstone (ADR §6 Q1, S6e): when and by whom the task was deleted.
+  deleted?: DeletedMark;
+}
+
+// When and by whom a task was deleted: the mark of a tombstone (store@1 keeps unknown task keys, so 0.3.1 reads and keeps it).
+export interface DeletedMark {
+  at: string;
+  by: string;
+}
+
+// The deleted mark of a task, or undefined for a task that was not deleted.
+export function deletedMark(task: TaskT): DeletedMark | undefined {
+  const mark = (task as { deleted?: unknown }).deleted;
+  if (typeof mark !== 'object' || mark === null) return undefined;
+  const { at, by } = mark as { at?: unknown; by?: unknown };
+  return { at: typeof at === 'string' ? at : '?', by: typeof by === 'string' ? by : '?' };
 }
 
 // Explicit mapping of a stored task to its view; `eventsLimit` keeps only the newest N events.
@@ -636,7 +652,14 @@ export function toTaskView(task: TaskT, archived: boolean, eventsLimit?: number)
     updated_by: task.updated_by,
     archived_at: task.archived_at ?? null,
     archived,
+    ...deletedField(task),
   };
+}
+
+// `deleted` for a view: present only on a tombstone, so the view of any other task keeps its keys.
+export function deletedField(task: TaskT): { deleted?: DeletedMark } {
+  const mark = deletedMark(task);
+  return mark ? { deleted: mark } : {};
 }
 
 // Short reply of a write that changed one task (CLI --json and MCP by default): what the next step needs, not the whole task

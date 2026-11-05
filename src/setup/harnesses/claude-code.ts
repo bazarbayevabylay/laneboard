@@ -311,6 +311,23 @@ function leftPinWarnings(c: HarnessContext): string[] {
   ];
 }
 
+// The env goes to .claude/settings.json (envFolder undefined: always inside a git repository), a file git sees: a path of this machine
+// and the user's name would be committed with the hooks (ADR §49). Say why and what to do, in one line (review S6r risk 1).
+function committedPinWarnings(c: HarnessContext): string[] {
+  if (envFolder(c) !== undefined) return [];
+  const folder = localFolder(c);
+  const other = folder === undefined ? undefined : nestedBoard(c, folder);
+  const why =
+    folder === undefined
+      ? 'Claude Code reads no git-ignored local file of the repository here (a submodule or a worktree of a bare repository)'
+      : !samePath(folder, c.cwd) && !samePath(path.dirname(c.storeDir), folder)
+        ? `this folder's board is not the one at the repository root ${folder} (Claude Code would give a pin there to every folder of the repository)`
+        : `another board lies in this repository${other === undefined ? '' : ` (${other})`}, so the repository root's local file cannot hold this pin`;
+  return [
+    `${SETTINGS} holds env LANEBOARD_DIR=${c.storeDir} and LANEBOARD_DEFAULT_AGENT (a path of this machine and your name) in a file git sees, because ${why}: commit ${SETTINGS} only knowingly (the hooks are shared, the env is yours), or keep one board per repository so setup keeps the env in the git-ignored ${LOCAL_SETTINGS}`,
+  ];
+}
+
 // Is this path in the machine registry? A registry that cannot be read says no (setup reports it when it registers the board).
 function registered(c: HarnessContext, dir: string): boolean {
   try {
@@ -376,6 +393,6 @@ export const claudeCode: Harness = {
     const plugin = dir
       ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove`]
       : [];
-    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...plugin];
+    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...plugin];
   },
 };

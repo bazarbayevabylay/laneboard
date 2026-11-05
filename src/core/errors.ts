@@ -58,7 +58,12 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   STORE_INVALID: { exit: 6, http: 500, fix: 'laneboard doctor; to roll back to the previous good version: laneboard doctor --restore-backup' },
   STORE_TOO_NEW: { exit: 6, http: 500, fix: 'upgrade laneboard: npm i -g laneboard@latest' },
   STORE_EXISTS: { exit: 6, http: 409, fix: 'use the existing store, or pass --dir <another empty directory>' },
-  STORE_READ_ONLY: { exit: 6, http: 409, fix: 'write to your own board without --board' },
+  // A write through --board (another board, opened to read), or a machine registry that cannot be written (boards --forget).
+  STORE_READ_ONLY: {
+    exit: 6,
+    http: 409,
+    fix: 'a write through --board: drop --board and write to your own board (laneboard boards --json shows which one is yours); boards --forget: make the machine registry folder writable and run it again',
+  },
   SETUP_UNPARSEABLE: { exit: 6, http: 500, fix: 'add the snippet from `details` to the file by hand, or fix the file and run setup again' },
   SETUP_CONFLICT: { exit: 6, http: 409, fix: 'remove the laneboard entry that is outside the laneboard block and run setup again, or add the snippet from `details` by hand' },
   SETUP_WRITE_FAILED: { exit: 6, http: 500, fix: 'make the file and its directory writable and run setup again' },

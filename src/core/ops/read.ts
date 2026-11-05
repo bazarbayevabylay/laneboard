@@ -6,8 +6,8 @@ import { SCOPES, Timestamp } from '../schema.ts';
 import type { ConfigT, EventType, Scope, StoreFileT, TaskT } from '../schema.ts';
 import { canonicalPath, idNumber } from '../store.ts';
 import { readActive, readBoth } from '../transact.ts';
-import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, parseInput, reviewers, reviewStatuses, suggestClosest, toTaskView, unique } from './common.ts';
-import type { FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
+import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, deletedField, fieldInfo, finalStatuses, heldByEarlierSession, IdInput, lastComment, locate, normalizeId, parseInput, reviewers, reviewStatuses, suggestClosest, toTaskView, unique } from './common.ts';
+import type { DeletedMark, FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
 import { handedIn, waitsForCheck, workStatusBeforeChecks } from './update.ts';
@@ -95,6 +95,8 @@ export interface ListItem {
   updated_by: string;
   rev: number;
   archived: boolean;
+  // Only on a tombstone: when and by whom the task was deleted.
+  deleted?: DeletedMark;
 }
 
 // A row of list (CLI list --json, MCP task_list): the list item plus the marks of a view card (ADR §28, workMarks), so an orchestrator
@@ -291,6 +293,7 @@ function toListItem(task: TaskT, archived: boolean): ListItem {
     updated_by: task.updated_by,
     rev: task.rev,
     archived,
+    ...deletedField(task),
   };
 }
 
