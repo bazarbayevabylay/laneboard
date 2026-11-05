@@ -3,8 +3,7 @@ import fs from 'node:fs';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { agentRules } from '../core/index.ts';
-import { callTool, TOOL_LIST, toolListing } from './tools.ts';
+import { callTool, mcpRules, TOOL_LIST, toolListing } from './tools.ts';
 import type { ToolEnv } from './tools.ts';
 
 // Package version (same relative path from src/mcp and dist/mcp).
@@ -12,11 +11,11 @@ function packageVersion(): string {
   return (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 }
 
-// Build the server: instructions = agent rules, tools from TOOL_LIST.
+// Build the server: instructions = the MCP preamble and the agent rules (as task_prime), tools from TOOL_LIST.
 // The low-level Server is used on purpose: McpServer validates arguments itself and answers with plain text
 // ("Input validation error"), which would lose the error object with `fix` that the CLI returns.
 export function createMcpServer(env: ToolEnv): Server {
-  const server = new Server({ name: 'laneboard', version: packageVersion() }, { capabilities: { tools: {} }, instructions: agentRules() });
+  const server = new Server({ name: 'laneboard', version: packageVersion() }, { capabilities: { tools: {} }, instructions: mcpRules() });
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOL_LIST.map((t) => toolListing(t.def)) }));
   server.setRequestHandler(CallToolRequestSchema, (request) => callTool(request.params.name, request.params.arguments, env));
   return server;
