@@ -215,10 +215,12 @@ function lstatOrMissing(p: string): fs.Stats | undefined {
   }
 }
 
-// Real path of an existing path, or the errno code when it leads nowhere (a dangling link, a loop).
+// Real path of an existing path as the kernel resolves it, or the errno code when it leads nowhere (a dangling link, a loop).
+// Always realpathSync.native: the JS fs.realpathSync folds a link's `..` by text (`conf -> .`, `.claude -> conf/..` gives the project),
+// the kernel walks it (the project's parent), so a check by the JS path could pass a write that lands elsewhere.
 function realOrCode(p: string): { real: string } | { code: string } {
   try {
-    return { real: fs.realpathSync(p) };
+    return { real: fs.realpathSync.native(p) };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
     // A missing target or a loop is the link's own fault (SETUP_CONFLICT by the caller); permissions get an error with its fix.
@@ -231,13 +233,18 @@ function realOrCode(p: string): { real: string } | { code: string } {
 // the missing rest appended.
 function realFolder(dir: string): string {
   const existing = existingAncestor(dir);
-  return path.join(fs.realpathSync(existing), path.relative(existing, dir));
+  return path.join(fs.realpathSync.native(existing), path.relative(existing, dir));
 }
 
 // Is a real path inside the real project folder (or the folder itself)?
 function inside(realRoot: string, real: string): boolean {
   const rel = path.relative(realRoot, real);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+// Is a real path inside a repository's .git folder below the project (git's own data: config, hooks, the exclude file)?
+function insideGit(realRoot: string, real: string): boolean {
+  return inside(realRoot, real) && path.relative(realRoot, real).split(path.sep).includes('.git');
 }
 
 // Path as shown in messages: relative to the project (with /), or absolute for a file setup shows absolute or as ~/….
@@ -276,15 +283,50 @@ function resolveInsideProject(file: string, shown: string, root: string): { targ
         fix: `setup writes only inside the project: replace the symlink ${shellQuote(current)} with a real ${kind} (or point it inside the project) and run setup again, or add laneboard's entry to ${shown} by hand`,
       });
     }
+    // A link into .git (`CLAUDE.md -> .git/config`) would put our block into git's own data; the exclude file setup writes is named
+    // by its own path, never reached through a link.
+    if (insideGit(realRoot, end.real)) {
+      throw new LaneboardError('SETUP_CONFLICT', `${link} is a symlink to ${linkTo}, which leads into the repository's .git folder (${end.real}); setup does not write ${shown} through it (git reads that folder as its own data); nothing was written`, {
+        details: { file: shown, link, target: linkTo, resolved: end.real },
+        fix: `replace the symlink ${shellQuote(current)} with a real ${kind} outside .git and run setup again, or add laneboard's entry to ${shown} by hand`,
+      });
+    }
   }
-  // The deepest part of the path that exists, resolved (inside the project: every link on the way was checked above, and a step that is
-  // no link stays in its folder); the rest does not exist yet and is created as real folders and file.
-  const existing = found === 0 ? realRoot : fs.realpathSync(path.join(root, ...steps.slice(0, found)));
+  // The deepest part of the path that exists, resolved by the kernel (inside the project: every link on the way was checked above, and
+  // a step that is no link stays in its folder); the rest does not exist yet and is created as real folders and file.
+  const existing = found === 0 ? realRoot : fs.realpathSync.native(path.join(root, ...steps.slice(0, found)));
   const target = path.join(existing, ...steps.slice(found));
-  if (found < steps.length) return { target };
-  const stat = fs.lstatSync(target, { bigint: true });
+  const identity = checkPhysical(realRoot, target, shown);
+  return identity === undefined ? { target } : { target, identity };
+}
+
+// The resolved path itself, checked once more step by step below the project folder (a belt behind the resolution above): it must lie
+// inside, no step may be a symlink, and an existing file must be a regular file, whose dev/inode is returned (undefined: not there yet).
+function checkPhysical(realRoot: string, target: string, shown: string): Identity | undefined {
+  const changed = (at: string): LaneboardError =>
+    new LaneboardError('SETUP_CONFLICT', `${shown}: ${at} is a symlink or lies outside the project, as setup checked the path again; nothing was written`, {
+      details: { file: shown, path: at },
+      fix: `replace ${shellQuote(at)} with a real file or folder inside the project and run setup again`,
+    });
+  if (!inside(realRoot, target)) throw changed(target);
+  let current = realRoot;
+  let stat: fs.BigIntStats | undefined;
+  for (const step of path.relative(realRoot, target).split(path.sep)) {
+    if (step === '') continue;
+    current = path.join(current, step);
+    try {
+      stat = fs.lstatSync(current, { bigint: true });
+    } catch (err) {
+      // Missing: this step and the rest are created by setup as real folders and file.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+      throw cannotRead(current, err);
+    }
+    if (stat.isSymbolicLink()) throw changed(current);
+  }
+  if (stat === undefined) return undefined;
   if (!stat.isFile()) throw notRegularFile(target, shownOf(realRoot, target, shown), stat);
-  return { target, identity: { dev: stat.dev, ino: stat.ino } };
+  return { dev: stat.dev, ino: stat.ino };
 }
 
 // SETUP_CONFLICT when a project file's backup (next to its real file) is a symlink or not a regular file: a backup is read and written only
@@ -310,7 +352,7 @@ function linkChainEnd(file: string, shown: string): string {
     const stat = lstatOrMissing(current);
     if (stat === undefined || !stat.isSymbolicLink()) return current;
     // A relative link is relative to the folder it really lies in (that folder may itself be reached through a link).
-    current = path.resolve(fs.realpathSync(path.dirname(current)), fs.readlinkSync(current));
+    current = path.resolve(fs.realpathSync.native(path.dirname(current)), fs.readlinkSync(current));
   }
   throw new LaneboardError('SETUP_CONFLICT', `${shown} is a symlink loop; nothing was written`, {
     details: { file: shown },
@@ -328,10 +370,21 @@ function locateFile(file: string, shown: string, scope: PlannedFile['scope']): P
   return { target, root, ...(identity !== undefined ? { identity } : {}) };
 }
 
+// Text of a located file. A project file that is there although the check found none (no dev/inode: it appeared since) is refused:
+// every write into an existing project file needs the identity the check took.
+function readLocated(at: Pick<PlannedFile, 'shown' | 'scope' | 'target' | 'identity'>): string | null {
+  const text = readText(at.target);
+  if (at.scope === 'project' && text !== null && at.identity === undefined) {
+    const err = replacedWhileRunning(at);
+    throw new LaneboardError(err.code, `${err.message}; nothing was written`, { details: err.details ?? {}, fix: err.fix });
+  }
+  return text;
+}
+
 // Plan the install of our part into one file (reads only).
 export function planAdd(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
   const at = { file, shown, scope, ...locateFile(file, shown, scope) };
-  const before = readText(at.target);
+  const before = readLocated(at);
   const after = edit.add(before);
   if (before === after) return { ...at, result: 'unchanged', before };
   if (before === null) return checkWritable({ ...at, result: 'created', write: after, before });
@@ -344,7 +397,7 @@ export function planAdd(file: string, shown: string, scope: PlannedFile['scope']
 // Plan the removal of our part: restore the original bytes when nothing else changed, delete a file we created.
 export function planRemove(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
   const at = { file, shown, scope, ...locateFile(file, shown, scope) };
-  const before = readText(at.target);
+  const before = readLocated(at);
   const original = readText(backupPath(at));
   const keptBackup = original !== null;
   if (before === null || !edit.owns(before)) return { ...at, result: 'unchanged', before, keptBackup };
@@ -377,12 +430,23 @@ function dropCreatedDir(dir: string, roots: readonly string[]): void {
   if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
 }
 
+// Write a file setup deleted or made itself (undo, a backup put back, the created-folder marker) without following a symlink at its
+// name: O_NOFOLLOW fails with ELOOP on a link put there since, so the write never lands outside through it.
+function writeNoFollow(file: string, text: string, mode = 0o666): void {
+  const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, mode);
+  try {
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // Put a file back to `text` (null: it did not exist); a directory this run made for it is removed by its own undo step.
 function putBack(file: string, text: string | null): void {
   if (readText(file) === text) return;
   if (text !== null) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, text);
+    writeNoFollow(file, text);
     return;
   }
   fs.rmSync(file, { force: true });
@@ -406,7 +470,7 @@ function sameIdentity(a: Identity | undefined, b: Identity | undefined): boolean
 }
 
 // SETUP_CONFLICT: a project file was replaced (another file, a link) between planning and its write.
-function replacedWhileRunning(p: PlannedFile): LaneboardError {
+function replacedWhileRunning(p: Pick<PlannedFile, 'shown'>): LaneboardError {
   return new LaneboardError('SETUP_CONFLICT', `${p.shown} was replaced while setup ran (another file or a symlink is at its path now)`, {
     details: { file: p.shown },
     fix: 'run setup again',
@@ -417,6 +481,8 @@ function replacedWhileRunning(p: PlannedFile): LaneboardError {
 // planned one (dev/inode) is it truncated and written, so a link or file swapped in after the checks is never written through.
 // `owned` runs once the write may start (the undo of this run then puts the old text back).
 function writeExisting(p: PlannedFile, text: string, owned: () => void = () => {}): void {
+  // A project file is written only into the file the check identified; a global one follows its link chain (dotfiles).
+  if (p.identity === undefined && p.scope === 'project') throw replacedWhileRunning(p);
   if (p.identity === undefined) {
     owned();
     fs.writeFileSync(p.target, text);
@@ -444,7 +510,7 @@ function writeExisting(p: PlannedFile, text: string, owned: () => void = () => {
 // After a new project file is created: its folder must still be inside the project (a folder swapped for a link after the checks).
 function checkCreatedInside(p: PlannedFile): void {
   if (p.root === undefined) return;
-  if (!inside(realFolder(p.root), fs.realpathSync(path.dirname(p.target)))) throw replacedWhileRunning(p);
+  if (!inside(realFolder(p.root), fs.realpathSync.native(path.dirname(p.target)))) throw replacedWhileRunning(p);
 }
 
 // Write a plan: backups first (with the original's mode), then files; a deleted file also takes its now-empty directory
@@ -480,7 +546,9 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
       if (p.write === undefined) continue;
       current = p;
       if (p.write === null) {
-        // unlink never follows a link (the real path was checked again above).
+        // unlink does not follow a link at the last component (it removes the link itself, never its target). Folders on the way are
+        // followed: the real path was checked again above, and a folder swapped for a link after that check (a live local attacker)
+        // would delete a same-named file there — the residual of the `wx` create below, which Node cannot close without openat.
         undo.push({ shown: p.shown, run: () => putBack(p.target, p.before) });
         fs.unlinkSync(p.target);
         emptied.add(path.dirname(p.target));
@@ -490,7 +558,7 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
       const created = fs.mkdirSync(dir, { recursive: true });
       if (created !== undefined) undo.push({ shown: p.shown, run: () => fs.rmSync(created, { recursive: true, force: true }) });
       // Remember that this directory is ours, so --remove may delete it later (a directory the user had is never deleted).
-      if (created !== undefined && !roots.includes(dir)) fs.writeFileSync(path.join(dir, CREATED_DIR_MARKER), CREATED_DIR_TEXT);
+      if (created !== undefined && !roots.includes(dir)) writeNoFollow(path.join(dir, CREATED_DIR_MARKER), CREATED_DIR_TEXT);
       if (p.before === null) {
         writeNewFile(p.target, p.write, 0o666, () => undo.push({ shown: p.shown, run: () => putBack(p.target, null) }));
         checkCreatedInside(p);
@@ -505,7 +573,7 @@ export function applyPlan(plan: readonly PlannedFile[], roots: readonly string[]
         undo.push({
           shown: `${p.shown}.laneboard.bak`,
           run: () => {
-            fs.writeFileSync(bak, restored, { mode });
+            writeNoFollow(bak, restored, mode);
             fs.chmodSync(bak, mode);
           },
         });
