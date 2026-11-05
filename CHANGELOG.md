@@ -28,7 +28,8 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   `--status`, with the check the task is in or past the next one it is refused, so a second checker on a stale read never skips a
   check; that fix only reads the task (`laneboard get <ID>`) and the message names the pass and the return. A task enters a check only
   with `finish`: `update`, `claim`, `create` and `import` into a check are refused. `prime` prints the ready pass command under each
-  waiting task, `task_prime` `roles.waiting[].next_status` (ADR §51).
+  waiting task, `task_prime` `roles.waiting[].next_status` (ADR §51). A new holder (`update --assignee`, `claim`) keeps a waiting task
+  in the queue; `config --review-statuses` over tasks in work warns with their hand-in, and `doctor` reports them (check `checks`).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming

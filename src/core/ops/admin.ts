@@ -14,7 +14,7 @@ import type { LockOptions } from '../lock.ts';
 import type { LoadedFile } from '../store.ts';
 import { commitFiles, withLock } from '../transact.ts';
 import { attachmentDir } from './attach.ts';
-import { actorSourceOf, checkActor, fieldInfo, fieldsLine, matchesType, parseInput, suggestClosest, unique } from './common.ts';
+import { actorSourceOf, checkActor, fieldInfo, fieldsLine, matchesType, parseInput, reviewStatuses, suggestClosest, unique } from './common.ts';
 import {
   attachmentContent,
   copyAttachments,
@@ -34,6 +34,7 @@ import {
 } from './doctor-checks.ts';
 import type { AttachmentMoves, CheckResult, RestorePlan } from './doctor-checks.ts';
 import type { OpContext, OpResult } from './common.ts';
+import { unseenInChecks } from './update.ts';
 
 export const InitInput = z.strictObject({
   // Board name (default: the project folder's name); the prefix is derived from it unless given.
@@ -471,7 +472,8 @@ function schemaChanged(schema: string): string {
 // Show or change the board name, description, prefix, statuses and fields (`laneboard config`); the prefix changes only while the board
 // has no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it; a field is
 // dropped, or gets a new type, only when no active task holds a value it would leave undeclared or of another type. Name,
-// description and prefix refresh the registry, whose check keeps the prefix unique among live boards (also for an unchanged one).
+// description and prefix refresh the registry, whose check keeps the prefix unique among live boards (also for an unchanged one). Checks
+// turned on a status with tasks in work there warn with their hand-in (unseenInChecks, S6w r1).
 export async function configureStore(ctx: OpContext, input: ConfigureInputT): Promise<OpResult<ConfigureResult>> {
   const p = parseInput(ConfigureInput, input);
   const warnings: string[] = [];
@@ -511,7 +513,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
       if (prefix !== undefined && prefix !== before.prefix) checkNoTasks(ctx.store.dir, before.prefix, prefix);
       let active: TaskT[] = [];
       let archived: TaskT[] = [];
-      if (statuses !== undefined || fieldsChange) {
+      if (statuses !== undefined || fieldsChange || reviewChange) {
         active = readStoreFile(ctx.store.dir, 'active', warnings).data.tasks;
         archived = readStoreFile(ctx.store.dir, 'archive', warnings).data.tasks;
       }
@@ -556,6 +558,9 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
       const final = finalChanged(before.statuses, next.statuses, active);
       if (final !== undefined) warnings.push(final);
       if (next.schema !== before.schema) warnings.push(schemaChanged(next.schema));
+      // A status turned into a check while tasks are in work there (S6w r1): they are not handed in, so no checker sees them.
+      const unseen = reviewChange ? unseenInChecks(next, active) : undefined;
+      if (unseen !== undefined) warnings.push(unseen);
       return result(next, true);
     });
   // The registry holds no statuses: a status change alone leaves it alone.
@@ -801,6 +806,12 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     // Active tasks only, like statuses: an archived task is read-only, so a field dropped or retyped after it was archived (config
     // --drop-field / --field warn about it) is no problem to fix.
     add('fields', fieldCheck(config, active.data.tasks));
+    // A board with checks: every task in a check is handed in, so the checkers see it (S6w r1; config turning a status with tasks in
+    // work into a check warns too). Not shown without checks.
+    if (reviewStatuses(config).length > 0) {
+      const unseen = unseenInChecks(config, active.data.tasks);
+      add('checks', unseen === undefined ? { ok: true, message: 'every task in a check is handed in' } : { ok: false, message: unseen });
+    }
   });
   return { data: { healthy: checks.every((c) => c.ok || c.fixed), checks }, warnings };
 }

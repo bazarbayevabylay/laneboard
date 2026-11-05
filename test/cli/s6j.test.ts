@@ -128,7 +128,8 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     expect((await run(s, 'rev', ['comment', 'API-1', 'REWORK: tests missing'])).code).toBe(0);
     const back = await run(s, 'rev', ['update', 'API-1', '--status', 'dev']);
     expect(back.code).toBe(0);
-    expect(back.doc.warnings).toEqual(['API-1 was handed in; after this move it is not: pass it on or accept it with laneboard finish API-1 --result "<result>" instead, or the assignee hands it in again with finish']);
+    // S6w r1: the named commands run (a checker's finish names --status): the hand-in again of the holder after the move.
+    expect(back.doc.warnings).toEqual(['API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a']);
     expect(await row(s, 'API-1')).toMatchObject({ status: 'dev', handed_in: false, in_work: true, last_comment: { actor: 'rev', text: 'REWORK: tests missing' } });
     // Handed in again after rework: a new hand-in to code_review with the new result (A15).
     const again = await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r2 with tests', '--no-commit']);
@@ -220,7 +221,7 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
     expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa'])).doc.error).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
     const moved = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev']);
     expect(moved.code).toBe(0);
-    expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not: pass it on or accept it with laneboard finish API-1 --result "<result>" instead, or the assignee hands it in again with finish']);
+    expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a']);
   });
 
   it('a task handed in to a status outside the checks goes through every check: rev passes it to code_review, not into done', async () => {

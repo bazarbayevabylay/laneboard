@@ -552,7 +552,7 @@ export interface ViewCard {
   children: { total: number; final: number };
   // Last change of the task (every event moves it).
   updated_at: string;
-  // Awaiting acceptance: its assignee handed it in with finish (handedIn).
+  // Awaiting acceptance or a check: handed in with finish (handedIn; on a board with checks whoever holds it now).
   handed_in: boolean;
   // Somebody works on it: assigned, neither in the first configured status nor in the final one, not handed in.
   in_work: boolean;
@@ -586,7 +586,7 @@ export const STALE_AFTER_MS = 4 * 60 * 60 * 1000;
 // assigned, neither in the first configured status nor in the final one, not handed in; stale = in work and unchanged for STALE_AFTER_MS.
 function workMarks(task: TaskT, config: ConfigT, nowMs: number): { handed_in: boolean; in_work: boolean; stale: boolean } {
   const finals = finalStatuses(config.statuses);
-  const handed = handedIn(task);
+  const handed = handedIn(task, config);
   const inWork = task.assignee !== null && task.status !== config.statuses[0] && !finals.includes(task.status) && !handed;
   return { handed_in: handed, in_work: inWork, stale: inWork && nowMs - Date.parse(task.updated_at) > STALE_AFTER_MS };
 }

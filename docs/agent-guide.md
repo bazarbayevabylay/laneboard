@@ -500,7 +500,13 @@ against an agent's mistake, not against a hostile agent.
 - A task enters a check only with `finish` (handed in by its holder, or passed on by the check before), so it always shows in the
   checkers' queue: `update`, `claim`, `create` and `import` into a check are refused. The fix of the holder (or of anybody for an
   unassigned task) is the hand-in, `laneboard finish <ID> --status <check> --result "<what you did, how you checked it>"`; of a checker
-  of a waiting task `laneboard get <ID>` with both commands; of anybody else a comment that asks the holder to hand it in.
+  of a waiting task `laneboard get <ID>` with both commands; of anybody else a comment that asks the holder to hand it in. A closed task
+  is reopened first: the fix is `laneboard update <ID> --status <work status> && laneboard finish <ID> --status <check> ...`.
+- The hand-in belongs to the task: a new holder (`update --assignee`, `--unassign`, `claim` without `--status`) keeps a waiting task
+  handed in and in the checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it.
+- `config --review-statuses` that turns a status with tasks in work into a check warns, naming each task and the hand-in its holder
+  runs (`laneboard finish <ID> --status <check> --result "..." --as <holder>`); `doctor` reports them in the check `checks` (exit 6)
+  until they are handed in. A move of a handed-in task by `update` or `claim` warns with the hand-in that puts it back in the queue.
 - `--reviewers x,y`: who checks (default: anybody but the author of the work). Any of them makes any check, both in a row too: the
   two lists are not paired. A checker's `finish` applies to the check the task is in now, whoever passed it there. The author of the
   work (any name that held the task or handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.

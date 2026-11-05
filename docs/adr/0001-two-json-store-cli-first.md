@@ -525,7 +525,7 @@ Checks
 - `doctor --restore-backup` never replaces a store file it cannot read (EACCES, EPERM, ELOOP, EISDIR, EIO) and restores only when both store files load; otherwise nothing is written ("must load first"). The restored file, every task only the other file's `.bak` still holds, and `next_id` above every id the store still names (the damaged text, both `.bak` files, kept `*.invalid-*` files, task ids, parents, task links, ids in events, attachment folders; at least the `.bak`'s `next_id` + 1) are written in one commit, even without `--fix`; the damaged file is kept as `<kind>.json.invalid-<time>`. A lost import leaves no trace, so ids it used above that floor can be given again; the message says so.
 - `--fix` moves attachment files without metadata to `attachments/.orphaned/<id>/` (never deletes).
 - One id on two tasks in one file is `STORE_INVALID` for every reader; `doctor --fix` gives the copy created later (created_at; on a tie the later one in the file) the next id (event `updated {id:[old,new]}`), moves its files, and names subtasks and links that name the old id with the command to move each (they keep the first copy). A BOM is read past; git conflict markers get "resolve the merge conflict", the restore last. A board in git is not supported (owner, decision 3): README says do not commit `.laneboard/`, and doctor catches the duplicates a merge makes.
-- doctor exits 6 while a problem is left (`ok: true`, `data.healthy: false`) and also reports active tasks in a status outside config, missing parents, attachments whose size or sha256 differ, and fields against config (active tasks only).
+- doctor exits 6 while a problem is left (`ok: true`, `data.healthy: false`) and also reports active tasks in a status outside config, missing parents, attachments whose size or sha256 differ, and fields against config (active tasks only); on a board with checks, tasks in a check that are not handed in (S6w r1).
 - Lock: a lock more than 2 s ahead of the clock and unchanged (inode and mtime) for 10 s of waiting is removed with a warning; `LOCK_TIMEOUT` names the lock's time, for a future one the fix is `rmdir <lock>`; a person waiting over 1 s sees a line on stderr (writes, doctor, init, config, and the locked reads of §42). SIGXFSZ has a listener. Checks: test/core/s6d.test.ts.
 
 ## 38. Delete leaves a tombstone; redact; the previous description (S6e, LB-31; audit A11-A13, owner decision 2; supersedes §5 `task_delete`, §6 tool list, §13 Q1, §14 "delete records no event")
@@ -644,3 +644,15 @@ Checks
   for checkers' finish now with `--status` (s6j, s6m, s6u, s6v, mcp, mcp/s6u, mcp/s6v); s6j (8) now asserts the race refuses the second.
   Golden files: none changed. Agent rule 7 keeps its text (a longer one breaks the prime budgets and its short form): prime's pass
   command and the refusal's message carry `--status`.
+- S6w review r1 (CHANGES REQUESTED). I1 broke without a status move: `update --assignee dev2` of a task waiting in code_review (and
+  `claim` without `--status` of an unassigned waiting one) left `handedIn` false, as it asked that the hand-in's actor be the assignee:
+  the task left the queue, the pass got ALREADY_CLAIMED, doctor said healthy. Decision (orchestrator): the hand-in belongs to the task.
+  On a board with checks `handedIn` reads only the arrival event (`handed_in` or `passed`), whoever holds the task; `awaitsCheck` and
+  `waitingByEvents` are gone (one predicate). The author rule is not weaker: the new holder is an author by `workedOn` (assigned) and
+  gets "handed in already". Without checks LB-9 stays: somebody else accepts only a task its current assignee handed in (s4).
+  Rejected: refusing a new assignee for a waiting task (the orchestrator's reassignment is a normal step). Also: `config
+  --review-statuses` turning a status with tasks in work into a check warns with each task and its holder's `finish <ID> --status
+  <check>` (`unseenInChecks`), and doctor reports them (check `checks`, only on a board with checks: exit 6 until handed in); the A17
+  warning names `finish --status <next>` and the hand-in that runs after the move (into the final status: a comment with the result);
+  a move of a closed task into a check gets the fix `update <ID> --status <work> && finish <ID> --status <check> ...` (`handInLine`;
+  finish never reopens, §20). Checks: test/cli/s6w.test.ts "S6w review r1"; s6j A17 expectations rewritten. Golden files: none changed.
