@@ -113,7 +113,7 @@ describe('laneboard finish', () => {
     ]);
   });
 
-  it("somebody else's task: ALREADY_CLAIMED with the comment fix, nothing written; an earlier session of the default name: no --resume either", async () => {
+  it("somebody else's task: ALREADY_CLAIMED with the comment fix, nothing written; an earlier session of the default name: --resume named for a closed one", async () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'Theirs', status: 'in_progress', assignee: 'dev-1' });
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
@@ -125,11 +125,10 @@ describe('laneboard finish', () => {
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Mine before /clear', status: 'in_progress', assignee: NAME_A });
     const mine = JSON.parse((await cli(['finish', 'LB-2', '--result', 'x', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(mine.error.code).toBe('ALREADY_CLAIMED');
-    // Rewritten in S3b (owner's decision): ALREADY_CLAIMED never offers --resume, only prime's resume section does.
-    // Rewritten in S4 (LB-9): finish by somebody else says it only accepts a task from review. S4b (owner): a task its assignee
-    // handed in with finish; the fix asks the holder to hand it in.
-    expect(mine.error.message).toBe(`task LB-2 is claimed by ${NAME_A} and is in_progress, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish LB-2 --status <one of: in_progress, review>); do not take it over: ask ${NAME_A} to hand it in, or close it as the orchestrator: laneboard update LB-2 --status done --as ${NAME_B}`);
-    expect(mine.error.fix).toBe(`laneboard comment LB-2 "hand it in: laneboard finish LB-2 --status <one of: in_progress, review> --result <result>" --as ${NAME_B}`);
+    // Rewritten in S6l (P5, reverses S3b): an earlier session of the default name that wrote less than 15 min ago may be a parallel
+    // session at work: the fix stays the comment, the message names --resume for a closed one (the silent case: s6l.test.ts).
+    expect(mine.error.message).toBe(`task LB-2 is held by ${NAME_A}, another session of your default name that wrote <1 min ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim LB-2 --resume, then finish it again`);
+    expect(mine.error.fix).toBe(`laneboard comment LB-2 "<note for ${NAME_A}>" --as ${NAME_B}`);
   });
 
   it('a task already in the final status: unchanged, with a warning that the result was not recorded (exit 0)', async () => {
@@ -202,11 +201,11 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     await createTask(as(s, 'a'), { title: 'Dev', status: 'in_progress', assignee: 'dev-1' });
     const prime = (await run(['prime'], SESSION_B)).stdout;
     expect(prime).toContain(
-      'You have no task in progress. Start one the first way that fits:\n1. The request names a task id: laneboard claim <ID> --json\n' +
-        '2. Your own task from before /clear (below) fits the request: laneboard claim <ID> --resume --json\n3. Otherwise create one:\n',
+      'You have no task in progress. Start one the first way that fits:\n1. The request names a task id: laneboard claim <ID> --status in_progress --json\n' +
+        '2. Your own earlier-session task (below) fits the request: laneboard claim <ID> --resume --json\n3. Otherwise create one:\n',
     );
     expect(prime).toContain(
-      '\nYour earlier sessions, unfinished (a parallel session of yours has the same name: resume only your own):\n  LB-1  [in_progress]  <1m ago  session aaaa1111  Fix cart total\n',
+      '\nYour earlier sessions, unfinished (a parallel session has the same name: resume only your own):\n  LB-1  [in_progress]  <1m ago  session aaaa1111  Fix cart total\n',
     );
     expect(prime).not.toMatch(/Old done|Bob|  Dev/);
     expect(JSON.parse((await run(['prime', '--json'], SESSION_B)).stdout).data).toMatchObject({ session_base: BASE, resumable: [{ id: 'LB-1', assignee: NAME_A }] });
@@ -225,14 +224,14 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     expect(after).not.toContain('Your earlier sessions');
   });
 
-  it('--json reply names resumed_from; without --resume ALREADY_CLAIMED names --resume neither in the message nor in the fix', async () => {
+  it('--json reply names resumed_from; without --resume ALREADY_CLAIMED of a session active <15 min names --resume in the message only', async () => {
     const s = await newStore();
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Mine', status: 'in_progress', assignee: NAME_A });
     const plain = JSON.parse((await cli(['claim', 'LB-1', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(plain.error.code).toBe('ALREADY_CLAIMED');
-    // Rewritten in S3b (owner's decision): the message no longer offers `claim --resume`.
-    expect(plain.error.message).not.toContain('--resume');
-    expect(plain.error.fix).not.toContain('--resume');
+    // Rewritten in S6l (P5, reverses S3b): the fix stays the comment (that session may be at work), the message names --resume.
+    expect(plain.error.message).toContain('if that session is closed: laneboard claim LB-1 --resume');
+    expect(plain.error.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B}`);
     const r = JSON.parse((await cli(['claim', 'LB-1', '--resume', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(r.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A });
     // On a free task or an own one --resume is a plain claim.

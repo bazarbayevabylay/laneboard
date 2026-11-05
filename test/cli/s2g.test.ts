@@ -111,8 +111,8 @@ describe('prime for subagents (LB-8)', () => {
     // Rewritten in S3 (review S2g MINOR 3): without a task in progress one numbered order of ways carries the claim command.
     const r = await cli(['prime', '--as', 'dev-1'], { cwd: s.root });
     expect(r.stdout).toContain(
-      'You have no task in progress. Start one the first way that fits:\n1. The request names a task id: laneboard claim <ID> --as dev-1 --json\n' +
-        '2. A free task below fits the request: laneboard claim <ID> --as dev-1 --json\n3. Otherwise create one:\n' +
+      'You have no task in progress. Start one the first way that fits:\n1. The request names a task id: laneboard claim <ID> --status in_progress --as dev-1 --json\n' +
+        '2. A free task below fits the request: as in 1.\n3. Otherwise create one:\n' +
         '  laneboard create "<short title of your work>" --status todo --assignee dev-1 --as dev-1 --json\n',
     );
     expect(r.stdout.endsWith('\nFree tasks (no assignee):\n  LB-2  [review]  rev 1  Free top\n  LB-1  [todo]  rev 1  Free low\n  LB-6  [in_progress]  rev 1  Free none\n')).toBe(true);
@@ -120,13 +120,13 @@ describe('prime for subagents (LB-8)', () => {
     expect(json.unassigned.map((t: ListItem) => t.id)).toEqual(['LB-2', 'LB-1', 'LB-6']);
     expect(json.unassigned_total).toBe(3);
     // The claim command carries the name the way the other commands of prime do.
-    expect((await cli(['prime'], { cwd: s.root })).stdout).toContain('2. A free task below fits the request: laneboard claim <ID> --as <your-name> --json\n');
-    expect((await cli(['prime'], { cwd: s.root, env: SESSION })).stdout).toContain('2. A free task below fits the request: laneboard claim <ID> --json\n');
-    expect((await cli(['prime', '--dir', s.dir, '--as', 'dev-1'], { cwd: s.root })).stdout).toContain(`2. A free task below fits the request: laneboard claim <ID> --as dev-1 --dir ${s.dir} --json\n`);
+    expect((await cli(['prime'], { cwd: s.root })).stdout).toContain('1. The request names a task id: laneboard claim <ID> --status in_progress --as <your-name> --json\n2. A free task below fits the request: as in 1.\n');
+    expect((await cli(['prime'], { cwd: s.root, env: SESSION })).stdout).toContain('1. The request names a task id: laneboard claim <ID> --status in_progress --json\n2. A free task below fits the request: as in 1.\n');
+    expect((await cli(['prime', '--dir', s.dir, '--as', 'dev-1'], { cwd: s.root })).stdout).toContain(`1. The request names a task id: laneboard claim <ID> --status in_progress --as dev-1 --dir ${s.dir} --json\n2. A free task below fits the request: as in 1.\n`);
     // With a task in progress there are no numbered ways: the free header carries the command.
     await createTask(as(s, 'a'), { title: 'Mine', status: 'in_progress', assignee: 'dev-1' });
     const busy = (await cli(['prime', '--as', 'dev-1'], { cwd: s.root })).stdout;
-    expect(busy).toContain('\nFree tasks (no assignee); take one: laneboard claim <ID> --as dev-1 --json\n  LB-2  [review]');
+    expect(busy).toContain('\nFree tasks (no assignee); take one: laneboard claim <ID> --status in_progress --as dev-1 --json\n  LB-2  [review]');
     expect(busy).not.toContain('first way that fits');
   });
 
@@ -176,7 +176,7 @@ describe('prime for subagents (LB-8)', () => {
     await createTask(as(s, 'a'), { title: 'For the subagent', status: 'todo' });
     const r = await cli(['prime'], { cwd: s.root, env: SESSION });
     expect(r.stdout).toContain(
-      `${hint}\nYour active tasks (${DEFAULT_NAME}), newest update first:\n  LB-1  [in_progress]  rev 1  Parent work\nFree tasks (no assignee); take one: laneboard claim <ID> --json\n  LB-2  [todo]  rev 1  For the subagent\n`,
+      `${hint}\nYour active tasks (${DEFAULT_NAME}), newest update first:\n  LB-1  [in_progress]  rev 1  Parent work\nFree tasks (no assignee); take one: laneboard claim <ID> --status in_progress --json\n  LB-2  [todo]  rev 1  For the subagent\n`,
     );
     // The same tasks under an explicit name are that agent's own: no line.
     expect((await cli(['prime', '--as', DEFAULT_NAME.replace(':1a2b3c4d', ':ffffffff')], { cwd: s.root, env: SESSION })).stdout).not.toContain('Subagent or parallel worker');
@@ -219,9 +219,9 @@ describe('prime for subagents (LB-8)', () => {
         const where = `own=${own} free=${free} earlier=${earlier} len=${len}`;
         expect(text.length, where).toBeLessThanOrEqual(PRIME_MAX_CHARS);
         expect(text.includes('Subagent or parallel worker? It is your parent'), where).toBe(true);
-        if (free) expect(text, where).toContain(own ? 'Free tasks (no assignee); take one: laneboard claim <ID> --json' : '. A free task below fits the request: laneboard claim <ID> --json\n');
+        if (free) expect(text, where).toContain(own ? 'Free tasks (no assignee); take one: laneboard claim <ID> --status in_progress --json' : '. A free task below fits the request: as in 1.\n');
         if (free) expect(text, where).toContain('\nFree tasks (no assignee)');
-        if (earlier) expect(text, where).toContain('from before /clear (below) fits the request: laneboard claim <ID> --resume --json\n');
+        if (earlier) expect(text, where).toContain('earlier-session task (below) fits the request: laneboard claim <ID> --resume --json\n');
         const [beforeFree = '', freePart = ''] = text.split('Free tasks (no assignee)');
         const [mine = '', earlierPart = ''] = beforeFree.split('\nYour earlier sessions');
         const count = (part: string) => part.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;

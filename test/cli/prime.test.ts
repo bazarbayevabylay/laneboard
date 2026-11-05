@@ -53,13 +53,14 @@ describe('prime', () => {
     expect(r.stdout).toContain(
       'You have no task in progress. Create one now:\n' +
         '  laneboard create "<short title of your work>" --status backlog --assignee dev-1 --as dev-1 --json\n' +
-        'Given a task id instead: laneboard claim <ID> --as dev-1 --json\n',
+        // S6l (A-U3): claim moves the task to the working status, the second one of the config.
+        'Given a task id instead: laneboard claim <ID> --status doing --as dev-1 --json\n',
     );
     // Rewritten in S4 (LB-10): a task in the final status is no active task, so it is not listed as the agent's.
     expect(r.stdout).not.toContain('Your active tasks');
     expect(r.stdout).not.toMatch(/: none\b/);
     const empty = await cli(['prime', '--hook'], { cwd: (await newStore()).root, env: { LANEBOARD_AGENT: 'dev-1' } });
-    expect(empty.stdout.endsWith('You have no task in progress. Create one now:\n  laneboard create "<short title of your work>" --status todo --assignee dev-1 --as dev-1 --json\nGiven a task id instead: laneboard claim <ID> --as dev-1 --json\n')).toBe(true);
+    expect(empty.stdout.endsWith('You have no task in progress. Create one now:\n  laneboard create "<short title of your work>" --status todo --assignee dev-1 --as dev-1 --json\nGiven a task id instead: laneboard claim <ID> --status in_progress --as dev-1 --json\n')).toBe(true);
     expect(empty.stdout).not.toContain('none. Find work');
     expect(JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).data).toMatchObject({ in_progress: 0, first_status: 'backlog', final_status: 'shipped' });
   });

@@ -16,12 +16,14 @@ import {
   checkStatus,
   checkTaskLinks,
   DescriptionInput,
+  EARLIER_SESSION_SILENT_MS,
   finalStatuses,
   heldByEarlierSession,
   IdInput,
   LinkInput,
   linkKey,
   MAX_COMMENT_CHARS,
+  minutesText,
   normalizeId,
   openChildrenWarning,
   parseFieldArgs,
@@ -29,6 +31,7 @@ import {
   requireActiveTask,
   requireActor,
   RevInput,
+  silentFor,
   TitleInput,
   toTaskView,
   touch,
@@ -207,13 +210,13 @@ export const ClaimInput = z.strictObject({
   id: IdInput,
   status: z.string().min(1).optional(),
   expected_rev: RevInput.optional(),
-  // Take the task over from another session of the same default name base (your own work before /clear).
+  // Take the task over from another session of the same default name base (your own work before a /clear or a restart).
   resume: z.boolean().optional(),
 });
 export type ClaimInputT = z.infer<typeof ClaimInput>;
 
-// ALREADY_CLAIMED for a task held by `holder`. Neither the fix (it may be run blindly) nor the message names a takeover command:
-// `claim --resume` is offered only by prime's resume section (owner's decision, S3b).
+// ALREADY_CLAIMED for a task held by `holder`, not an earlier session of the actor's default name (earlierSessionClaimed is for
+// those): its fix may be run blindly, so neither the fix nor the message names a takeover command.
 function claimedBy(ctx: OpContext, id: string, holder: string, actor: string, resumeAsked: boolean): LaneboardError {
   let why = 'do not take it over: reassignment is the orchestrator\'s decision';
   if (resumeAsked) {
@@ -228,8 +231,31 @@ function claimedBy(ctx: OpContext, id: string, holder: string, actor: string, re
   });
 }
 
+// ALREADY_CLAIMED for a task of another session of the actor's default name (heldByEarlierSession), by how long that session has not
+// written on the board (P5, S6l): EARLIER_SESSION_SILENT_MS or more, it is taken for closed by a /clear or a restart, so the fix takes
+// the task back (claim --resume); a younger one may be a parallel session at work: the fix is the comment, and the message names
+// --resume for a session that is closed. `then`: what the refused command does after the resume (finish: run it again).
+function earlierSessionClaimed(id: string, holder: string, actor: string, silentMs: number, then: string): LaneboardError {
+  const details = { assignee: holder };
+  if (silentMs >= EARLIER_SESSION_SILENT_MS) {
+    const quiet = Number.isFinite(silentMs) ? `no write for ${minutesText(silentMs)}` : 'no write of it left on the board';
+    return new LaneboardError(
+      'ALREADY_CLAIMED',
+      `task ${id} is held by ${holder}, an earlier session of your default name (${quiet}: closed by /clear or a restart); if it is your own work, take it back: laneboard claim ${id} --resume${then}`,
+      { details, fix: `laneboard claim ${id} --resume --json` },
+    );
+  }
+  return new LaneboardError(
+    'ALREADY_CLAIMED',
+    `task ${id} is held by ${holder}, another session of your default name that wrote ${minutesText(silentMs)} ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim ${id} --resume${then}`,
+    { details, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+  );
+}
+
 // Take a task: assignee := actor; a task held by someone else fails with ALREADY_CLAIMED, unless `resume` takes it over from
-// another session of the same default name base (an `assigned` event with `resumed: true`).
+// another session of the same default name base (an `assigned` event with `resumed: true`). A resume warns when that session wrote
+// less than EARLIER_SESSION_SILENT_MS ago (a parallel session may still be at work: two tabs after a restart, A-U6) and names the
+// parent task held by the same session (finish of the parent needs it back too, A-U2).
 export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(ClaimInput, input);
@@ -244,8 +270,12 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       checkExpectedRev(task, false, p.expected_rev);
       const holder = task.assignee;
-      const resumed = p.resume === true && heldByEarlierSession(task, ctx.sessionBase, actor);
-      if (holder !== null && holder !== actor && !resumed) throw claimedBy(ctx, id, holder, actor, p.resume === true);
+      const earlier = heldByEarlierSession(task, ctx.sessionBase, actor);
+      const resumed = p.resume === true && earlier;
+      if (holder !== null && holder !== actor && !resumed) {
+        throw earlier ? earlierSessionClaimed(id, holder, actor, silentFor(s.active.tasks, holder, s.now), '') : claimedBy(ctx, id, holder, actor, p.resume === true);
+      }
+      if (resumed && holder !== null) resumeWarnings(s.active.tasks, task, holder, ctx.sessionBase, actor, s.now, finalStatuses(s.config.statuses), warnings);
       const assignChange = holder !== actor ? { from: holder, to: actor, ...(resumed ? { resumed: true } : {}) } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       if (!assignChange && !statusChange) {
@@ -267,6 +297,19 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
     txOptions(ctx, warnings),
   );
   return resumedFrom === undefined ? { data, warnings } : { data, warnings, reply: { resumed_from: resumedFrom } };
+}
+
+// Warnings of a claim --resume of `task` from `holder` (read before the write): the holder wrote recently, so it may be a parallel
+// session at work and not the actor's closed one; the parent task is held by the same session (resume it too to finish it).
+function resumeWarnings(tasks: readonly TaskT[], task: TaskT, holder: string, sessionBase: string | undefined, actor: string, now: string, finals: readonly string[], warnings: string[]): void {
+  const silent = silentFor(tasks, holder, now);
+  if (silent < EARLIER_SESSION_SILENT_MS) {
+    warnings.push(`${task.id} taken from a session active ${minutesText(silent)} ago (${holder}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment ${task.id} "<note for ${holder}>"`);
+  }
+  const parent = task.parent === undefined ? undefined : tasks.find((t) => t.id === task.parent);
+  if (parent !== undefined && parent.assignee === holder && !finals.includes(parent.status) && heldByEarlierSession(parent, sessionBase, actor)) {
+    warnings.push(`its parent ${parent.id} is held by the same session ${holder}: laneboard claim ${parent.id} --resume --json`);
+  }
 }
 
 // Comment text: 1 to MAX_COMMENT_CHARS characters, not blank (comments and finish results).
@@ -419,13 +462,16 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       const holder = task.assignee;
       byOther = holder !== null && holder !== actor;
       if (holder !== null && byOther) {
-        if (!finals.includes(status)) throw notFinalTarget(id, holder, task.status, actor, finals.join(''));
+        // A task of an earlier session of the actor's default name: take it back first, then finish (P5, S6l); its acceptance stays.
+        const refused = (other: LaneboardError): LaneboardError =>
+          heldByEarlierSession(task, ctx.sessionBase, actor) ? earlierSessionClaimed(id, holder, actor, silentFor(s.active.tasks, holder, s.now), ', then finish it again') : other;
+        if (!finals.includes(status)) throw refused(notFinalTarget(id, holder, task.status, actor, finals.join('')));
         // Accepted before (or a retry after a lost lock): nothing to do.
         if (finals.includes(task.status)) {
           warnings.push(`no changes: ${id} is already ${task.status}; ${notRecorded}`);
           return toTaskView(task, false);
         }
-        if (!handedIn(task)) throw notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses);
+        if (!handedIn(task)) throw refused(notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses));
         touch(task, s.now, actor);
         // The result mark (ADR §27): only finish writes it, so readers tell the result from other comments.
         addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
