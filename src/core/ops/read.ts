@@ -293,7 +293,7 @@ function toListItem(task: TaskT, archived: boolean): ListItem {
     updated_by: task.updated_by,
     rev: task.rev,
     archived,
-    ...deletedField(task),
+    ...deletedField(task, archived),
   };
 }
 

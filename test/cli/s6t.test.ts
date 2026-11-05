@@ -73,6 +73,46 @@ describe('list and get show a tombstone: deleted {at, by}', () => {
     expect(getText).toContain(`  deleted: ${at} by owner (only this trace is kept`);
     expect((await cli(['get', 'LB-2'], { cwd: s.root })).stdout).not.toContain('deleted:');
   });
+
+  it('an active task with the mark (restored by 0.3.1) is live: no deleted in list/get/--json; archived again by 0.4.0 it is a tombstone', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'one', status: 'todo' });
+    await deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' });
+    // What restore in 0.3.1 does (it keeps unknown keys): the tombstone moves to active.json with its `deleted` mark, without archived_at.
+    const activeFile = path.join(s.dir, 'active.json');
+    const archiveFile = path.join(s.dir, 'archive.json');
+    const active = JSON.parse(fs.readFileSync(activeFile, 'utf8')) as { tasks: Array<Record<string, unknown>> };
+    const archive = JSON.parse(fs.readFileSync(archiveFile, 'utf8')) as { tasks: Array<Record<string, unknown>> };
+    const task = archive.tasks.find((t) => t.id === 'LB-1');
+    expect(task?.deleted).toBeDefined();
+    delete task?.archived_at;
+    archive.tasks = archive.tasks.filter((t) => t.id !== 'LB-1');
+    active.tasks.push(task as Record<string, unknown>);
+    writeRaw(archiveFile, JSON.stringify(archive, null, 2));
+    writeRaw(activeFile, JSON.stringify(active, null, 2));
+    expect((await cli(['update', 'LB-1', '--description', 'revived and filled', '--as', 'a'], { cwd: s.root })).code).toBe(0);
+
+    const items = JSON.parse((await cli(['list', '--json'], { cwd: s.root })).stdout).data.items as Array<Record<string, unknown>>;
+    expect(items.find((i) => i.id === 'LB-1')).toMatchObject({ archived: false });
+    expect(items.find((i) => i.id === 'LB-1')).not.toHaveProperty('deleted');
+    const listText = (await cli(['list'], { cwd: s.root })).stdout;
+    expect(listText).toContain('one');
+    expect(listText).not.toContain('[deleted');
+    const got = JSON.parse((await cli(['get', 'LB-1', '--json'], { cwd: s.root })).stdout).data;
+    expect(got).toMatchObject({ archived: false, description: 'revived and filled' });
+    expect(got).not.toHaveProperty('deleted');
+    const getText = (await cli(['get', 'LB-1'], { cwd: s.root })).stdout;
+    expect(getText).not.toContain('deleted:');
+    expect(getText).not.toContain('are gone');
+
+    // Archived again (0.4.0 archive keeps the mark): a tombstone as before S6t, shown as deleted, and restore refuses it.
+    expect((await cli(['archive', 'LB-1', '--as', 'a'], { cwd: s.root })).code).toBe(0);
+    const again = JSON.parse((await cli(['get', 'LB-1', '--json'], { cwd: s.root })).stdout).data;
+    expect(again).toMatchObject({ archived: true, deleted: { at: expect.stringMatching(ISO), by: 'owner' } });
+    const restore = await cli(['restore', 'LB-1', '--as', 'a', '--json'], { cwd: s.root });
+    expect(restore.code).toBe(2);
+    expect(JSON.parse(restore.stdout).error).toMatchObject({ code: 'INVALID_VALUE', message: expect.stringContaining('LB-1 was deleted at') });
+  });
 });
 
 describe('STORE_READ_ONLY: the registry fix covers both meanings the docs give it', () => {
@@ -81,6 +121,13 @@ describe('STORE_READ_ONLY: the registry fix covers both meanings the docs give i
     expect(fix).toContain('--board');
     expect(fix).toContain('boards --forget');
     expect(fix).toContain('registry');
+  });
+
+  it('the store refuses a write to a --board store with the --board half of that default', async () => {
+    const s = await newStore();
+    const err = await rejectsWith(createTask({ store: { dir: s.dir, found: 'board', readOnly: true }, actor: 'a' }, { title: 'x', status: 'todo' }), 'STORE_READ_ONLY');
+    expect(err.fix).toBe('drop --board and write to your own board (laneboard boards --json shows which one is yours)');
+    expect(ERRORS.STORE_READ_ONLY.fix).toContain(err.fix);
   });
 });
 

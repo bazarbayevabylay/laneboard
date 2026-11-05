@@ -1,6 +1,6 @@
 // The single mutation path (W2-W8): lock -> fresh read -> validate -> mutate -> atomic write of touched files.
 import { loadConfig } from './config.ts';
-import { LaneboardError } from './errors.ts';
+import { LaneboardError, READ_ONLY_BOARD_FIX } from './errors.ts';
 import { removeOrphanTmp, writeFileAtomic } from './fsio.ts';
 import { acquireLock } from './lock.ts';
 import type { HeldLock, LockOptions } from './lock.ts';
@@ -159,7 +159,7 @@ export async function transact<T>(store: StoreRef, spec: { files: readonly FileK
   // A board opened with --board is someone else's: reading it is fine, writing to it never is.
   if (store.readOnly) {
     throw new LaneboardError('STORE_READ_ONLY', `${store.dir} was opened with --board, which is read-only`, {
-      fix: 'write to your own board without --board (laneboard boards --json shows which one is yours by its path and description)',
+      fix: READ_ONLY_BOARD_FIX,
     });
   }
   const warnings = opts.warnings ?? [];

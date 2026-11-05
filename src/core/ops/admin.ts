@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { buildConfig, configPath, configSchemaFor, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, middleStatuses, reviewProblem, serializeConfig, validateConfig } from '../config.ts';
-import { ERRORS, LaneboardError } from '../errors.ts';
+import { ERRORS, LaneboardError, READ_ONLY_BOARD_FIX } from '../errors.ts';
 import { shellQuote } from '../shell.ts';
 import { ensureDir, listOrphanTmp, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { checkPrefixFree, prefixTaken, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
@@ -480,7 +480,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
   const reviewChange = p.review_statuses !== undefined || p.reviewers !== undefined;
   const change = registers || p.statuses !== undefined || fieldsChange || reviewChange || p.creators !== undefined;
   if (change && ctx.store.readOnly) {
-    throw new LaneboardError('STORE_READ_ONLY', `${ctx.store.dir} was opened with --board, which is read-only`, { fix: 'change your own board without --board' });
+    throw new LaneboardError('STORE_READ_ONLY', `${ctx.store.dir} was opened with --board, which is read-only`, { fix: READ_ONLY_BOARD_FIX });
   }
   const name = p.name === undefined ? undefined : checkBoardText(BoardName, p.name, 'name');
   const description = p.description === undefined ? undefined : checkBoardText(BoardDescription, p.description, 'description');

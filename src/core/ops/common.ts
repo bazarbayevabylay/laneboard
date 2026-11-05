@@ -652,12 +652,14 @@ export function toTaskView(task: TaskT, archived: boolean, eventsLimit?: number)
     updated_by: task.updated_by,
     archived_at: task.archived_at ?? null,
     archived,
-    ...deletedField(task),
+    ...deletedField(task, archived),
   };
 }
 
-// `deleted` for a view: present only on a tombstone, so the view of any other task keeps its keys.
-export function deletedField(task: TaskT): { deleted?: DeletedMark } {
+// `deleted` for a view: present only on a tombstone (an archived task with the mark), so the view of any other task keeps its keys.
+// An active task with the mark (restored by 0.3.1, which keeps unknown keys) is a live task again: no `deleted`, as delete and restore treat it.
+export function deletedField(task: TaskT, archived: boolean): { deleted?: DeletedMark } {
+  if (!archived) return {};
   const mark = deletedMark(task);
   return mark ? { deleted: mark } : {};
 }

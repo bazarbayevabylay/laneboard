@@ -27,6 +27,8 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
 - `laneboard redact <ID> --text-file <file>` removes a pasted secret from a task and from the store backups (ADR §38).
 - `laneboard config --field <key>:<type>[:<description>]` and `--drop-field <key>` declare and remove task fields after init (ADR §40).
 - `laneboard boards --forget <prefix|name|path>` removes a registry entry whose board is gone (ADR §39).
+- `get` and `list` show who deleted a task and when: `deleted <at> by <who>`, `deleted {at, by}` with `--json` (a tombstone only) (ADR §38).
+- `setup claude-code` warns in one line when the board path and your name go into the committed `.claude/settings.json` (ADR §49).
 - `finish --commit <sha>`; MCP `task_finish` takes `cwd` (your worktree) or `commit` (ADR §41).
 - `setup codex --remove --global` removes the global Codex entry even while other projects use it (ADR §39).
 - `list` items carry `handed_in`, `in_work` and `stale`; `laneboard` with no arguments prints the help; `-v` is `--version`.
@@ -37,7 +39,8 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
 ### Changed
 
 - `delete` leaves a tombstone in `archive.json` (id, title, status, dates, `deleted {at, by}`); `restore` and a second `delete` of it
-  are refused. `task_delete` is no longer an MCP tool: deleting is for people, CLI-only (ADR §38).
+  are refused. `task_delete` is no longer an MCP tool: deleting is for people, CLI-only; a call of it is an unknown-tool error whose
+  fix names `laneboard delete <ID> --confirm <ID>` (ADR §6, §38).
 - Replacing a description keeps the old text in its `updated` event (`previous`, up to 10 000 characters) (ADR §38).
 - Monorepo (ADR §44): inside a git repository only `.git` or a board of its own marks another project, so a package with its own
   `AGENTS.md` or `CLAUDE.md` uses the root's board without a warning. A plain `init` in a subfolder of a repository whose board lies
@@ -86,8 +89,9 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
 - Boards of 0.3.x open unchanged: the store stays `laneboard/store@1` and `config.json` `laneboard/config@1`. `config@2` is written
   only when you turn on checks, reviewers or creators; laneboard 0.3.x refuses such a board (`STORE_TOO_NEW`), and turning them all off
   writes `config@1` again. Boards made before 0.4.0 get checks only by hand.
-- A tombstone is a task with an unknown key `deleted`, which 0.3.x reads and keeps; its `restore` there brings back an empty task.
-- MCP clients that called `task_delete` get an unknown-tool error; deleting is CLI-only.
+- A tombstone is a task with an unknown key `deleted`, which 0.3.x reads and keeps; its `restore` there brings back an empty task,
+  which 0.4.0 shows as a live task (no `deleted`) until it is archived again.
+- MCP clients that called `task_delete` get an unknown-tool error whose fix names the CLI command; deleting is CLI-only.
 - Re-run `laneboard setup <harness>` in each project to update the instruction block, the hook matcher and the Claude Code pin.
 - Node.js 22 or newer; macOS and Linux (`os` in package.json: npm refuses Windows with `EBADPLATFORM`).
 
