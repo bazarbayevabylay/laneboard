@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
 import { isDirectory, readCheckout, readCommit, readWorktrees } from '../git.ts';
+import { shellQuote } from '../shell.ts';
 import type { CheckoutState } from '../git.ts';
 import { samePath } from '../store.ts';
 import type { ActorSource } from '../agent-name.ts';
@@ -547,6 +548,36 @@ function handInToFirstCheck(id: string, target: string, first: string, review: r
     : new LaneboardError('INVALID_VALUE', message, { fix });
 }
 
+// The return for rework as one command line, run as printed (rule 13): the comment with the caller's text, then the move into `to`.
+// No `input` goes with it, so the CLI keeps it as is and never rebuilds the caller's finish with another status (B-U1 run 3). The text
+// goes after `--`, as the CLI asks for text that starts with "-" ("- missing test", "--broken"): it is never read as an option.
+function reworkFix(id: string, text: string, to: string, actor: string): string {
+  return `laneboard comment ${id} --as ${actor} -- ${shellQuote(text)} && laneboard update ${id} --status ${to} --as ${actor}`;
+}
+
+// Does a checker's finish into `target` (not a later check, not the first final status) of a task in `current` mean a return for
+// rework (B-U1 run 3, review r1): `target` is a work status (not a check, not final), wherever it lies, or a check before `current`.
+function isReworkTarget(config: ConfigT, current: string, target: string): boolean {
+  if (finalStatuses(config.statuses).includes(target)) return false;
+  if (!reviewStatuses(config).includes(target)) return true;
+  return config.statuses.indexOf(target) < config.statuses.indexOf(current);
+}
+
+// INVALID_VALUE of a checker's finish into a work status (any status that is neither a check nor final, wherever it lies: also one
+// between two checks) or into an earlier check (B-U1 run 3, review r1): that is a return for rework, so the fix is the documented one
+// (README "Return for rework"): the comment, then update into `target` when it is a work status, or into the work status before the
+// checks when it is an earlier check (the first status when none lies between). A fix of a refusal never changes what the caller
+// meant: never a finish that passes the task on or accepts it.
+function returnForRework(config: ConfigT, id: string, current: string, target: string, text: string, actor: string): LaneboardError {
+  const review = reviewStatuses(config);
+  const work = review.includes(target) ? (workStatusBeforeChecks(config) ?? config.statuses[0] ?? target) : target;
+  return new LaneboardError(
+    'INVALID_VALUE',
+    `${id} is handed in and ${current}: a check passes it on to a later check or accepts it into ${finalStatuses(config.statuses)[0] ?? ''} (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}), never into ${target}; to return it for rework, comment why, then laneboard update ${id} --status ${work} (the assignee hands it in again with finish)`,
+    { fix: reworkFix(id, text, work, actor) },
+  );
+}
+
 // ALREADY_CLAIMED of somebody not in review.by passing on, accepting or closing a task: the fix is the comment (it may be run blindly).
 function notChecker(id: string, holder: string | null, actor: string, by: readonly string[]): LaneboardError {
   const owner = holder ?? 'its assignee';
@@ -742,6 +773,9 @@ function checkerFinish(
   }
   const target = p.status ?? next;
   if (!later.includes(target)) {
+    // A work status (neither a check nor final, before or after the current one) or an earlier check is a return for rework (B-U1
+    // run 3, review r1): its fix never passes the task on or accepts it. The current check keeps the fix of the next check below.
+    if (isReworkTarget(s.config, task.status, target)) throw returnForRework(s.config, id, task.status, target, p.result, actor);
     throw new LaneboardError('INVALID_VALUE', `${id} is handed in and ${task.status}: a check passes it on to a later check or accepts it into ${final} (${checksLine(review, final)}), so the status is one of ${later.join(', ')}`, {
       allowed: later,
       input: { field: 'status', value: target, suggestion: next },
@@ -801,10 +835,11 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       const allowed = finishStatuses(s.config.statuses);
       let status = p.status ?? finals[0] ?? '';
       if (p.status !== undefined) checkStatus(s.config, p.status);
+      // Back to the start is no finish: the fix keeps that meaning (comment, then update), never the final status (B-U1 run 3).
       if (!allowed.includes(status)) {
         throw new LaneboardError('INVALID_VALUE', `"${status}" is the starting status; finish sets one of ${allowed.join(', ')} (default ${finals.join('')}; back to the start: laneboard update ${id} --status ${status})`, {
           allowed,
-          input: finals.length === 1 ? { field: 'status', value: status, suggestion: finals[0] ?? '' } : { field: 'status', value: status },
+          fix: reworkFix(id, p.result, status, actor),
         });
       }
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
@@ -845,9 +880,9 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         if (open) warnings.push(open);
         return toTaskView(task, false);
       }
-      // On a board with checks the assignee hands in to the first check (the default), never into a later one or the final status;
-      // a task already in a check stays there: finish again records a new result (P1) or hands it in there, and never goes back to
-      // an earlier check it passed (B-U1 run 2: authorRefusal).
+      // On a board with checks the assignee hands in to the check the task is in, else the first check (the default), never into a
+      // later one or the final status; a task already in a check stays there: finish again records a new result (P1) or hands it in
+      // there, and never goes back to an earlier check it passed (B-U1 run 2: authorRefusal).
       if (review.length > 0 && !finals.includes(task.status)) {
         const handInAt = handInStatus(review, task);
         if (p.status === undefined) status = handInAt;

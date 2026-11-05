@@ -94,7 +94,7 @@ laneboard setup codex
 | Harness | MCP entry | Instructions | Board pin |
 |---|---|---|---|
 | claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (kept out of git by `.git/info/exclude`); in a folder with a board of its own inside another git repository, or at a repository root that holds other boards, they go to the committed `.claude/settings.json` (Claude Code reads the local file only at the repository root, so a pin there would reach every board) — do not commit that machine path, or keep one board per repository; plus the SessionStart and PostToolUse hooks in `.claude/settings.json` |
-| codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<board>` in the instructions; the entry forwards `LANEBOARD_DIR` |
+| codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<board>` before each command in the instructions; the entry forwards `LANEBOARD_DIR`: start Codex in the project folder or as `LANEBOARD_DIR=<board> codex`, never export it (Codex in other projects would write to this board) |
 | cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
 | opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
@@ -190,12 +190,17 @@ laneboard config --review-statuses none --reviewers none --json
 ```
 
 - `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
-  to the first check; a checker's `finish` passes the task to the next check and from the last one accepts it into the final status.
+  to the check the task is in, else the first check; a checker's `finish` passes the task to the next check and from the last one
+  accepts it into the final status.
 - `--reviewers rev,orch`: who checks (default: anybody but the author of the work). The author never passes on or accepts its own work.
+- Any of the reviewers makes any check, both in a row too: the two lists are not paired (`rev` is not bound to `code_review`).
+  A checker's `finish` applies to the check the task is in now, whoever passed it there.
 - A task waiting in a check is handed in: the author's `finish`, `update` or `claim` into another check or the final status gets
   `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment. Never back to an earlier check.
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
+  A checker's `finish --status` with an earlier check or any work status (also one between two checks) is refused; its fix is that
+  comment and update in one line.
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the `finish` to run.
 - Boards created before 0.4.0 keep working as they were; checks are turned on only by hand with `laneboard config`.
 

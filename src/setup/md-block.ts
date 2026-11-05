@@ -50,16 +50,18 @@ export type InsideCheck = (inside: string, firstLine: number) => { conflict: str
 const STORE_SLOT = 'LANEBOARDSTOREPATHSLOT';
 // Every way the instruction block names the store (Record: a new pin cannot be left out).
 const PINS = Object.keys({ 'settings-local-env': true, 'settings-root-local-env': true, 'settings-env': true, inline: true } satisfies Record<StorePin, true>) as StorePin[];
-// Lines the 0.1.0 builds wrote (commits 6f81877..4e19d07, before 0.2.0) that instructionLines no longer gives: a block holding them
-// is still laneboard's and is updated (test/setup/fixtures/blocks/0.1.0-*).
+// Lines earlier versions wrote that instructionLines no longer gives (the 0.1.0 builds, commits 6f81877..4e19d07, before 0.2.0; the
+// inline store line up to 0.4.0 before S6v): a block holding them is still laneboard's and is updated (test/setup/fixtures/blocks/).
 const EARLIER_LINES = [
   'This project tracks tasks with laneboard (task board & CLI for AI coding agents; the store is .laneboard/).',
   'Before you work on tasks, run `laneboard prime` and follow the rules it prints.',
   'Writes need your name: `export LANEBOARD_AGENT=<your-name>` or pass `--as <your-name>`.',
   'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); comment each meaningful step; when done, set the final status and add a result comment. No untracked work.',
+  // The inline store line of 0.1.0 to 0.4.0 before S6v: its "export ... once" sent other projects' writes to this board (UX run 3 C-U3).
+  `This project tracks work with laneboard (task board & CLI for AI coding agents). Its store is ${STORE_SLOT}: run every laneboard command with it, \`LANEBOARD_DIR=${STORE_SLOT} laneboard <command>\` (or export LANEBOARD_DIR=${STORE_SLOT} once).`,
 ];
-// Instruction lines laneboard writes, with any store path: an earlier setup pinned another store or another file (0.2.0 and 0.3.1
-// wrote these same lines), plus the lines of the 0.1.0 builds.
+// Instruction lines laneboard writes, with any store path: an earlier setup pinned another store or another file, plus the lines
+// of earlier versions (EARLIER_LINES).
 const INSTRUCTION_LINES = [...PINS.flatMap((pin) => instructionLines(STORE_SLOT, pin).split('\n')), ...EARLIER_LINES].map(templateRegExp);
 
 // A whole-line pattern for a template line: its text literally, any non-empty text in place of each STORE_SLOT.
