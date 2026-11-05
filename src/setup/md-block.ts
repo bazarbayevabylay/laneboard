@@ -1,6 +1,8 @@
 // Marked text blocks owned by laneboard: Markdown `<!-- laneboard:start -->…<!-- laneboard:end -->`, TOML `# laneboard:start` … `# laneboard:end`.
 import { LaneboardError } from '../core/index.ts';
 import type { TextEdit } from './files.ts';
+import { instructionLines } from './harnesses/common.ts';
+import type { StorePin } from './harnesses/common.ts';
 
 export interface Markers {
   start: string;
@@ -9,18 +11,32 @@ export interface Markers {
 
 export const MD_MARKERS: Markers = { start: '<!-- laneboard:start -->', end: '<!-- laneboard:end -->' };
 
-// Where our block is: [from, to) covering both markers, or undefined; a lone marker fails.
-function findBlock(text: string, m: Markers, file: string, body: string): { from: number; to: number } | undefined {
-  const from = text.indexOf(m.start);
-  const end = text.indexOf(m.end);
-  if (from < 0 && end < 0) return undefined;
-  if (from < 0 || end < from || text.indexOf(m.start, from + 1) >= 0) {
+// Lines that are exactly `marker` (trailing spaces or a \r allowed), as [from, to) offsets: a marker quoted inside other text
+// (`<!-- laneboard:end -->` in a sentence, an indented example) is not one.
+function markerLines(text: string, marker: string): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  let from = 0;
+  for (const line of text.split('\n')) {
+    if (line.trimEnd() === marker) out.push({ from, to: from + line.length });
+    from += line.length + 1;
+  }
+  return out;
+}
+
+// Where our block is: [from, to) covering both marker lines and `endFrom` (start of the end marker line), or undefined; a lone,
+// repeated or misplaced marker line fails.
+function findBlock(text: string, m: Markers, file: string, body: string): { from: number; to: number; endFrom: number } | undefined {
+  const starts = markerLines(text, m.start);
+  const end = markerLines(text, m.end)[0];
+  const start = starts[0];
+  if (start === undefined && end === undefined) return undefined;
+  if (start === undefined || end === undefined || end.from < start.from || starts.length > 1) {
     throw new LaneboardError('SETUP_UNPARSEABLE', `${file} has a broken laneboard block (markers missing, repeated or out of order); nothing was written`, {
       details: { file, snippet: `${m.start}\n${body}\n${m.end}` },
-      fix: `delete the laneboard marker lines from ${file} and run setup again, or add the snippet (details.snippet) by hand`,
+      fix: `delete the laneboard marker lines from ${file} (a marker quoted as an example stops counting when it is indented or has other text on its line) and run setup again, or add the snippet (details.snippet) by hand`,
     });
   }
-  return { from, to: end + m.end.length };
+  return { from: start.from, to: end.to, endFrom: end.from };
 }
 
 // What the text outside our block says about it: a clash that makes our block unsafe (SETUP_CONFLICT) or broken syntax (SETUP_UNPARSEABLE).
@@ -30,15 +46,60 @@ export type OutsideCheck = (outside: string) => { conflict: string; fix: string 
 // `firstLine` is the file line of the first line inside the block, so a report can name real line numbers.
 export type InsideCheck = (inside: string, firstLine: number) => { conflict: string; fix: string } | undefined;
 
+// Placeholder for the store path in the instruction line templates (plain characters, so shellQuote leaves it as it is).
+const STORE_SLOT = 'LANEBOARDSTOREPATHSLOT';
+// Every way the instruction block names the store (Record: a new pin cannot be left out).
+const PINS = Object.keys({ 'settings-local-env': true, 'settings-env': true, inline: true } satisfies Record<StorePin, true>) as StorePin[];
+// Lines the 0.1.0 builds wrote (commits 6f81877..4e19d07, before 0.2.0) that instructionLines no longer gives: a block holding them
+// is still laneboard's and is updated (test/setup/fixtures/blocks/0.1.0-*).
+const EARLIER_LINES = [
+  'This project tracks tasks with laneboard (task board & CLI for AI coding agents; the store is .laneboard/).',
+  'Before you work on tasks, run `laneboard prime` and follow the rules it prints.',
+  'Writes need your name: `export LANEBOARD_AGENT=<your-name>` or pass `--as <your-name>`.',
+  'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); comment each meaningful step; when done, set the final status and add a result comment. No untracked work.',
+];
+// Instruction lines laneboard writes, with any store path: an earlier setup pinned another store or another file (0.2.0 and 0.3.1
+// wrote these same lines), plus the lines of the 0.1.0 builds.
+const INSTRUCTION_LINES = [...PINS.flatMap((pin) => instructionLines(STORE_SLOT, pin).split('\n')), ...EARLIER_LINES].map(templateRegExp);
+
+// A whole-line pattern for a template line: its text literally, any non-empty text in place of each STORE_SLOT.
+function templateRegExp(line: string): RegExp {
+  const literal = (part: string): string => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${line.split(STORE_SLOT).map(literal).join('.+')}$`);
+}
+
+// Default inside check of a block without its own: each non-blank line inside is one laneboard writes (this run's body or an
+// instruction line with any store), else SETUP_CONFLICT with the line numbers, so a user's text between the markers is never deleted.
+function onlyOurLines(file: string, m: Markers, body: string): InsideCheck {
+  const bodyLines = new Set(body.split('\n'));
+  const ours = (line: string): boolean => bodyLines.has(line) || INSTRUCTION_LINES.some((re) => re.test(line));
+  return (inside, firstLine) => {
+    // inside starts with the rest of the start marker line (index 0 is that line), so index i is file line firstLine + i - 1.
+    const foreign = inside
+      .split('\n')
+      .map((line, i) => ({ line: line.trimEnd(), at: firstLine + i - 1 }))
+      .filter((l, i) => i > 0 && l.line !== '' && !ours(l.line))
+      .map((l) => l.at);
+    if (foreign.length === 0) return undefined;
+    const lines = `line${foreign.length > 1 ? 's' : ''} ${foreign.slice(0, 10).join(', ')}${foreign.length > 10 ? ` and ${foreign.length - 10} more` : ''}`;
+    return {
+      conflict: `has text laneboard did not write inside its block (${lines})`,
+      fix: `move ${lines} of ${file} out of the block between "${m.start}" and "${m.end}" (or delete the marker lines if that text is yours), then run setup again`,
+    };
+  };
+}
+
 // Text edit for a marked block; `check` looks at the content outside the block before anything is written,
-// `checkInside` at the content inside it before the block is replaced or removed (so nothing foreign is deleted with it).
+// `checkInside` at the content inside it before the block is replaced or removed (so nothing foreign is deleted with it;
+// default: only lines laneboard writes may be there).
 export function blockEdit(file: string, m: Markers, body: string, check?: OutsideCheck, checkInside?: InsideCheck): TextEdit {
   const block = `${m.start}\n${body}\n${m.end}`;
+  const inspectInside = checkInside ?? onlyOurLines(file, m, body);
   // Refuse to replace or remove a block that holds content that is not ours.
-  const guardInside = (text: string, at: { from: number; to: number }): void => {
-    const inside = text.slice(at.from + m.start.length, at.to - m.end.length);
+  const guardInside = (text: string, at: { from: number; endFrom: number }): void => {
+    const inside = text.slice(at.from + m.start.length, at.endFrom);
     const firstLine = text.slice(0, at.from).split('\n').length + 1;
-    const problem = checkInside?.(inside, firstLine);
+    const problem = inspectInside(inside, firstLine);
     if (problem) {
       throw new LaneboardError('SETUP_CONFLICT', `${file} ${problem.conflict}; nothing was written`, {
         details: { file, snippet: block },

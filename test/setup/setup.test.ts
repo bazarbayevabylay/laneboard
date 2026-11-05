@@ -3,8 +3,9 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { readRegistry } from '../../src/core/index.ts';
+import { instructionLines } from '../../src/setup/harnesses/common.ts';
 import { HARNESS_NAMES } from '../../src/setup/index.ts';
 import { cleanupTemp, cli, tempDir } from '../helpers.ts';
 
@@ -345,7 +346,10 @@ describe('setup backups and exact edits', () => {
     const s = sandbox();
     await ok(s, ['setup', 'claude-code']);
     const file = path.join(s.cwd, 'CLAUDE.md');
-    const old = fs.readFileSync(file, 'utf8').replace('run `laneboard prime`', 'run laneboard prime (old text)');
+    // An older block: laneboard's lines for another store and pin (a line laneboard never wrote is refused: s6b.test.ts).
+    const [ours] = instructionLines(path.join(s.cwd, '.laneboard'), 'settings-local-env').split('\n');
+    const [older] = instructionLines('/old/place/.laneboard', 'settings-env').split('\n');
+    const old = fs.readFileSync(file, 'utf8').replace(ours ?? '', older ?? '');
     fs.writeFileSync(file, `${old}\n## Mine\n`);
     expect((await ok(s, ['setup', 'claude-code'])).files.find((f) => f.path === 'CLAUDE.md')?.result).toBe('updated');
     expect(fs.existsSync(`${file}.laneboard.bak`)).toBe(false);
@@ -533,11 +537,15 @@ describe('setup backups and exact edits', () => {
     expect(snapshot(s)).toEqual(before);
   });
 
-  it('a write that fails midway (symlink into a read-only directory) puts back what was already written', async () => {
+  it('a write that fails midway (CLAUDE.md cannot be created) puts back what was already written', async () => {
     const s = sandbox();
-    const locked = tempDir();
-    fs.symlinkSync(path.join(locked, 'CLAUDE.md'), path.join(s.cwd, 'CLAUDE.md'));
-    fs.chmodSync(locked, 0o555);
+    const file = path.join(s.cwd, 'CLAUDE.md');
+    // The failure comes after the plan passed its checks (a symlink into a read-only directory is refused before any write now: s6b.test.ts).
+    const open = fs.openSync;
+    const spy = vi.spyOn(fs, 'openSync').mockImplementation((target, ...rest) => {
+      if (target === file) throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), { code: 'EACCES' });
+      return open(target, ...rest);
+    });
     try {
       const before = snapshot(s);
       const r = await s.run(['setup', 'claude-code', '--json']);
@@ -547,7 +555,7 @@ describe('setup backups and exact edits', () => {
       expect(err.message).toBe('writing CLAUDE.md failed (EACCES); the files changed before it were put back');
       expect(snapshot(s)).toEqual(before);
     } finally {
-      fs.chmodSync(locked, 0o755);
+      spy.mockRestore();
     }
   });
 
