@@ -1,7 +1,7 @@
 // `laneboard setup <harness> [--remove [--global]] [--dry-run]`: write (or roll back) laneboard's MCP entry and instruction block for one harness.
 import fs from 'node:fs';
 import path from 'node:path';
-import { isLiveBoard, LaneboardError, readRegistry, samePath, STORE_DIR_NAME, storeState, suggestClosest } from '../core/index.ts';
+import { isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, STORE_DIR_NAME, storeState, suggestClosest } from '../core/index.ts';
 import type { BoardEntry } from '../core/index.ts';
 import { applyPlan, planAdd, planKeep, planRemove, readText } from './files.ts';
 import type { FileResult, PlannedFile } from './files.ts';
@@ -86,6 +86,19 @@ function realPathOf(file: string): string {
   }
 }
 
+// Does this harness file (located for `c`) hold our part? A file that cannot be read or parsed may still hold it, so it counts as yes:
+// the callers keep a shared block or entry for it.
+function mayHoldOurPart(g: HarnessFile, c: HarnessContext): boolean {
+  const { file, shown } = locate(g, c);
+  try {
+    const text = readText(file);
+    return text !== null && g.edit(shown, c).owns(text);
+  } catch {
+    // That file cannot be read or parsed, so it may still hold the entry: keep the shared block.
+    return true;
+  }
+}
+
 // Other harnesses that share this file and still have their own laneboard entry installed. The same file is the same real path:
 // AGENTS.md of codex, cursor and opencode, and also CLAUDE.md when it is a link to AGENTS.md (CARRYOVER S6b-r2). A harness counts
 // as installed by a file of its own only: a file this harness writes too (AGENTS.md, .git/info/exclude) says nothing about it. For the
@@ -98,18 +111,20 @@ function otherUsers(harness: Harness, f: HarnessFile, c: HarnessContext): string
     .filter((h) =>
       h.files
         .filter((g) => !shared.has(realOf(g)) && (f !== gitExclude || g.scope === 'project'))
-        .some((g) => {
-          const { file, shown } = locate(g, c);
-          try {
-            const text = readText(file);
-            return text !== null && g.edit(shown, c).owns(text);
-          } catch {
-            // That file cannot be read or parsed, so it may still hold the entry: keep the shared block.
-            return true;
-          }
-        }),
+        .some((g) => mayHoldOurPart(g, c)),
     )
     .map((h) => h.name);
+}
+
+// Other checkouts of cwd's git repository (the main checkout, linked worktrees) where some harness's setup still stands (a project file
+// of its own holds our part): they share the repository's exclude file (git reads `<common dir>/info/exclude` for every worktree), so
+// --remove in one checkout keeps the block while another uses it (review S6h).
+function checkoutsUsing(c: HarnessContext): string[] {
+  const others = repositoryCheckouts(c.cwd)?.others ?? [];
+  return others.filter((folder) => {
+    const there: HarnessContext = { ...c, cwd: folder };
+    return HARNESSES.some((h) => h.files.filter((g) => g.scope === 'project' && g !== gitExclude).some((g) => mayHoldOurPart(g, there)));
+  });
 }
 
 // Does this harness file hold our part now? An unreadable or unparseable file counts as no (install does not touch a file that does not apply).
@@ -174,6 +189,8 @@ function someOf(items: readonly string[]): string {
 interface Keepers {
   harnesses: ReadonlyMap<string, string[]>;
   projects: ReadonlyMap<string, string[]>;
+  // The exclude file: other checkouts of the repository whose setup still uses its block.
+  checkouts: ReadonlyMap<string, string[]>;
 }
 
 // Warnings about backups (written or left behind) and files kept for another harness or project. `exclude`: the exclude file setup
@@ -187,7 +204,10 @@ function planWarnings(harness: string, plan: readonly PlannedFile[], keepers: Ke
       out.push(`wrote ${bak} (your file before setup; setup --remove restores it)${git}`);
     }
     const projects = keepers.projects.get(p.file);
-    if (p.result === 'kept' && projects !== undefined) {
+    const checkouts = keepers.checkouts.get(p.file);
+    if (p.result === 'kept' && checkouts !== undefined) {
+      out.push(`kept the laneboard block in ${p.shown}: setup in another checkout of this repository still uses it (${someOf(checkouts)}); laneboard setup <harness> --remove there removes it`);
+    } else if (p.result === 'kept' && projects !== undefined) {
       out.push(
         `kept the laneboard entry in ${p.shown} (a global file, other projects may use it: ${someOf(projects)}); laneboard setup ${harness} --remove --global removes it`,
       );
@@ -219,6 +239,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const roots = [cwd, home];
   const users = new Map<string, string[]>();
   const projects = new Map<string, string[]>();
+  const checkouts = new Map<string, string[]>();
   // A file that does not apply here (Claude Code's local settings in a folder inside another repository) is not written, and our part
   // is taken out of it when an earlier setup put it there (the env moved to another file); --remove also takes it out of such a file.
   const applies = (f: HarnessFile): boolean => f.applies?.(context) ?? true;
@@ -232,6 +253,11 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
       const others = otherUsers(harness, f, context);
       if (others.length) {
         users.set(file, others);
+        return planKeep(file, shown, f.scope);
+      }
+      const sharing = f === gitExclude ? checkoutsUsing(context) : [];
+      if (sharing.length) {
+        checkouts.set(file, sharing);
         return planKeep(file, shown, f.scope);
       }
       // A global file serves every project of this machine: it keeps our entry while another project may use it (newcomer F2).
@@ -250,7 +276,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const registered = !input.dryRun && !input.remove && isLiveBoard(context.storeDir);
   const excludeAt = files.findIndex((f) => f === gitExclude && applies(f));
   const exclude = input.remove || excludeAt < 0 ? undefined : plan[excludeAt]?.shown;
-  const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects }, exclude), ...harnessWarnings];
+  const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects, checkouts }, exclude), ...harnessWarnings];
   // The pin is written either way (init may follow), but a pin to nothing makes every laneboard command fail until then.
   if (!input.remove && !fs.existsSync(path.join(context.storeDir, 'config.json'))) {
     warnings.push(

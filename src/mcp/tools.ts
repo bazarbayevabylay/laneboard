@@ -110,8 +110,13 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   },
   finishTask: {
     name: 'task_finish',
-    description: 'Close a task in one call: the result comment (event data result: true, which only finish writes), a link to the current git commit (HEAD of the server folder; no_commit: true for none), then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). Already in that status or final: unchanged, with a warning (a new commit of the assignee is still linked). Returns id, rev, status, assignee, commit.',
-    params: taskWriteParams(FinishInput),
+    description: 'Close a task in one call: the result comment (event data result: true, which only finish writes), a link to a git commit, then the final status (status: any but the first one, e.g. review to hand in). Only the assignee, or anybody for an unassigned task; into a status that is not final it hands the task in (status event handed_in: true); a task of somebody else only to accept it after its assignee handed it in, into the final status, without a commit link (reply accepted: true, commit null). No expected_rev. Commit first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). The commit: HEAD of the server folder (often the main checkout, not your git worktree): pass cwd (absolute path of your worktree, its HEAD is linked) or commit (the sha of your work); no_commit: true for none. Without them, in a main checkout whose other worktrees have newer commits: a warning naming them and the fix. Handed in again into the same status: a new result is recorded, the same result again changes nothing; a closed task keeps its result (a warning); a new commit of the assignee is still linked. Returns id, rev, status, assignee, commit.',
+    params: taskWriteParams(
+      FinishInput.extend({
+        cwd: FinishInput.shape.cwd.describe('absolute path of the folder with your work (your git worktree): its HEAD is linked instead of the server folder\'s'),
+        commit: FinishInput.shape.commit.describe('sha of the commit to link (7 to 64 hex digits) instead of HEAD of the server folder'),
+      }),
+    ),
     write: true,
     taskReply: true,
   },

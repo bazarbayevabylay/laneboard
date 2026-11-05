@@ -1,8 +1,10 @@
 // Ops that change an active task: update, claim, comment, finish (task_update, task_claim, task_comment, task_finish).
+import path from 'node:path';
 import { z } from 'zod';
 import { LaneboardError } from '../errors.ts';
-import { readCheckout } from '../git.ts';
+import { isDirectory, readCheckout, readCommit, readWorktrees } from '../git.ts';
 import type { CheckoutState } from '../git.ts';
+import { samePath } from '../store.ts';
 import type { LinkT, TaskT } from '../schema.ts';
 import { transact } from '../transact.ts';
 import {
@@ -238,10 +240,10 @@ function claimedBy(ctx: OpContext, id: string, holder: string, actor: string, re
 function earlierSessionClaimed(id: string, holder: string, actor: string, silentMs: number, then: string): LaneboardError {
   const details = { assignee: holder };
   if (silentMs >= EARLIER_SESSION_SILENT_MS) {
-    const quiet = Number.isFinite(silentMs) ? `no write for ${minutesText(silentMs)}` : 'no write of it left on the board';
+    // heldByEarlierSession needs the holder's own assignment event on the task, so silentMs is finite here.
     return new LaneboardError(
       'ALREADY_CLAIMED',
-      `task ${id} is held by ${holder}, an earlier session of your default name (${quiet}: closed by /clear or a restart); if it is your own work, take it back: laneboard claim ${id} --resume${then}`,
+      `task ${id} is held by ${holder}, an earlier session of your default name (no write for ${minutesText(silentMs)}: closed by /clear or a restart); if it is your own work, take it back: laneboard claim ${id} --resume${then}`,
       { details, fix: `laneboard claim ${id} --resume --json` },
     );
   }
@@ -349,6 +351,12 @@ export const FinishInput = z.strictObject({
   status: z.string().min(1).optional(),
   // true: no commit link even inside a git repository.
   no_commit: z.boolean().optional(),
+  // The commit to link instead of HEAD, 7 to 64 hex digits (linked as the full sha git names): work committed in another git
+  // worktree than the folder finish runs in (A18).
+  commit: z.string().regex(/^[0-9a-fA-F]{7,64}$/, 'must be a commit sha of 7 to 64 hex digits').optional(),
+  // Absolute path of the folder whose git HEAD is linked instead of the command's own (MCP: the agent's worktree, as the server
+  // runs in the main checkout); with commit: the folder git is asked in.
+  cwd: z.string().refine((v) => path.isAbsolute(v), 'must be an absolute path').optional(),
 });
 export type FinishInputT = z.infer<typeof FinishInput>;
 
@@ -398,10 +406,84 @@ function notHandedIn(id: string, holder: string, current: string, actor: string,
   );
 }
 
+// The commit finish links and what git says about it: HEAD of the input's cwd, else of the command's folder; or the commit the caller
+// named, checked in that folder (git not there or no repository: linked as given, with the "could not check git" warning). Nothing
+// with no_commit, which goes with neither commit nor cwd.
+async function finishCheckout(ctx: OpContext, p: FinishInputT): Promise<CheckoutState> {
+  if (p.no_commit === true) {
+    if (p.commit !== undefined || p.cwd !== undefined) {
+      throw new LaneboardError('USAGE', 'no_commit links no commit, and commit or cwd names the one to link: pass one of them', { edit: { drop: [{ name: 'no_commit' }] } });
+    }
+    return {};
+  }
+  const where = p.cwd ?? ctx.cwd;
+  if (where === undefined) return {};
+  if (p.cwd !== undefined && !isDirectory(p.cwd)) {
+    throw new LaneboardError('INVALID_VALUE', `cwd: ${p.cwd} is not a directory`, {
+      input: { field: 'cwd', value: p.cwd, format: '<absolute path of your worktree>' },
+      fix: 'pass cwd: the absolute path of the folder with your work (your git worktree)',
+    });
+  }
+  if (p.commit === undefined) return readCheckout(where);
+  const named = await readCommit(where, p.commit);
+  if (named.unknown === true) {
+    throw new LaneboardError('INVALID_VALUE', `commit: ${p.commit} is no commit of the git repository at ${where}`, {
+      input: { field: 'commit', value: p.commit, format: '<sha>' },
+      fix: 'in the folder with your work run git rev-parse HEAD and pass that sha as commit',
+    });
+  }
+  return { head: named.sha ?? p.commit.toLowerCase(), committedAt: named.committedAt, problem: named.problem };
+}
+
+// The text of the newest result comment (`commented` with `result: true`, written only by finish), if any.
+function lastResultText(task: TaskT): string | undefined {
+  for (let i = task.events.length - 1; i >= 0; i--) {
+    const e = task.events[i];
+    if (e?.type === 'commented' && e.data.result === true) return typeof e.data.text === 'string' ? e.data.text : undefined;
+  }
+  return undefined;
+}
+
+// Most other worktrees a warning names.
+const WORKTREES_SHOWN = 3;
+
+// Warning that HEAD of the main checkout may be the wrong commit (A18, LB-1, B-U4): finish ran there (the CLI in the main folder, an MCP
+// server started in the project root) without commit or cwd, and other worktrees of the repository have another HEAD committed since
+// the actor's work began (any, when that is unknown). It names the folder, its HEAD and those worktrees (newest first). The fix never
+// guesses (it may be run blindly, rule 13): one such worktree gets the exact relink command; with several only the agent knows which
+// one holds its work, so the command takes the sha of it as a placeholder (refused as is: --commit takes hex only), and
+// the link of this HEAD stays: the fix never removes a link (the owner or the agent drops it by hand after checking). Finish from a linked worktree (also of a bare repository, which has no
+// main checkout) links that worktree's HEAD and gets none. `status`: the task's status after finish, for the command.
+async function worktreeWarning(cwd: string, id: string, linked: string, workStart: string | undefined, actor: string, status: string): Promise<string | undefined> {
+  const trees = await readWorktrees(cwd);
+  if (trees?.main === undefined || !samePath(trees.main, trees.here)) return undefined;
+  const main = trees.main;
+  const since = workStart === undefined ? undefined : Math.floor(Date.parse(workStart) / 1000);
+  const others = trees.list
+    .filter((w) => !samePath(w.path, main) && w.head !== linked && (since === undefined || (w.committedAt ?? 0) >= since))
+    .sort((a, b) => (b.committedAt ?? 0) - (a.committedAt ?? 0));
+  if (others.length === 0) return undefined;
+  const only = others.length === 1 ? others[0] : undefined;
+  const named = others.slice(0, WORKTREES_SHOWN).map((w) => `${w.path} (${w.branch ?? 'detached'}) ${w.head.slice(0, 12)}`);
+  if (others.length > WORKTREES_SHOWN) named.push(`${others.length - WORKTREES_SHOWN} more: git worktree list`);
+  const which = since === undefined ? 'other worktrees of this repository have another HEAD' : `other worktrees of this repository have commits since you claimed ${id}`;
+  const branch = trees.list.find((w) => samePath(w.path, main))?.branch ?? 'detached';
+  const fix =
+    only !== undefined
+      ? `if your work is in one of them, link its commit instead: laneboard update ${id} --remove-link commit=${linked} --add-link commit=${only.head} --as ${actor}`
+      : `if your work is in one of them, link the HEAD of yours (listed above): laneboard finish ${id} --status ${status} --commit <HEAD of your worktree> --result "<your result>" --as ${actor}; ` +
+        `the link of this one stays: drop it by hand once you have checked which commit holds your work`;
+  return (
+    `the linked commit ${linked.slice(0, 12)} is HEAD of ${trees.here} (${branch}), the main checkout, and ${which}: ${named.join(', ')}; ${fix} ` +
+    `(next time run finish in that folder or pass --commit <sha>; MCP task_finish: cwd "<that folder>" or commit "<sha>")`
+  );
+}
+
 // Warnings that the linked commit may not hold the agent's work (owner's decision, S3b): uncommitted changes (staged or not), or
 // HEAD was committed before the actor's work on the task began (`workStart`, unknown for a task it did not hold); and that git could
-// not be asked (S3c: finish still works, unknown parts give no other warning).
-function checkoutWarnings(id: string, git: CheckoutState, workStart: string | undefined): string[] {
+// not be asked (S3c: finish still works, unknown parts give no other warning). `named`: the caller named the commit (commit), so
+// the folder's changes say nothing about it.
+function checkoutWarnings(id: string, git: CheckoutState, workStart: string | undefined, named: boolean): string[] {
   const again = `commit your work and run laneboard finish ${id} again to link the new commit (work without a commit: --no-commit)`;
   const out: string[] = [];
   if (git.problem !== undefined) {
@@ -413,24 +495,31 @@ function checkoutWarnings(id: string, git: CheckoutState, workStart: string | un
   if (git.dirty === true) out.push(`the working tree has uncommitted changes to tracked files, so the linked commit ${sha} may not hold your work; ${again}`);
   // Seconds: a commit in the same second as the claim counts as newer.
   if (git.committedAt !== undefined && workStart !== undefined && git.committedAt < Math.floor(Date.parse(workStart) / 1000)) {
-    out.push(`the linked commit ${sha} is from before your work: HEAD has not moved since you claimed ${id}; ${again}`);
+    out.push(
+      named
+        ? `the linked commit ${sha} is from before your work: it was committed before you claimed ${id}; check the sha of your work's commit (git rev-parse HEAD in its folder)`
+        : `the linked commit ${sha} is from before your work: HEAD has not moved since you claimed ${id}; ${again}`,
+    );
   }
   return out;
 }
 
 // Close a task in one write: the result comment, the commit of the git checkout (kind=commit; not with no_commit, outside git
-// or before the first commit), the actor as assignee of an unassigned task, then the status (default: the final one), in this event order.
+// or before the first commit; the input's commit or cwd names another one, finishCheckout), the actor as assignee of an unassigned
+// task, then the status (default: the final one), in this event order.
 // The assignee (or anybody for an unassigned task) finishes; into a status that is not final it hands the task in (the status event says
 // `handed_in: true`, also when the task is already there but was not handed in). Somebody else only accepts: a task its assignee
 // handed in (handedIn) into the final status, with the result comment and no commit link (the assignee linked its commit when handing
 // in); the assignee stays, the status event says `accepted: true` and its actor is who accepted (LB-9, S4b). A task already in that
-// status (handed in) or in a final status keeps its status and gets no second result (a warning); for the assignee only a commit that
-// is not linked yet is added, so "commit, then finish again" links it; somebody else's finish of a closed task changes nothing.
+// status (handed in) or in a final status keeps its status; a task handed in again into the same status after rework gets the new
+// result (a result comment, no status event), the same result text again (a retry) and a closed task get none (a warning); for the
+// assignee a commit that is not linked yet is added, so "commit, then finish again" links it; somebody else's finish of a closed task
+// changes nothing.
 export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(FinishInput, input);
   // Asked before the lock: the checkout does not change because of this write.
-  const git: CheckoutState = p.no_commit === true || ctx.cwd === undefined ? {} : await readCheckout(ctx.cwd);
+  const git = await finishCheckout(ctx, p);
   const commit = git.head;
   const warnings: string[] = [];
   let finished = false;
@@ -486,21 +575,31 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       workStart = holder === actor ? workStartedAt(task) : undefined;
       const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
       const handIn = !finals.includes(status);
+      const closed = finals.includes(task.status);
       // Already there: final, or handed in to this status (a task moved there by update is handed in now).
-      const again = finals.includes(task.status) || (task.status === status && (!handIn || handedIn(task)));
-      if (again && newCommit === undefined) warnings.push(`no changes: ${id} is already ${task.status}; ${notRecorded}`);
-      if (again && newCommit !== undefined) warnings.push(`status and result unchanged: ${id} is already ${task.status}; ${notRecorded}; commit ${newCommit.slice(0, 12)} linked`);
-      if (again && newCommit === undefined) return toTaskView(task, false);
+      const again = closed || (task.status === status && (!handIn || handedIn(task)));
+      // Handed in again after rework (CARRYOVER S6h): a result other than the newest one is recorded; the same text again is a retry
+      // after a lost reply and records nothing. A closed task keeps its result: finish never reopens it (ADR §20).
+      const resubmit = again && !closed && lastResultText(task) !== p.result;
+      const kept = closed ? `; ${notRecorded}` : ' with this result';
+      if (again && !resubmit && newCommit === undefined) warnings.push(`no changes: ${id} is already ${task.status}${kept}`);
+      if (again && !resubmit && newCommit !== undefined) warnings.push(`status and result unchanged: ${id} is already ${task.status}${kept}; commit ${newCommit.slice(0, 12)} linked`);
+      if (again && !resubmit && newCommit === undefined) return toTaskView(task, false);
       // One write, one rev, whatever events follow.
       touch(task, s.now, actor);
-      if (!again) addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
+      if (!again || resubmit) addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
       if (newCommit !== undefined) {
         const links: LinkT[] = [...task.links, { kind: 'commit', ref: newCommit }];
         addEvent(task, s.config, s.now, actor, 'updated', { links: [task.links, links] }, actorSourceOf(ctx));
         task.links = links;
         linked = true;
       }
-      if (again) return toTaskView(task, false);
+      if (again) {
+        // The status event of the first hand-in stays the newest one into this status, so the task stays handed in (handedIn).
+        finished = resubmit;
+        handedInNow = resubmit;
+        return toTaskView(task, false);
+      }
       if (task.assignee === null) {
         task.assignee = actor;
         addEvent(task, s.config, s.now, actor, 'assigned', { from: null, to: actor }, actorSourceOf(ctx));
@@ -516,7 +615,13 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
     txOptions(ctx, warnings),
   );
   // An acceptance links no commit, so the checkout of who accepts says nothing about the work.
-  if (!byOther) warnings.push(...checkoutWarnings(taskId, git, workStart));
+  if (!byOther) warnings.push(...checkoutWarnings(taskId, git, workStart, p.commit !== undefined));
+  // Only HEAD of the command's own folder can be another worktree's wrong commit; a named commit or folder is the caller's choice.
+  const where = p.commit === undefined && p.cwd === undefined ? ctx.cwd : undefined;
+  if (!byOther && commit !== undefined && where !== undefined) {
+    const other = await worktreeWarning(where, taskId, commit, workStart, actor, data.status);
+    if (other) warnings.push(other);
+  }
   if (finished && byOther) return { data, warnings, reply: { commit: null, accepted: true } };
   if (finished) return { data, warnings, reply: { commit: commit ?? null }, ...(handedInNow ? { handed_in: true } : {}) };
   return linked && commit !== undefined ? { data, warnings, reply: { commit }, unchanged: true } : { data, warnings };

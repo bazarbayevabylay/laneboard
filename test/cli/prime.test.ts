@@ -119,6 +119,8 @@ describe('prime', () => {
   it('--edit-hook in a Claude Code worktree of the project (.claude/worktrees/<name>, .git file and CLAUDE.md): the normal reminder, no foreign-store note', async () => {
     const s = await newStore();
     fs.mkdirSync(path.join(s.root, '.git', 'worktrees', 'feat'), { recursive: true });
+    // As git writes it (2.5+): the common git directory, relative to the worktree's admin folder.
+    fs.writeFileSync(path.join(s.root, '.git', 'worktrees', 'feat', 'commondir'), '../..\n');
     const tree = path.join(s.root, '.claude', 'worktrees', 'feat');
     fs.mkdirSync(path.join(tree, 'src'), { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), 'gitdir: ../../../.git/worktrees/feat\n');
@@ -131,6 +133,7 @@ describe('prime', () => {
     // The same layout whose .git file points to another repository is a separate project.
     const other = tempDir();
     fs.mkdirSync(path.join(other, '.git', 'worktrees', 'feat'), { recursive: true });
+    fs.writeFileSync(path.join(other, '.git', 'worktrees', 'feat', 'commondir'), '../..\n');
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${path.join(other, '.git', 'worktrees', 'feat')}\n`);
     expect(JSON.parse((await cli(['prime', '--edit-hook'], { cwd: tree, env: { LANEBOARD_AGENT: 'dev-w' } })).stdout).hookSpecificOutput.additionalContext).toContain('looks like another project');
   });

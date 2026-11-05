@@ -256,11 +256,12 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
       // S4b: the assignee's finish into a status that is not final hands the task in.
       ['status', { from: 'in_progress', to: 'review', handed_in: true }],
     ]);
-    const again = await cli(['finish', 'LB-1', '--result', 'Again', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root });
+    // The same result again (a retry after a lost reply): unchanged; a new result is a hand-in after rework (S6h) and is recorded.
+    const again = await cli(['finish', 'LB-1', '--result', 'Ready for review', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root });
     expect(again.code).toBe(0);
     const doc = JSON.parse(again.stdout);
     expect(doc.data).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'dev-1' });
-    expect(doc.warnings).toEqual(['no changes: LB-1 is already review; the result was not recorded (add it with laneboard comment LB-1 "<text>")']);
+    expect(doc.warnings).toEqual(['no changes: LB-1 is already review with this result']);
     expect((await cli(['finish', 'LB-1', '--result', 'Approved', '--as', 'dev-1', '--json'], { cwd: s.root })).code).toBe(0);
     expect(stored(s, 'LB-1')).toMatchObject({ rev: 4, status: 'done' });
     // A closed task is not reopened by a later hand-in.
