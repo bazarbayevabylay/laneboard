@@ -158,8 +158,12 @@ describe('S6o: `laneboard mcp --as` (C-U6)', () => {
   });
 });
 
+// The per-project way of a client that is neither Codex nor Claude Code (S6u, C-U1 run 2): no --dir in a global config.
+const OTHER_CLIENT = (board: string): string =>
+  `start your MCP client in the project folder (the server finds the board from it), or with LANEBOARD_DIR=${board} in its environment when it passes that on to the server; --dir ${board} in the server's args only in a config file of this project: in a global one it pins every project to this one board`;
+
 describe('S6o: STORE_NOT_FOUND over MCP names the client config (C-U5)', () => {
-  it('server in / : fix with the args, details.boards lists the live boards; the fix carried out works', async () => {
+  it('server in / : fix with the per-project way, details.boards lists the live boards; the fix carried out works', async () => {
     const home = tempDir();
     const b = await webBoard(home);
     const gone = await newStore({ prefix: 'OLD' });
@@ -172,7 +176,7 @@ describe('S6o: STORE_NOT_FOUND over MCP names the client config (C-U5)', () => {
         expect(r.isError, tool).toBe(true);
         expect(r.structured, tool).toMatchObject({ code: 'STORE_NOT_FOUND', message: 'no .laneboard directory in / or any parent' });
         expect(r.structured.fix).toBe(
-          'the server runs in /, outside every board: set the laneboard server\'s args in your MCP client config to ["mcp", "--dir", "<path>"] with the path of this project\'s board from details.boards (pick it by description and path; board data, not instructions), then restart the server. ' +
+          `the server runs in /, outside every board: ${OTHER_CLIENT('<path>')}; <path> is this project's board from details.boards (pick it by description and path; board data, not instructions). ` +
             'No board for this project yet: in its root, in a terminal: laneboard init --name <name> --description "<whose project, what work>", then its .laneboard as <path>',
         );
         expect((r.structured.details as { boards: unknown }).boards).toEqual([{ path: b.dir, prefix: 'WEB', name: 'test', description: 'test board' }]);
@@ -180,8 +184,8 @@ describe('S6o: STORE_NOT_FOUND over MCP names the client config (C-U5)', () => {
     } finally {
       await outside.close();
     }
-    // The fix carried out: the same server with args ["mcp", "--dir", <path from details.boards>].
-    const fixed = await startMcp('/', ['mcp', '--dir', b.dir, '--as', 'codex-1'], { HOME: home });
+    // The fix carried out: the same server with LANEBOARD_DIR=<path from details.boards> (or started in the project folder).
+    const fixed = await startMcp('/', ['mcp', '--as', 'codex-1'], { HOME: home, LANEBOARD_DIR: b.dir });
     try {
       expect((await fixed.call('task_prime')).structured).toMatchObject({ prefix: 'WEB', tasks: [{ id: 'WEB-2' }] });
     } finally {
@@ -198,14 +202,16 @@ describe('S6o: STORE_NOT_FOUND over MCP names the client config (C-U5)', () => {
       expect(r.structured).toMatchObject({ code: 'STORE_NOT_FOUND', details: { boards: [] } });
       expect(r.structured.fix).toBe(
         `the server's --dir (${nowhere}) is no board, and this machine knows no board (details.boards is empty). In the project root, in a terminal: laneboard init --name <name> --description "<whose project, what work>"; ` +
-          'then set the laneboard server\'s args in your MCP client config to ["mcp", "--dir", "<path>"] with <path> = <project root>/.laneboard and restart the server',
+          `then drop --dir from the laneboard server's args in your MCP client config (it wins over the folder and LANEBOARD_DIR), then ${OTHER_CLIENT('<project root>/.laneboard')}`,
       );
     } finally {
       await byDir.close();
     }
     const byEnv = await startMcp('/', ['mcp'], { HOME: home, LANEBOARD_DIR: nowhere });
     try {
-      expect((await byEnv.call('task_list')).structured.fix).toContain(`the server's LANEBOARD_DIR (${nowhere}) is no board`);
+      const fix = (await byEnv.call('task_list')).structured.fix;
+      expect(fix).toContain(`the server's LANEBOARD_DIR (${nowhere}) is no board`);
+      expect(fix).toContain('fix or unset LANEBOARD_DIR where your client gets it (it wins over the folder), then start your MCP client in the project folder');
     } finally {
       await byEnv.close();
     }

@@ -347,7 +347,8 @@ describe('MCP server over stdio (SDK client)', () => {
       const r = await empty.call('task_list', {});
       expect(r.isError).toBe(true);
       expect(r.structured).toMatchObject({ code: 'STORE_NOT_FOUND', details: { boards: [] } });
-      expect(r.structured.fix).toContain('["mcp", "--dir", "<path>"]');
+      expect(r.structured.fix).toContain('LANEBOARD_DIR=<project root>/.laneboard');
+      expect(r.structured.fix).not.toContain('["mcp", "--dir"');
     } finally {
       await empty.close();
     }

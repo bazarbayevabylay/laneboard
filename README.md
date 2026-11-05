@@ -101,6 +101,8 @@ laneboard setup codex
 
 - Claude Code hooks: SessionStart prints the rules, the board and your tasks (`laneboard prime --hook`); after `Edit`, `Write`,
   `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
+- Under the default name the edit reminder stays silent while any open task of the board has an assignee (anybody's: subagents
+  share the default name). For reminders about your own tasks only, set `LANEBOARD_AGENT=<your name>`.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
 - Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
   `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks.
@@ -111,15 +113,18 @@ laneboard setup codex
 
 ## Any MCP client
 
-Any client that starts stdio MCP servers can use laneboard. Give the server the board and a default name:
+Any client that starts stdio MCP servers can use laneboard. Give the server the board and a default name in a config file of
+the project (a global config would pin every project of the machine to this one board):
 
 ```json
 { "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
 ```
 
 - Call `task_prime` first: it returns the rules for MCP, the statuses in order, the declared fields and your and the free tasks.
-- Without `--dir` the server finds the board from the folder the client starts it in. A server that finds none answers every call with
-  `STORE_NOT_FOUND`: its `fix` says which `args` to set, and `details.boards` lists the boards of this machine.
+- Without `--dir` the server finds the board from the folder the client starts it in, or takes `LANEBOARD_DIR`. A server that finds
+  none answers every call with `STORE_NOT_FOUND`: its `fix` says how to start your client for the project (Codex: in the project folder
+  or `LANEBOARD_DIR=<board> codex`, never `--dir` in the global `~/.codex/config.toml`), and `details.boards` lists the boards.
+- A server whose `--dir` is not the board of its folder warns on every call, as `LANEBOARD_DIR` does: check `prefix` in each reply.
 - Your name on writes: the tool's `actor`, else `mcp --as`, else `LANEBOARD_AGENT`, else the session's default name.
 - The client cannot find `laneboard`? Put the absolute path from `command -v laneboard` into `command`; with nvm that path changes
   with the Node.js version, so update it after switching.
@@ -187,6 +192,8 @@ laneboard config --review-statuses none --reviewers none --json
 - `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
   to the first check; a checker's `finish` passes the task to the next check and from the last one accepts it into the final status.
 - `--reviewers rev,orch`: who checks (default: anybody but the author of the work). The author never passes on or accepts its own work.
+- A task waiting in a check is handed in: the author's `finish`, `update` or `claim` into another check or the final status gets
+  `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment. Never back to an earlier check.
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the `finish` to run.
