@@ -199,7 +199,8 @@ laneboard config --review-statuses none --reviewers none --json
   `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment. Never back to an earlier check.
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
-  A checker's `finish --status` with an earlier check or a work status is refused; its fix is that comment and update in one line.
+  A checker's `finish --status` with an earlier check or any work status (also one between two checks) is refused; its fix is that
+  comment and update in one line.
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the `finish` to run.
 - Boards created before 0.4.0 keep working as they were; checks are turned on only by hand with `laneboard config`.
 

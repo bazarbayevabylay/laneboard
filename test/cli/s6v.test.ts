@@ -51,9 +51,9 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     expect(r.doc.error).toEqual({
       code: 'INVALID_VALUE',
       message:
-        'API-1 is handed in and qa: a check passes it on to a later check or accepts it into done (code_review -> qa -> done), never back to code_review; ' +
+        'API-1 is handed in and qa: a check passes it on to a later check or accepts it into done (code_review -> qa -> done), never into code_review; ' +
         'to return it for rework, comment why, then laneboard update API-1 --status dev (the assignee hands it in again with finish)',
-      fix: "laneboard comment API-1 'back: missing test' --as rev && laneboard update API-1 --status dev --as rev",
+      fix: "laneboard comment API-1 --as rev -- 'back: missing test' && laneboard update API-1 --status dev --as rev",
     });
     expect(await task(s, 'API-1')).toMatchObject({ status: 'qa', rev: before.rev });
     runFix(s, r.doc.error.fix);
@@ -76,7 +76,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     ] as const) {
       const r = await run(s, 'orch', ['finish', 'API-1', '--status', to, '--result', 'no']);
       expect(r.code, to).toBe(2);
-      expect(r.doc.error.fix, to).toBe(`laneboard comment API-1 no --as orch && laneboard update API-1 --status ${work} --as orch`);
+      expect(r.doc.error.fix, to).toBe(`laneboard comment API-1 --as orch -- no && laneboard update API-1 --status ${work} --as orch`);
       expect(r.doc.error.fix, to).not.toMatch(/finish|done|qa/);
     }
     expect(await task(s, 'API-1')).toMatchObject({ status: 'qa' });
@@ -86,7 +86,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     const s = await handedIn(false);
     const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'dev', '--result', "it's broken"]);
     expect(r.code).toBe(2);
-    expect(r.doc.error.fix).toBe(`laneboard comment API-1 'it'\\''s broken' --as rev && laneboard update API-1 --status dev --as rev`);
+    expect(r.doc.error.fix).toBe(`laneboard comment API-1 --as rev -- 'it'\\''s broken' && laneboard update API-1 --status dev --as rev`);
     runFix(s, r.doc.error.fix);
     const after = await task(s, 'API-1');
     expect(after.status).toBe('dev');
@@ -97,7 +97,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     const s = await handedIn(true);
     const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'backlog', '--result', 'not now']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard comment API-1 'not now' --as rev && laneboard update API-1 --status backlog --as rev" });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard comment API-1 --as rev -- 'not now' && laneboard update API-1 --status backlog --as rev" });
     expect(r.doc.error.message).toContain('back to the start: laneboard update API-1 --status backlog');
     runFix(s, r.doc.error.fix);
     expect(await task(s, 'API-1')).toMatchObject({ status: 'backlog' });
@@ -109,5 +109,60 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     expect(same.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status qa --result ok --as rev --json' });
     expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
     expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
+  });
+});
+
+// Review r1: a work status that lies between two checks is a return for rework too, wherever it is; a result that starts with "-"
+// goes after `--` in the fix, so the comment never reads it as an option.
+describe('S6v review r1: a work status between the checks, and a result that starts with "-"', () => {
+  const LOOP = ['backlog', 'dev', 'code_review', 'fixing', 'qa', 'done'];
+
+  // API-1 of dev-2 handed in to code_review on the board backlog -> dev -> code_review -> fixing -> qa -> done (checks code_review, qa).
+  async function inReview(): Promise<TestStore> {
+    const s = await newStore({ prefix: 'API', statuses: LOOP });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'backlog'])).code).toBe(0);
+    expect((await run(s, 'dev-2', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
+    expect((await run(s, 'dev-2', ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data.status).toBe('code_review');
+    return s;
+  }
+
+  it('the repro: rev in code_review, finish --status fixing "back: fix lint" -> the return into fixing, run as printed, never passed on to qa', async () => {
+    const s = await inReview();
+    const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'fixing', '--result', 'back: fix lint']);
+    expect(r.code).toBe(2);
+    expect(r.doc.error).toEqual({
+      code: 'INVALID_VALUE',
+      message:
+        'API-1 is handed in and code_review: a check passes it on to a later check or accepts it into done (code_review -> qa -> done), never into fixing; ' +
+        'to return it for rework, comment why, then laneboard update API-1 --status fixing (the assignee hands it in again with finish)',
+      fix: "laneboard comment API-1 --as rev -- 'back: fix lint' && laneboard update API-1 --status fixing --as rev",
+    });
+    runFix(s, r.doc.error.fix);
+    const after = await task(s, 'API-1');
+    expect(after).toMatchObject({ status: 'fixing', assignee: 'dev-2' });
+    expect(after.events.at(-2)).toMatchObject({ type: 'commented', actor: 'rev', data: { text: 'back: fix lint' } });
+    expect(after.events.at(-1)).toMatchObject({ type: 'status', actor: 'rev', data: { from: 'code_review', to: 'fixing' } });
+    expect(after.events.some((e: any) => e.type === 'status' && (e.data.passed === true || e.data.accepted === true))).toBe(false);
+  });
+
+  it('from qa the work status between the checks is the same return (before the current one), never an acceptance', async () => {
+    const s = await inReview();
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+    const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'fixing', '--result', 'no']);
+    expect(r.doc.error.fix).toBe('laneboard comment API-1 --as orch -- no && laneboard update API-1 --status fixing --as orch');
+  });
+
+  it('a result that starts with "-" runs as printed: the comment keeps the text, the task goes back to the work status', async () => {
+    for (const text of ['- missing test', '-1 test fails', '--broken']) {
+      const s = await handedIn(false);
+      const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'dev', `--result=${text}`]);
+      expect(r.code, text).toBe(2);
+      expect(r.doc.error.fix, text).toMatch(/^laneboard comment API-1 --as rev -- \S.* && laneboard update API-1 --status dev --as rev$/);
+      runFix(s, r.doc.error.fix);
+      const after = await task(s, 'API-1');
+      expect(after.status, text).toBe('dev');
+      expect(after.events.at(-2), text).toMatchObject({ type: 'commented', actor: 'rev', data: { text } });
+    }
   });
 });

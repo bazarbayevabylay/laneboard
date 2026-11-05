@@ -22,8 +22,8 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   checks, the checkers, the tasks waiting for your check and the newest comment of a checker under your task. All keys are optional.
   A task waiting in a check never goes back to an earlier one: the author's move into another check is `INVALID_VALUE` "handed in
   already, waits in <check> for the check of <checkers>" with a comment as the fix (ADR §51). Any checker makes any check, both in a
-  row too. A checker's `finish` into an earlier check or a work status is refused with the return for rework as its fix
-  (`comment ... && update --status <work status>`), never an acceptance (ADR §51).
+  row too. A checker's `finish` into an earlier check or any work status (also one between two checks) is refused with the return
+  for rework as its fix (`comment <ID> --as <checker> -- '<result>' && update --status <work status>`), never an acceptance (ADR §51).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming

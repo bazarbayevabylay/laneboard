@@ -500,8 +500,9 @@ against an agent's mistake, not against a hostile agent.
   goes back to an earlier check. `finish` without `--status` there records a new result after rework, the status stays.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
   assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. A checker's
-  `finish --status` with an earlier check, a work status or the first status is refused (`INVALID_VALUE`): its fix is this return,
-  `laneboard comment <ID> '<result>' --as <checker> && laneboard update <ID> --status <work status> --as <checker>`, never a `finish`
+  `finish --status` with an earlier check, a work status (wherever it lies, also between two checks) or the first status is refused
+  (`INVALID_VALUE`): its fix is this return,
+  `laneboard comment <ID> --as <checker> -- '<result>' && laneboard update <ID> --status <work status> --as <checker>`, never a `finish`
   that passes the task on or accepts it. A fix never changes what the refused command meant.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.

@@ -160,7 +160,7 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     // rework, never the acceptance into done).
     expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'x', '--status', 'code_review'])).doc.error).toMatchObject({
       code: 'INVALID_VALUE',
-      fix: 'laneboard comment API-1 x --as rev && laneboard update API-1 --status dev --as rev',
+      fix: 'laneboard comment API-1 --as rev -- x && laneboard update API-1 --status dev --as rev',
     });
     expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'qa too', '--status', 'done'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });

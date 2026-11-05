@@ -549,21 +549,31 @@ function handInToFirstCheck(id: string, target: string, first: string, review: r
 }
 
 // The return for rework as one command line, run as printed (rule 13): the comment with the caller's text, then the move into `to`.
-// No `input` goes with it, so the CLI keeps it as is and never rebuilds the caller's finish with another status (B-U1 run 3).
+// No `input` goes with it, so the CLI keeps it as is and never rebuilds the caller's finish with another status (B-U1 run 3). The text
+// goes after `--`, as the CLI asks for text that starts with "-" ("- missing test", "--broken"): it is never read as an option.
 function reworkFix(id: string, text: string, to: string, actor: string): string {
-  return `laneboard comment ${id} ${shellQuote(text)} --as ${actor} && laneboard update ${id} --status ${to} --as ${actor}`;
+  return `laneboard comment ${id} --as ${actor} -- ${shellQuote(text)} && laneboard update ${id} --status ${to} --as ${actor}`;
 }
 
-// INVALID_VALUE of a checker's finish into a status before the one the task is in (B-U1 run 3): that is a return for rework, so the
-// fix is the documented one (README "Return for rework"): the comment, then update into `target` when it is a work status, or into
-// the work status before the checks when it is an earlier check (the first status when none lies between). A fix of a refusal never
-// changes what the caller meant: never a finish that passes the task on or accepts it.
+// Does a checker's finish into `target` (not a later check, not the first final status) of a task in `current` mean a return for
+// rework (B-U1 run 3, review r1): `target` is a work status (not a check, not final), wherever it lies, or a check before `current`.
+function isReworkTarget(config: ConfigT, current: string, target: string): boolean {
+  if (finalStatuses(config.statuses).includes(target)) return false;
+  if (!reviewStatuses(config).includes(target)) return true;
+  return config.statuses.indexOf(target) < config.statuses.indexOf(current);
+}
+
+// INVALID_VALUE of a checker's finish into a work status (any status that is neither a check nor final, wherever it lies: also one
+// between two checks) or into an earlier check (B-U1 run 3, review r1): that is a return for rework, so the fix is the documented one
+// (README "Return for rework"): the comment, then update into `target` when it is a work status, or into the work status before the
+// checks when it is an earlier check (the first status when none lies between). A fix of a refusal never changes what the caller
+// meant: never a finish that passes the task on or accepts it.
 function returnForRework(config: ConfigT, id: string, current: string, target: string, text: string, actor: string): LaneboardError {
   const review = reviewStatuses(config);
   const work = review.includes(target) ? (workStatusBeforeChecks(config) ?? config.statuses[0] ?? target) : target;
   return new LaneboardError(
     'INVALID_VALUE',
-    `${id} is handed in and ${current}: a check passes it on to a later check or accepts it into ${finalStatuses(config.statuses)[0] ?? ''} (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}), never back to ${target}; to return it for rework, comment why, then laneboard update ${id} --status ${work} (the assignee hands it in again with finish)`,
+    `${id} is handed in and ${current}: a check passes it on to a later check or accepts it into ${finalStatuses(config.statuses)[0] ?? ''} (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}), never into ${target}; to return it for rework, comment why, then laneboard update ${id} --status ${work} (the assignee hands it in again with finish)`,
     { fix: reworkFix(id, text, work, actor) },
   );
 }
@@ -763,8 +773,9 @@ function checkerFinish(
   }
   const target = p.status ?? next;
   if (!later.includes(target)) {
-    // A status before the current one is a return for rework (B-U1 run 3): its fix never passes the task on or accepts it.
-    if (s.config.statuses.indexOf(target) < s.config.statuses.indexOf(task.status)) throw returnForRework(s.config, id, task.status, target, p.result, actor);
+    // A work status (neither a check nor final, before or after the current one) or an earlier check is a return for rework (B-U1
+    // run 3, review r1): its fix never passes the task on or accepts it. The current check keeps the fix of the next check below.
+    if (isReworkTarget(s.config, task.status, target)) throw returnForRework(s.config, id, task.status, target, p.result, actor);
     throw new LaneboardError('INVALID_VALUE', `${id} is handed in and ${task.status}: a check passes it on to a later check or accepts it into ${final} (${checksLine(review, final)}), so the status is one of ${later.join(', ')}`, {
       allowed: later,
       input: { field: 'status', value: target, suggestion: next },

@@ -148,7 +148,7 @@ describe('laneboard finish', () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'T', status: 'todo', assignee: 'dev-1' });
     const first = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'todo', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
-    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: 'laneboard comment LB-1 x --as dev-1 && laneboard update LB-1 --status todo --as dev-1' });
+    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: 'laneboard comment LB-1 --as dev-1 -- x && laneboard update LB-1 --status todo --as dev-1' });
     expect(first.error.message).toBe('"todo" is the starting status; finish sets one of in_progress, review, done (default done; back to the start: laneboard update LB-1 --status todo)');
     expect(stored(s, 'LB-1').rev).toBe(1);
     expect((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'done', '--as', 'dev-1'], { cwd: s.root })).code).toBe(0);
