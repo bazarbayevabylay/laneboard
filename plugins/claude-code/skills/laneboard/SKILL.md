@@ -1,6 +1,6 @@
 ---
 name: laneboard
-description: "Track work on the laneboard task board - claim a task (or resume your own after /clear), comment steps, finish it with a result and the commit, attach files, link branches and PRs, archive. Use in a project with a .laneboard/ store, or when the user mentions tasks, the board or a task id like LB-12."
+description: "Track work on the laneboard task board - claim a task (or resume your own after /clear or a restart), comment steps, finish it with a result and the commit, attach files, link branches and PRs, archive. Use in a project with a .laneboard/ store, or when the user mentions tasks, the board or a task id like LB-12."
 ---
 
 laneboard agent rules (task board & CLI for AI coding agents):

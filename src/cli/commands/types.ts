@@ -28,6 +28,8 @@ export interface CliIo {
   watchPollMs?: number;
   // Leave fs.watch out, so only the poll notices changes (tests only).
   watchNoEvents?: boolean;
+  // The Node.js version the CLI runs on (tests only; default process.versions.node).
+  nodeVersion?: string;
 }
 
 export interface CommandContext {

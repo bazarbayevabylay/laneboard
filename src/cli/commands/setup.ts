@@ -24,7 +24,8 @@ export const setup: CommandDef = {
   summary:
     'Register the laneboard MCP server and instruction block for a harness (run in the project root); --remove rolls it back. ' +
     'The project is pinned to its store: --dir, else LANEBOARD_DIR, else the board of this git repository found above (a package of a monorepo, a linked worktree), else ./.laneboard (Claude Code: env LANEBOARD_DIR and the default agent name in .claude/settings.local.json, ' +
-    'kept out of git by .git/info/exclude; or .claude/settings.json in a folder inside another git repository and at a repository root that holds other boards; others: in the instructions). ' +
+    'kept out of git by .git/info/exclude: the folder\'s own, or the repository root\'s for a package pinned to the board at that root; ' +
+    '.claude/settings.json only for a folder with a board of its own inside another git repository, or at a root that holds other boards; others: in the instructions). ' +
     'An existing board is added to the machine registry. ' +
     '--remove keeps the entry of a global file (codex: ~/.codex/config.toml) while other projects of the machine registry may use it; --global removes it anyway.',
   options: { remove: { type: 'boolean' }, global: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },

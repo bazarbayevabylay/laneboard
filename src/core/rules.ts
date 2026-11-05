@@ -36,7 +36,7 @@ export function shortRuleForms(): ShortRule[] {
 
 // Skill frontmatter (code.claude.com/docs/en/skills: `name`, `description`; no angle brackets in the description).
 const SKILL_DESCRIPTION =
-  'Track work on the laneboard task board - claim a task (or resume your own after /clear), comment steps, finish it with a result and the commit, attach files, link branches and PRs, archive. Use in a project with a .laneboard/ store, or when the user mentions tasks, the board or a task id like LB-12.';
+  'Track work on the laneboard task board - claim a task (or resume your own after /clear or a restart), comment steps, finish it with a result and the commit, attach files, link branches and PRs, archive. Use in a project with a .laneboard/ store, or when the user mentions tasks, the board or a task id like LB-12.';
 
 // SKILL.md of the Claude Code plugin: frontmatter plus the agent rules.
 export function skillMarkdown(): string {

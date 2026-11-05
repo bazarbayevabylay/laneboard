@@ -1,14 +1,38 @@
-// The docs are executable: every ```sh block of docs/agent-guide.md and README.md runs, in order, in one bash session
-// in a fresh temp project and temp HOME, through the CLI from src/. A command must exit 0, or the code named by a trailing `# exit <n>`.
+// The docs are executable: every ```sh block of docs/agent-guide.md, README.md (and README.ru.md once it exists) runs, in order, in one
+// bash session in a fresh temp project and temp HOME, through the CLI compiled from src/ (tsc, as `npm run build` does: one node start
+// per command, without type stripping). A command must exit 0, or the code named by a trailing `# exit <n>`.
 // ```json file=<path> blocks are written to that path at their place. Only blocks marked <!-- guide:skip <reason> --> do not run
 // (global installs); the test lists them, so nothing else is skipped silently.
+// Bounds (guide-hang, RC check): every laneboard command is killed after STEP_LIMIT_S (SIGALRM, exit 142), the whole session after
+// SESSION_LIMIT_MS (SIGKILL), and the log keeps the time of every step, so a slow or hanging step is named instead of a silent wait.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
-import { cleanupTemp, CLI_SOURCE, REPO, tempDir } from '../helpers.ts';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { cleanupTemp, REPO, tempDir } from '../helpers.ts';
 
 afterAll(cleanupTemp);
+
+// One laneboard command may take this long (a step is 0.2-2.5 s even on a loaded machine).
+const STEP_LIMIT_S = 30;
+// The whole bash session of one file: a hard stop (48-95 s were measured under load with the CLI from src/, one third of that from tsc output).
+const SESSION_LIMIT_MS = 300_000;
+// The test of one file: room for a loaded machine (vitest's 60 s gave false timeouts, guide-hang); the step limit names a slow step first.
+const RUN_TEST_TIMEOUT_MS = 180_000;
+
+// The compiled CLI: main.js of a tsc build of src/ in a temp folder (package.json beside it for --version, node_modules linked).
+let cliMain = '';
+
+beforeAll(() => {
+  const root = tempDir();
+  const out = path.join(root, 'dist');
+  const tsc = spawnSync(process.execPath, [path.join(REPO, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', path.join(REPO, 'tsconfig.build.json'), '--outDir', out], { encoding: 'utf8' });
+  expect(tsc.status, `${tsc.stdout}${tsc.stderr}`).toBe(0);
+  fs.copyFileSync(path.join(REPO, 'src', 'core', 'agent-rules.md'), path.join(out, 'core', 'agent-rules.md'));
+  fs.copyFileSync(path.join(REPO, 'package.json'), path.join(root, 'package.json'));
+  fs.symlinkSync(path.join(REPO, 'node_modules'), path.join(root, 'node_modules'));
+  cliMain = path.join(out, 'cli', 'main.js');
+}, 120_000);
 
 interface Step {
   // Line of the command in the Markdown file.
@@ -69,17 +93,38 @@ function run(steps: readonly Step[]): { failed?: Step; code?: number; log: strin
   const home = path.join(root, 'home');
   const bin = path.join(root, 'bin');
   for (const dir of [project, home, bin]) fs.mkdirSync(dir);
-  fs.writeFileSync(path.join(bin, 'laneboard'), `#!/bin/sh\nexec "${process.execPath}" "${CLI_SOURCE}" "$@"\n`, { mode: 0o755 });
+  // perl's alarm survives its exec: the command is killed by SIGALRM after STEP_LIMIT_S seconds (exit 142).
+  fs.writeFileSync(path.join(bin, 'laneboard'), `#!/bin/sh\nexec perl -e 'alarm shift; exec @ARGV' ${STEP_LIMIT_S} "${process.execPath}" "${cliMain}" "$@"\n`, { mode: 0o755 });
   const log = path.join(root, 'guide.log');
+  const clock = `perl -MTime::HiRes=time -e 'printf "%.2f", time - ($ARGV[0] // 0)'`;
   const script = steps
-    .map((s, n) => [`echo '### step ${n}' >>"$GUIDE_LOG"`, '{', s.text, '} >>"$GUIDE_LOG" 2>&1', 'rc=$?', `if [ "$rc" -ne ${s.expect} ]; then echo "FAIL ${n} $rc"; exit 1; fi`].join('\n'))
+    .map((s, n) =>
+      [
+        `echo '### step ${n} (line ${s.line})' >>"$GUIDE_LOG"`,
+        `t0=$(${clock})`,
+        '{',
+        s.text,
+        '} >>"$GUIDE_LOG" 2>&1',
+        'rc=$?',
+        `echo "### step ${n}: exit $rc in $(${clock} "$t0") s" >>"$GUIDE_LOG"`,
+        `if [ "$rc" -ne ${s.expect} ]; then echo "FAIL ${n} $rc"; exit 1; fi`,
+      ].join('\n'),
+    )
     .join('\n');
   const r = spawnSync('bash', ['-c', script], {
     cwd: project,
     env: { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, GUIDE_LOG: log, LANG: 'C.UTF-8' },
     encoding: 'utf8',
+    timeout: SESSION_LIMIT_MS,
+    killSignal: 'SIGKILL',
   });
   const text = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+  if (r.error || r.signal) {
+    // The session was killed: name the step it was in (the last header in the log).
+    const last = [...text.matchAll(/^### step (\d+) \(line \d+\)$/gm)].at(-1)?.[1];
+    const step = last === undefined ? undefined : steps[Number(last)];
+    throw new Error(`the bash session was stopped (${r.error?.message ?? r.signal}) after ${SESSION_LIMIT_MS / 1000} s in step ${last ?? '?'}: ${step?.text ?? ''}\n--- log tail ---\n${text.slice(-3000)}`);
+  }
   const fail = /FAIL (\d+) (\d+)/.exec(r.stdout);
   if (!fail) {
     expect(r.status, r.stderr).toBe(0);
@@ -88,10 +133,35 @@ function run(steps: readonly Step[]): { failed?: Step; code?: number; log: strin
   return { failed: steps[Number(fail[1])], code: Number(fail[2]), log: text };
 }
 
-describe.each([
+// README.ru.md mirrors README.md (ADR-0001 §10); until it exists only the English one runs.
+const RU_README = path.join(REPO, 'README.ru.md');
+const FILES: Array<[string, number]> = [
   ['docs/agent-guide.md', 40],
   ['README.md', 8],
-])('%s runs as written', (file, minSteps) => {
+  ...(fs.existsSync(RU_README) ? [['README.ru.md', 8] as [string, number]] : []),
+];
+
+// The Markdown headings of a file (outside code blocks), as their levels in order.
+function headingLevels(file: string): number[] {
+  const levels: number[] = [];
+  let code = false;
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (line.startsWith('```')) code = !code;
+    const h = /^(#{1,6}) /.exec(line);
+    if (!code && h) levels.push(h[1]?.length ?? 0);
+  }
+  return levels;
+}
+
+describe('README.ru.md mirrors README.md', () => {
+  it.skipIf(!fs.existsSync(RU_README))('the same headings, level by level, and the same number of sh blocks', () => {
+    const en = path.join(REPO, 'README.md');
+    expect(headingLevels(RU_README)).toEqual(headingLevels(en));
+    expect(parse(RU_README).steps.length).toBe(parse(en).steps.length);
+  });
+});
+
+describe.each(FILES)('%s runs as written', (file, minSteps) => {
   const parsed = parse(path.join(REPO, file));
 
   it('only global installs are skipped', () => {
@@ -107,5 +177,5 @@ describe.each([
     const r = run(parsed.steps);
     const where = r.failed ? `${file}:${r.failed.line} exited ${r.code}, expected ${r.failed.expect}: ${r.failed.text}\n--- log tail ---\n${r.log.slice(-3000)}` : '';
     expect(where).toBe('');
-  });
+  }, RUN_TEST_TIMEOUT_MS);
 });
