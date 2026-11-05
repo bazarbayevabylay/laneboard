@@ -88,7 +88,8 @@ function realPathOf(file: string): string {
 
 // Other harnesses that share this file and still have their own laneboard entry installed. The same file is the same real path:
 // AGENTS.md of codex, cursor and opencode, and also CLAUDE.md when it is a link to AGENTS.md (CARRYOVER S6b-r2). A harness counts
-// as installed by a file of its own only: a file this harness writes too (AGENTS.md, .git/info/exclude) says nothing about it.
+// as installed by a file of its own only: a file this harness writes too (AGENTS.md, .git/info/exclude) says nothing about it. For the
+// exclude block only its project files count: a global file (~/.codex/config.toml) may serve another project, not this repository.
 function otherUsers(harness: Harness, f: HarnessFile, c: HarnessContext): string[] {
   const realOf = (g: HarnessFile): string => realPathOf(locate(g, c).file);
   const real = realOf(f);
@@ -96,7 +97,7 @@ function otherUsers(harness: Harness, f: HarnessFile, c: HarnessContext): string
   return HARNESSES.filter((h) => h !== harness && h.files.some((g) => realOf(g) === real))
     .filter((h) =>
       h.files
-        .filter((g) => !shared.has(realOf(g)))
+        .filter((g) => !shared.has(realOf(g)) && (f !== gitExclude || g.scope === 'project'))
         .some((g) => {
           const { file, shown } = locate(g, c);
           try {

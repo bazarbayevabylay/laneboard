@@ -47,7 +47,8 @@ function hasPatterns(text: string): boolean {
 // same text, and a backup of git's template only made setup warn about a file nobody wrote (newcomer F11).
 function excludeEdit(file: string): TextEdit {
   const edit = blockEdit(file, EXCLUDE_MARKERS, EXCLUDE_BODY);
-  return { ...edit, ownsExclusive: (text) => edit.owns(text) || !hasPatterns(text) };
+  // An empty file (0 bytes) is still backed up, so --remove gives it back instead of deleting it.
+  return { ...edit, ownsExclusive: (text) => edit.owns(text) || (text !== '' && !hasPatterns(text)) };
 }
 
 // The exclude file as a harness file: written in every git repository with a `.git` directory; at the repository root it is

@@ -161,6 +161,17 @@ describe('A20: setup codex --remove keeps the global entry while another project
     expect(result(r, '~/.codex/config.toml')).toBe('deleted');
   });
 
+  it('this project\'s own store in the registry does not keep the entry when setup ran with --dir another store', async () => {
+    const home = tempDir();
+    const proj = tempDir();
+    const other = path.join(tempDir(), '.laneboard');
+    await ok(proj, home, ['init', '--description', 'own store']);
+    await ok(proj, home, ['setup', 'codex', '--dir', other]);
+    const r = await ok(proj, home, ['setup', 'codex', '--remove', '--dir', other]);
+    expect(result(r, '~/.codex/config.toml')).toBe('deleted');
+    expect(r.warnings).toEqual([]);
+  });
+
   it('a registry that cannot be read keeps the entry (it cannot tell who uses it)', async () => {
     const home = tempDir();
     const a = tempDir();
@@ -321,6 +332,31 @@ describe('A22: backups and folder markers stay out of git (newcomer F6, F11)', (
     expect(result(last, '.git/info/exclude')).toBe('removed');
   });
 
+  it('codex set up in another project only (a global ~/.codex/config.toml): --remove of claude-code here takes the exclude block out', async () => {
+    const home = tempDir();
+    const [a, b] = [repo(home), repo(home)];
+    await ok(a, home, ['init', '--description', 'a']);
+    await ok(b, home, ['init', '--description', 'b']);
+    await ok(a, home, ['setup', 'claude-code']);
+    await ok(b, home, ['setup', 'codex']);
+    const r = await ok(a, home, ['setup', 'claude-code', '--remove']);
+    expect(result(r, '.git/info/exclude')).toBe('removed');
+    expect(r.warnings.filter((w) => w.includes('exclude'))).toEqual([]);
+    expect(fs.readFileSync(path.join(a, '.git', 'info', 'exclude'), 'utf8')).not.toContain('laneboard');
+    expect(fs.existsSync(path.join(home, '.codex', 'config.toml'))).toBe(true);
+  });
+
+  it('an empty exclude file (0 bytes) is given back empty by --remove, not deleted', async () => {
+    const home = tempDir();
+    const proj = repo(home);
+    const exclude = path.join(proj, '.git', 'info', 'exclude');
+    fs.writeFileSync(exclude, '');
+    await ok(proj, home, ['setup', 'gemini']);
+    const r = await ok(proj, home, ['setup', 'gemini', '--remove']);
+    expect(result(r, '.git/info/exclude')).toBe('restored');
+    expect(fs.readFileSync(exclude, 'utf8')).toBe('');
+  });
+
   it('a 0.3.1 exclude block (two lines) is laneboard\'s: updated to the new body', async () => {
     const home = tempDir();
     const proj = repo(home);
@@ -362,6 +398,9 @@ describe('A23: boards --forget drops an entry whose path holds no store (LB-26)'
     const live = await run(b, home, ['boards', '--forget', b]);
     expect(live.code).toBe(2);
     expect(live.json.error).toMatchObject({ code: 'INVALID_VALUE', details: { path: path.join(b, '.laneboard'), prefix: 'KEEP' } });
+    // An agent may run the fix blindly: it never moves or deletes the live board.
+    expect(live.json.error?.fix).toBe('nothing to do: a live board stays listed; laneboard boards shows the entries marked missing, the only ones --forget drops');
+    expect(live.json.error?.fix).not.toMatch(/delete|move|\brm\b|mv\b/);
     expect(readRegistry(home).map((e) => e.prefix)).toEqual(['KEEP']);
   });
 
@@ -388,6 +427,32 @@ describe('A23: boards --forget drops an entry whose path holds no store (LB-26)'
     await ok(tempDir(), home, ['init', '--prefix', 'ONE', '--description', 'one']);
     const miss = await run(tempDir(), home, ['boards', '--forget', 'NOPE']);
     expect(miss.json.error).toMatchObject({ code: 'STORE_NOT_FOUND', allowed: ['ONE'] });
+  });
+});
+
+describe('A23 + A21: boards --forget with a registry folder that cannot be written', () => {
+  it('a plain STORE_READ_ONLY error (not INTERNAL) naming the folder; the registry stays as it was', async () => {
+    const home = tempDir();
+    const a = tempDir();
+    await ok(a, home, ['init', '--prefix', 'GONE', '--description', 'a']);
+    fs.rmSync(path.join(a, '.laneboard'), { recursive: true });
+    const dir = path.join(home, '.laneboard');
+    const before = fs.readFileSync(registryFile(home), 'utf8');
+    fs.chmodSync(dir, 0o555);
+    try {
+      const r = await run(tempDir(), home, ['boards', '--forget', 'GONE']);
+      expect(r.code).toBe(6);
+      expect(r.json.error).toMatchObject({
+        code: 'STORE_READ_ONLY',
+        message: `--forget GONE: the machine registry ${dir} cannot be written, so nothing was forgotten`,
+        fix: `make ${dir} writable, then run laneboard boards --forget GONE again`,
+      });
+      // A value that names nothing is still STORE_NOT_FOUND.
+      expect((await run(tempDir(), home, ['boards', '--forget', 'NOPE'])).json.error).toMatchObject({ code: 'STORE_NOT_FOUND' });
+    } finally {
+      fs.chmodSync(dir, 0o755);
+    }
+    expect(fs.readFileSync(registryFile(home), 'utf8')).toBe(before);
   });
 });
 

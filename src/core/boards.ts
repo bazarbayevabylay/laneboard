@@ -410,7 +410,13 @@ export async function forgetBoard(home: string, value: string, cwd: string, opts
     });
   // Nothing registered: fail before the registry folder is made for the lock.
   if (readRegistry(home).length === 0) throw notFound([]);
-  return updateRegistry(home, opts, (entries) => {
+  // A registry folder that cannot be written (read-only HOME, a sandbox): the entry cannot be dropped, said plainly, not INTERNAL.
+  const unwritable = (): never => {
+    throw new LaneboardError('STORE_READ_ONLY', `--forget ${value}: the machine registry ${registryDir(home)} cannot be written, so nothing was forgotten`, {
+      fix: `make ${shellQuote(registryDir(home))} writable, then run laneboard boards --forget ${shellQuote(value)} again`,
+    });
+  };
+  return updateRegistry(home, { ...opts, onUnwritable: unwritable }, (entries) => {
     const named = entriesNamed(entries, value, home, cwd);
     if (named.length === 0) throw notFound(entries);
     const gone = named.filter((e) => storeState(e.path) === 'missing');
@@ -419,7 +425,8 @@ export async function forgetBoard(home: string, value: string, cwd: string, opts
     if (gone.length === 0 && first !== undefined) {
       throw new LaneboardError('INVALID_VALUE', `--forget ${value}: the board at ${first.path} still holds a store; forget drops only entries whose path holds none (a moved or deleted board)`, {
         details: { path: first.path, prefix: first.prefix },
-        fix: `to stop listing that board, move or delete ${shellQuote(first.path)} first, then run laneboard boards --forget ${shellQuote(first.path)}`,
+        // Never a fix that moves or deletes the store: an agent may run a fix blindly (ADR-0001 rule 13), and this board holds tasks.
+        fix: 'nothing to do: a live board stays listed; laneboard boards shows the entries marked missing, the only ones --forget drops',
       });
     }
     const forgotten = gone.map((e) => ({ path: e.path, prefix: e.prefix, name: e.name }));
