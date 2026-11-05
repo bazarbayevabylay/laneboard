@@ -146,7 +146,7 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
   not in the final status and the free ones (no assignee, not final) with the claim command.
 - A board with checks or `create_by` (3.7): `prime` names the checks, who makes them and who creates tasks. Your `finish` hands your work in
-  to the check the task is in, else the first check; a checker's `finish` passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
+  to the check the task is in, else the first check; a checker's `finish --status <next>` (the command `prime` prints under the task) passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
 
 ### 2.2 A task from start to end
 
@@ -158,7 +158,7 @@ who then becomes its assignee). `--status` takes any status but the first one: `
 the final one (on a board with checks, 3.7: by default the check the task is in, else the first check, and the checkers set the rest).
 The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
 Somebody else's task `finish` only accepts, and only a handed-in one (the newest `status` event into its current status is the
-assignee's `finish` with `handed_in`): into the final status, the result comment and no commit link (the assignee linked it); the assignee
+assignee's `finish` with `handed_in`; on a board with checks, 3.7, any handed-in task, whoever holds it now, and a checker passes it on too): into the final status, the result comment and no commit link (the assignee linked it); the assignee
 stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`. A task in work or moved by
 `update` (or handed in with 0.2.0, before the mark): `ALREADY_CLAIMED`, the fix asks the assignee to hand it in with
 `finish --status <status>`; the orchestrator may close it with `laneboard update <ID> --status done`. Accepting a closed task again:
@@ -281,6 +281,9 @@ same user and harness qualifies; a task of an explicit name (`dev-1` above, or `
 `--resume`. `ALREADY_CLAIMED` on a task of an earlier session offers `claim <ID> --resume --json` as its fix once that session has written
 nothing for 15 minutes; before that the fix is a comment and the message names `--resume`, and a `--resume` then works with a warning
 (a parallel live session of the same user has the same base: resume only your own work that matches the current request).
+On a board with checks a task handed in and waiting for a check is no work to resume: "Your earlier sessions" does not list it, and
+`claim --resume` of it gets "handed in already". Another session of the same base that worked on a task (by the events it wrote
+under its default name) is its author: it never passes it on or accepts it, and its queue "Waiting for your check" skips it.
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
 of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
 
@@ -490,8 +493,33 @@ For an orchestrator that runs subagents. Both keys are optional; a board without
 against an agent's mistake, not against a hostile agent.
 
 - `--review-statuses a,b`: the checks in order, statuses between the first and the final one. The assignee's `finish` hands in to the
-  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker's `finish` passes the handed-in task on to the next check
-  (reply `passed: true`, `from`; still handed in, not in work) and from the last one accepts it into the final status (`accepted: true`).
+  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker names where the task goes:
+  `finish <ID> --status <next>` passes the handed-in task on to the next check (reply `passed: true`, `from`; still handed in, not in work)
+  and from the last one `--status <final>` accepts it (`accepted: true`).
+- A checker's `finish` without `--status`, with the check the task is in, or past the next status is refused (`INVALID_VALUE`): it may
+  come from a read before another checker passed the task on, so it would pass the next check unseen. The fix only reads the task,
+  `laneboard get <ID>`; the message names both exact commands, the pass (`finish <ID> --status <next> --result "<result of your check>"`)
+  and the return for rework (below). The same command run again after a lost reply (the same `--status`) changes nothing.
+- A task enters a check only with `finish` (handed in by its holder, or passed on by the check before), so it always shows in the
+  checkers' queue: `update`, `claim`, `create` and `import` into a check are refused. The fix of the holder (or of anybody for an
+  unassigned task) is the hand-in, `laneboard finish <ID> --status <check> --result "<what you did, how you checked it>"`; of a checker
+  of a waiting task `laneboard get <ID>` with both commands; of anybody else a comment that asks the holder to hand it in. A closed task
+  is reopened first: the fix is `laneboard update <ID> --status <work status> && laneboard finish <ID> --status <check> ...`.
+- The hand-in belongs to the task: a new holder (`update --assignee`, `--unassign`) keeps a waiting task handed in and in the
+  checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it.
+- Nobody claims a task waiting in a check (with or without `--status`): a check needs no claim, and holding the task would make the
+  checker an author. A checker's `claim` gets `INVALID_VALUE`, fix `laneboard get <ID>`, the message names the pass and the return;
+  the author's the "handed in already" refusal; anybody else's a comment (`ALREADY_CLAIMED` when held). `prime` and `task_prime` list
+  such a task under the waiting ones, never among the free tasks (`unassigned`).
+- No checker left: when every name in `--reviewers` worked on a waiting task (the orchestrator gave it to the only checker), nobody
+  may pass it on. The refusals, `prime` (MCP `roles.no_checker {ids, fix}`) and `doctor` (check `checks`, exit 6) name the owner's way
+  out: `laneboard config --reviewers "<names there>,<another checker>"`. `config --reviewers` that leaves a waiting task so, and a
+  hand-in while `--reviewers` names only its author, write and warn with the same command.
+- A checker's queue skips the check it passed the task into while another checker may make it; with no other one (`--reviewers rev`
+  on two checks) the task stays in its queue, marked "(you passed the previous check)" (`roles.waiting[].passed_by_you`), with the pass.
+- `config --review-statuses` that turns a status with tasks in work into a check warns, naming each task and the hand-in its holder
+  runs (`laneboard finish <ID> --status <check> --result "..." --as <holder>`); `doctor` reports them in the check `checks` (exit 6)
+  until they are handed in. A move of a handed-in task by `update` or `claim` warns with the hand-in that puts it back in the queue.
 - `--reviewers x,y`: who checks (default: anybody but the author of the work). Any of them makes any check, both in a row too: the
   two lists are not paired. A checker's `finish` applies to the check the task is in now, whoever passed it there. The author of the
   work (any name that held the task or handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
@@ -506,7 +534,8 @@ against an agent's mistake, not against a hostile agent.
   that passes the task on or accepts it. A fix never changes what the refused command meant.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
-- `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check with the `finish` that checks them, and
+- `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check, each with its ready command
+  (`pass: laneboard finish <ID> --status <next> --result "<result of your check>"`; MCP `task_prime`: `roles.waiting[].next_status`), and
   claims into the status before the first check. `none` turns each key off (`config@1` again when all are off).
 
 ```sh
@@ -521,7 +550,8 @@ laneboard comment DEMO-6 "Admins need a higher limit" --as lead --json
 laneboard update DEMO-6 --status in_progress --as lead --json
 laneboard prime --as dev-3
 laneboard finish DEMO-6 --result "Admins get 50 req/min" --no-commit --as dev-3 --json
-laneboard finish DEMO-6 --result "Checked with an admin token" --as lead --json
+laneboard finish DEMO-6 --result "Checked with an admin token" --as lead --json  # exit 2
+laneboard finish DEMO-6 --status done --result "Checked with an admin token" --as lead --json
 laneboard config --review-statuses none --reviewers none --creators none --json
 ```
 
@@ -530,8 +560,8 @@ laneboard config --review-statuses none --reviewers none --creators none --json
 `laneboard import` creates tasks from another tracker's files, in one write. Each task gets the link `file=<path from the project folder>`,
 so a second run skips files imported before and creates only new ones. An undeclared key or a status that is neither configured
 nor mapped stops the import before anything is written and lists every value found; `--dry-run` shows the result without writing.
-On a board with `create_by` only those names import; a task imported right into a later check or the final status follows the rule of
-`create` (3.7): not by its assignee, and into the final status only by a checker.
+On a board with `create_by` only those names import; a task imported right into a check or the final status follows the rule of
+`create` (3.7): never into a check (a task enters one only with `finish`), and into the final status only by a checker, not by its assignee.
 
 | Option | Meaning |
 |---|---|

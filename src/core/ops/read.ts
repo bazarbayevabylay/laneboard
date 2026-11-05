@@ -10,7 +10,7 @@ import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, deletedField, 
 import type { DeletedMark, FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
-import { handedIn, waitsForCheck, workStatusBeforeChecks } from './update.ts';
+import { addCheckerCommand, handedIn, nextAfterCheck, noCheckerLeft, passedOnBy, waitsForCheck, waitsInCheck, workStatusBeforeChecks } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
 
@@ -396,12 +396,13 @@ export interface SummaryResult {
   assigned: ListItem[];
   // Active tasks not in the final status that are assigned to `assignee` (without one: to anybody) - work in progress.
   in_progress: number;
-  // Free work: active tasks without an assignee, not in the final status; by priority (when declared), then newest update;
+  // Free work: active tasks without an assignee, not in the final status, not waiting for a check; by priority (when declared), then newest update;
   // at most SUMMARY_UNASSIGNED_MAX of them, `unassigned_total` counts all.
   unassigned: ListItem[];
   unassigned_total: number;
   // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's) that their holder
-  // took under its session default name (heldByEarlierSession), newest update first, at most SUMMARY_RESUMABLE_MAX; empty without `session_base`.
+  // took under its session default name (heldByEarlierSession), not waiting for a check, newest update first, at most SUMMARY_RESUMABLE_MAX;
+  // empty without `session_base`.
   resumable: ListItem[];
   // Is this store in the machine registry (<home>/.laneboard/boards.json, where init and setup add a board)? null without a home in the
   // context (cannot tell). A cloned repository's committed .laneboard is not: the SessionStart hook shows none of its texts (review security F4).
@@ -422,9 +423,15 @@ export interface SummaryRoles {
   creators: string[] | null;
   // May `assignee` create tasks (no create_by, or a name in it); false without a name on a board with create_by.
   can_create: boolean;
-  // Tasks waiting in a check that `assignee` may make (waitsForCheck), oldest update first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
-  waiting: ListItem[];
+  // Tasks waiting in a check that `assignee` may make (waitsForCheck: never the work of `assignee` or of its other sessions), oldest update
+  // first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
+  // `next_status`: what the checker's finish names to pass it (S6w I2: finish --status <next_status>, the next check or the final status).
+  // `passed_by_you`: `assignee` passed it into this check itself and no other checker may make it (S6w r2: the only checker).
+  waiting: Array<ListItem & { next_status: string; passed_by_you: boolean }>;
   waiting_total: number;
+  // Tasks waiting in a check with no checker left (S6w r2: every name in review.by worked on them), and the owner's command that adds a
+  // checker (config --reviewers with the names there and a placeholder); null when there is none.
+  no_checker: { ids: string[]; fix: string } | null;
   // Each task of `assigned` with a comment by another name: the newest such comment (a checker's reason to return it, B-U6).
   feedback: Array<{ id: string; comment: LastComment }>;
 }
@@ -439,11 +446,19 @@ function otherComment(task: TaskT, actor: string): LastComment | null {
 }
 
 // The roles of the board (SummaryRoles) for `assignee`, or undefined on a board without checks and create_by (as before, ADR §22).
-function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archived: boolean }>, assigned: readonly TaskT[], assignee: string | undefined): SummaryRoles | undefined {
+// `sessionBase`: the agent writes under its session default name; its other sessions' work is its own (no check of it, S6w r3).
+function summaryRoles(
+  config: ConfigT,
+  tasks: ReadonlyArray<{ task: TaskT; archived: boolean }>,
+  assigned: readonly TaskT[],
+  assignee: string | undefined,
+  sessionBase: string | undefined,
+): SummaryRoles | undefined {
   const checks = reviewStatuses(config);
   if (checks.length === 0 && config.create_by === undefined) return undefined;
-  const waiting = assignee === undefined ? [] : tasks.filter(({ task }) => waitsForCheck(config, task, assignee));
+  const waiting = assignee === undefined ? [] : tasks.filter(({ task }) => waitsForCheck(config, task, assignee, sessionBase));
   waiting.sort((a, b) => -byUpdatedDesc(a.task, b.task));
+  const stuck = tasks.filter(({ task }) => noCheckerLeft(config, task)).map(({ task }) => task.id);
   const feedback: SummaryRoles['feedback'] = [];
   for (const task of assigned) {
     const comment = checks.length === 0 || assignee === undefined ? null : otherComment(task, assignee);
@@ -455,8 +470,9 @@ function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archi
     work_status: workStatusBeforeChecks(config) ?? null,
     creators: config.create_by === undefined ? null : [...config.create_by],
     can_create: config.create_by === undefined || (assignee !== undefined && config.create_by.includes(assignee)),
-    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => toListItem(task, archived)),
+    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => ({ ...toListItem(task, archived), next_status: nextAfterCheck(config, task.status), passed_by_you: assignee !== undefined && passedOnBy(task, assignee) })),
     waiting_total: waiting.length,
+    no_checker: stuck.length === 0 ? null : { ids: stuck, fix: addCheckerCommand(config) },
     feedback,
   };
 }
@@ -491,19 +507,22 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   for (const { task } of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
   const finalStatus = config.statuses.at(-1) ?? '';
   // The agent's own, free and resumable work is in a configured status that is not final, so `list --assignee <name> --status
-  // <open>...` and `list --unassigned --status <open>...` (the footers of prime) find the same tasks.
+  // <open>...` finds the agent's own tasks; `list --unassigned --status <open>...` (the free tasks' footer) lists the free ones and,
+  // on a board with checks, the unassigned tasks that wait for a check too (prime's footer says so).
   const open = config.statuses.filter((st) => !finalStatuses(config.statuses).includes(st));
   const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee && open.includes(task.status));
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
   const inProgress = tasks.filter(({ task }) => task.status !== finalStatus && task.assignee !== null && (p.assignee === undefined || task.assignee === p.assignee));
-  const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status));
+  // A task waiting for a check is no free work (S6w r2): a checker checks it with finish (the waiting list), nobody claims it.
+  const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status) && !waitsInCheck(config, task));
   free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
+  // A task waiting for a check is no work to resume either (S6w r3): it is handed in, and claim --resume of it is refused.
   const resumable =
     p.assignee === undefined
       ? []
-      : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? ''));
+      : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? '') && !waitsInCheck(config, task));
   resumable.sort((a, b) => byUpdatedDesc(a.task, b.task));
-  const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee);
+  const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee, p.session_base);
   return {
     data: {
       prefix: config.prefix,
@@ -551,7 +570,7 @@ export interface ViewCard {
   children: { total: number; final: number };
   // Last change of the task (every event moves it).
   updated_at: string;
-  // Awaiting acceptance: its assignee handed it in with finish (handedIn).
+  // Awaiting acceptance or a check: handed in with finish (handedIn; on a board with checks whoever holds it now).
   handed_in: boolean;
   // Somebody works on it: assigned, neither in the first configured status nor in the final one, not handed in.
   in_work: boolean;
@@ -585,7 +604,7 @@ export const STALE_AFTER_MS = 4 * 60 * 60 * 1000;
 // assigned, neither in the first configured status nor in the final one, not handed in; stale = in work and unchanged for STALE_AFTER_MS.
 function workMarks(task: TaskT, config: ConfigT, nowMs: number): { handed_in: boolean; in_work: boolean; stale: boolean } {
   const finals = finalStatuses(config.statuses);
-  const handed = handedIn(task);
+  const handed = handedIn(task, config);
   const inWork = task.assignee !== null && task.status !== config.statuses[0] && !finals.includes(task.status) && !handed;
   return { handed_in: handed, in_work: inWork, stale: inWork && nowMs - Date.parse(task.updated_at) > STALE_AFTER_MS };
 }

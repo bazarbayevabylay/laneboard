@@ -394,7 +394,7 @@ describe('MCP server over stdio (SDK client)', () => {
         expect(r.structured).toMatchObject({ code: 'INVALID_VALUE' });
       }
       expect((await mcp.call('task_get', { id: 'API-1' })).structured).toMatchObject({ status: 'code_review', assignee: 'dev-b' });
-      expect((await mcp.call('task_finish', { id: 'API-1', result: 'ok', actor: 'rev' })).structured).toMatchObject({ status: 'qa', passed: true });
+      expect((await mcp.call('task_finish', { id: 'API-1', status: 'qa', result: 'ok', actor: 'rev' })).structured).toMatchObject({ status: 'qa', passed: true });
     } finally {
       await mcp.close();
     }

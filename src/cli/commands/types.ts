@@ -65,6 +65,9 @@ export interface CommandDef {
   flags?: Record<string, string>;
   // Options the command cannot run without, with the value a wrong-number-of-arguments fix adds when one is absent (create: --status <first>).
   required?(discovery: DiscoveryInput): Array<{ name: string; value: string }>;
+  // The text option extra words go to in a wrong-number-of-arguments fix when argv lacks it (finish: result), as `--result=<words>`,
+  // so `finish X -- "- text"` keeps the text and the fix runs as printed (S6w U4).
+  textOption?: string;
   // Only reads a store, so it may open another board with --board (read-only).
   readOnly?: boolean;
   run(c: CommandContext): Promise<CommandOutput>;

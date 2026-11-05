@@ -17,7 +17,7 @@ async function inQa(): Promise<TestStore> {
   await createTask(as(s, 'orch'), { title: 'Add endpoint', status: 'ready' });
   await claimTask(as(s, 'dev-2'), { id: 'API-1', status: 'dev' });
   await finishTask(as(s, 'dev-2'), { id: 'API-1', result: 'work', no_commit: true });
-  await finishTask(as(s, 'rev'), { id: 'API-1', result: 'review ok' });
+  await finishTask(as(s, 'rev'), { id: 'API-1', status: 'qa', result: 'review ok' });
   return s;
 }
 

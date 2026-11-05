@@ -35,7 +35,7 @@ export const config: CommandDef = {
     '--drop-field removes one: a field whose active values do not fit is changed only after they are unset. ' +
     '--name, --description and --prefix update the machine registry. ' +
     "--review-statuses sets the checks in order (statuses between the first and the final one): an assignee's finish hands in to the first, " +
-    "a checker's finish passes the task on to the next and from the last one accepts it into the final status; the assignee never closes its own task. " +
+    "a checker's finish --status <next> passes the task on to the next and from the last one accepts it into the final status; the assignee never closes its own task. " +
     '--reviewers names who checks (default: anybody but the assignee), --creators who creates tasks; none turns each off. ' +
     'Checks, reviewers or creators write config.json as laneboard/config@2, which laneboard 0.3.1 cannot read; all of them off: config@1 again.',
   options: {

@@ -12,6 +12,7 @@ import { transact } from '../transact.ts';
 import {
   actorSourceOf,
   addEvent,
+  byEarlierSession,
   checkActor,
   checkExpectedRev,
   checkFields,
@@ -188,7 +189,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       const assignee = p.assignee === undefined ? task.assignee : p.assignee;
       const assignChange = assignee !== task.assignee ? { from: task.assignee, to: assignee } : undefined;
-      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, warnings);
+      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, assignee, warnings, ctx.sessionBase);
 
       if (!Object.keys(diff).length && !statusChange && !assignChange) {
         warnings.push(`no changes: ${id} already has these values`);
@@ -262,7 +263,8 @@ function earlierSessionClaimed(id: string, holder: string, actor: string, silent
 // Take a task: assignee := actor; a task held by someone else fails with ALREADY_CLAIMED, unless `resume` takes it over from
 // another session of the same default name base (an `assigned` event with `resumed: true`). A resume warns when that session wrote
 // less than EARLIER_SESSION_SILENT_MS ago (a parallel session may still be at work: two tabs after a restart, A-U6) and names the
-// parent task held by the same session (finish of the parent needs it back too, A-U2).
+// parent task held by the same session (finish of the parent needs it back too, A-U2). On a board with checks a task that waits for a check
+// is claimed by nobody (S6w r2, waitingClaimRefusal): a checker checks it with finish, and a claim would make the checker its author.
 export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(ClaimInput, input);
@@ -276,6 +278,8 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       if (p.status !== undefined) checkStatus(s.config, p.status);
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       checkExpectedRev(task, false, p.expected_rev);
+      // A task that waits for a check is taken by nobody (S6w r2): a check needs no claim, and the claim would make a checker an author.
+      if (waitsInCheck(s.config, task)) throw waitingClaimRefusal(s.config, task, actor, ctx.sessionBase);
       const holder = task.assignee;
       const earlier = heldByEarlierSession(task, ctx.sessionBase, actor);
       const resumed = p.resume === true && earlier;
@@ -286,7 +290,7 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const assignChange = holder !== actor ? { from: holder, to: actor, ...(resumed ? { resumed: true } : {}) } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       // The same checks as update (review r1): claim --status is no way around them; the actor holds the task after the claim.
-      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, true, warnings);
+      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, true, actor, warnings, ctx.sessionBase);
       if (!assignChange && !statusChange) {
         warnings.push(`no changes: ${id} is already claimed by ${actor}`);
         return toTaskView(task, false);
@@ -382,13 +386,17 @@ function arrivalEvent(task: TaskT): TaskT['events'][number] | undefined {
   return undefined;
 }
 
-// Was the task handed in by its assignee: the newest `status` event into its current status is the assignee's finish, which marks
-// it `handed_in: true` (S4b, by the data: no meaning is read from the names or the order of statuses), or a checker's finish that
-// passed the handed-in task on to the next check (`passed: true`, P1: the hand-in lives on through the checks). False without such an
-// event (set by update or claim, created in this status, handed in before the marker, or the event was dropped by the events limit).
-export function handedIn(task: TaskT): boolean {
+// Was the task handed in: the newest `status` event into its current status is a finish that handed it in (`handed_in: true`, S4b, by
+// the data: no meaning is read from the names or the order of statuses) or a checker's finish that passed it on (`passed: true`, P1: the
+// hand-in lives on through the checks). On a board with checks it holds for the task, whoever holds it now (S6w r1): a new assignee
+// (update --assignee, claim, unassign) keeps it handed in, so a task waiting in a check stays in the checkers' queue, and the new holder
+// is an author of the work all the same (workedOn). Without checks the hand-in is its assignee's (LB-9): somebody else accepts only a
+// task its assignee handed in, so a task given to another name is handed in again. False without such an event (set by update or claim,
+// created in this status, handed in before the marker, or the event was dropped by the events limit).
+export function handedIn(task: TaskT, config: ConfigT): boolean {
   const e = arrivalEvent(task);
   if (e === undefined) return false;
+  if (reviewStatuses(config).length > 0) return e.data.handed_in === true || e.data.passed === true;
   return (e.actor === task.assignee && e.data.handed_in === true) || (e.actor !== task.assignee && e.data.passed === true);
 }
 
@@ -398,53 +406,58 @@ function passedBy(task: TaskT): string | undefined {
   return e !== undefined && e.data.passed === true ? e.actor : undefined;
 }
 
-// Is the task waiting in a check by its events, whoever holds it now (review r2): the newest `status` event into its status is a
-// hand-in or a checker's pass. An unassigned task handed in and then unassigned by its author still waits for the check.
-function waitingByEvents(task: TaskT): boolean {
-  const e = arrivalEvent(task);
-  return e !== undefined && (e.data.handed_in === true || e.data.passed === true);
-}
-
 // Did `actor` do the work on `task` (the author of the work, P1, review r1): its assignee, or a name that held it or handed it in by
 // the events kept (an `assigned` event from or to the actor, `created` with it as the assignee, its hand-in). So unassigning the task
 // or handing it to another name first does not let its author pass it on or close it, by update, claim or finish (review r2). A
 // checker's pass or acceptance is none of these events, so a check never makes the checker an author. No store field records it:
 // events dropped by the events limit are not seen (a guard against mistakes, not a hostile agent: actors are self-named).
-function workedOn(task: TaskT, actor: string): boolean {
-  if (task.assignee === actor) return true;
+// `sessionBase` (the actor writes under its session default name, ctx.sessionBase): another session of that name that wrote on the
+// task under its default name (byEarlierSession, the test of claim --resume) and worked on it is the same author (S6w r3: a new
+// session after /clear neither checks its own work nor is invited to).
+function workedOn(task: TaskT, actor: string, sessionBase?: string): boolean {
+  if (workedOnAs(task, actor)) return true;
+  return sessionBase !== undefined && task.events.some((e) => byEarlierSession(e, sessionBase, actor) && workedOnAs(task, e.actor));
+}
+
+// workedOn for exactly the name `name` (no other session counts).
+function workedOnAs(task: TaskT, name: string): boolean {
+  if (task.assignee === name) return true;
   return task.events.some(
     (e) =>
-      (e.type === 'assigned' && (e.data.from === actor || e.data.to === actor)) ||
-      (e.type === 'created' && e.data.assignee === actor) ||
-      (e.type === 'status' && e.actor === actor && e.data.handed_in === true),
+      (e.type === 'assigned' && (e.data.from === name || e.data.to === name)) ||
+      (e.type === 'created' && e.data.assignee === name) ||
+      (e.type === 'status' && e.actor === name && e.data.handed_in === true),
   );
 }
 
 // One rule for a status move by update or claim on a board with checks (P1, review r1): the author of the work (workedOn) never sets
 // a later check or the final status, nor another check while the task waits in one (checkAuthorMove, shared with a checker's finish), only review.by (when set) set the final one,
-// and an actor that holds the task after this write (`takes`: claim, or update with --assignee itself) does not close it either; a move of a handed-in task warns that the hand-in is lost (A17). Without checks
-// nothing here applies (0.3.1, ADR §22).
-function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, warnings: string[]): void {
+// and an actor that holds the task after this write (`takes`: claim, or update with --assignee itself) does not close it either; a move of a handed-in task warns that the hand-in is lost (A17;
+// `holder`: who holds the task after the write, named in the warning's hand-in). Without checks nothing here applies (0.3.1, ADR §22).
+function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, holder: string | null, warnings: string[], sessionBase: string | undefined): void {
   const review = reviewStatuses(config);
   if (review.length === 0) return;
   const final = finalStatuses(config.statuses)[0] ?? '';
-  const refusal = reviewMoveRefusal(config, task, actor, to, takes);
+  const refusal = reviewMoveRefusal(config, task, actor, to, takes, sessionBase);
   if (refusal === 'author') throw authorRefusal(config, task, to, actor, 'update');
+  if (refusal === 'check') throw checkEntryRefusal(config, task, actor, to, sessionBase);
   if (refusal === 'not-checker') throw notChecker(task.id, task.assignee, actor, reviewers(config));
-  if (refusal === 'holder') throw handInToFirstCheck(task.id, final, handInStatus(review, task), review, final, actor, 'update');
-  if (handedIn(task)) warnings.push(handInLostWarning(task.id));
+  if (refusal === 'holder') throw handInToFirstCheck(config, task, final, actor, 'update');
+  if (handedIn(task, config)) warnings.push(handInLostWarning(config, task, to, holder));
 }
 
 // Why a board with checks refuses to put `task` into `to` by `actor` (P1, P2): 'author' - the author of the work (authorMoves);
-// 'not-checker' - the final status by a name not in review.by (when set); 'holder' - the final status by the actor that holds the
-// task after the write (`takes`). undefined: allowed, and always without checks (0.3.1, ADR §22). One rule for update, claim (each
-// with its error, checkReviewMove) and create and import of a task right into a later check or the final status (S6m).
-export type ReviewRefusal = 'author' | 'not-checker' | 'holder';
+// 'check' - any check by anybody (S6w I1: a task enters a check only by finish, handed in or passed on, so it never sits in a check
+// that no checker sees); 'not-checker' - the final status by a name not in review.by (when set); 'holder' - the final status by the
+// actor that holds the task after the write (`takes`). undefined: allowed, and always without checks (0.3.1, ADR §22). One rule for
+// update, claim (each with its error, checkReviewMove) and create and import of a task right into a check or the final status (S6m).
+export type ReviewRefusal = 'author' | 'check' | 'not-checker' | 'holder';
 
 // The refusal of the move, or undefined (see ReviewRefusal).
-export function reviewMoveRefusal(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean): ReviewRefusal | undefined {
+export function reviewMoveRefusal(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, sessionBase?: string): ReviewRefusal | undefined {
   if (reviewStatuses(config).length === 0) return undefined;
-  if (authorMoves(config, task, actor, to)) return 'author';
+  if (authorMoves(config, task, actor, to, sessionBase)) return 'author';
+  if (reviewStatuses(config).includes(to)) return 'check';
   const final = finalStatuses(config.statuses)[0] ?? '';
   const by = reviewers(config);
   if (to === final && by.length > 0 && !by.includes(actor)) return 'not-checker';
@@ -456,25 +469,29 @@ export function reviewMoveRefusal(config: ConfigT, task: TaskT, actor: string, t
 export function reviewRefusalText(config: ConfigT, refusal: ReviewRefusal, to: string): string {
   const review = reviewStatuses(config);
   const final = finalStatuses(config.statuses)[0] ?? '';
+  if (refusal === 'check') return `on this board ${to} is a check (${checksLine(review, final)}): a task enters it only handed in by its assignee with finish, or passed on by the check before it`;
   const checks = `on this board ${to} is set by a check (${checksLine(review, final)})`;
   if (refusal === 'not-checker') return `${checks}, only by ${reviewers(config).join(', ')} (config review.by)`;
   return `${checks}: the author of the work hands it in to ${review[0] ?? ''} with finish, a checker passes it on and accepts it`;
 }
 
-// Is `task` waiting for a check: handed in or passed on, or unassigned and waiting by its events (the author handed it in, then
-// unassigned it: review r2). One condition for checkerFinish and prime's queue (waitsForCheck).
-function awaitsCheck(task: TaskT): boolean {
-  return handedIn(task) || (task.assignee === null && waitingByEvents(task));
+// Does `task` wait in a check that `actor` may make (prime's queue for checkers, B-U6): it is in a check status, handed in or passed
+// on (handedIn, whoever holds it now: S6w r1), `actor` is in review.by (when set), is not the author of the work (workedOn, with its
+// other sessions when `sessionBase` is given: S6w r3) and did not pass it on into this status itself, unless no other checker may make
+// this check (S6w r2: review.by holds no other name that is no author, so the one who passed the previous check makes this one too, or
+// the task would show in nobody's queue).
+export function waitsForCheck(config: ConfigT, task: TaskT, actor: string, sessionBase?: string): boolean {
+  if (!reviewStatuses(config).includes(task.status)) return false;
+  if (!handedIn(task, config)) return false;
+  const by = reviewers(config);
+  if (!((by.length === 0 || by.includes(actor)) && !workedOn(task, actor, sessionBase))) return false;
+  if (passedBy(task) !== actor) return true;
+  return by.length > 0 && !by.some((name) => name !== actor && !workedOn(task, name));
 }
 
-// Does `task` wait in a check that `actor` may make (prime's queue for checkers, B-U6): it is in a check status, handed in or passed
-// on (an unassigned one by its events, as checkerFinish), `actor` is in review.by (when set), is not the author of the work (workedOn)
-// and did not pass it on into this status itself (its finish there changes nothing).
-export function waitsForCheck(config: ConfigT, task: TaskT, actor: string): boolean {
-  if (!reviewStatuses(config).includes(task.status)) return false;
-  if (!awaitsCheck(task)) return false;
-  const by = reviewers(config);
-  return (by.length === 0 || by.includes(actor)) && !workedOn(task, actor) && passedBy(task) !== actor;
+// Did `actor` pass `task` on into the check it is in now (prime marks such a waiting task, S6w r2)?
+export function passedOnBy(task: TaskT, actor: string): boolean {
+  return passedBy(task) === actor;
 }
 
 // The status work goes on in before the checks (P1, A-U3): the one before the first check; undefined without checks or when the
@@ -487,22 +504,23 @@ export function workStatusBeforeChecks(config: ConfigT): string | undefined {
 // Is this the move the author of the work never makes on a board with checks (review r2): `actor` worked on the task (workedOn) and
 // `to` is a later check or the final status, or any other check while the task waits in one (S6u r1: qa -> code_review would undo the
 // check it passed). A move back to a work status stays allowed (A17 warning). False without checks (0.3.1, ADR §22).
-function authorMoves(config: ConfigT, task: TaskT, actor: string, to: string): boolean {
+function authorMoves(config: ConfigT, task: TaskT, actor: string, to: string, sessionBase: string | undefined): boolean {
   const review = reviewStatuses(config);
   if (review.length === 0) return false;
-  if (!workedOn(task, actor)) return false;
+  if (!workedOn(task, actor, sessionBase)) return false;
   const final = finalStatuses(config.statuses)[0] ?? '';
   if (to === final || review.indexOf(to) > 0) return true;
-  return review.includes(to) && to !== task.status && review.includes(task.status) && awaitsCheck(task);
+  return review.includes(to) && to !== task.status && review.includes(task.status) && handedIn(task, config);
 }
 
 // The one author rule of a board with checks (review r2), for update, claim and a checker's finish alike: the author of the work
 // (workedOn) neither passes the task on to a later check nor sets the final status, nor moves a task waiting in a check to another
 // check; it hands in with finish (handInStatus).
-// INVALID_VALUE (authorRefusal). Without checks nothing applies (0.3.1, ADR §22).
-function checkAuthorMove(config: ConfigT, task: TaskT, actor: string, to: string): void {
-  if (!authorMoves(config, task, actor, to)) return;
-  throw authorRefusal(config, task, to, actor, 'update');
+// INVALID_VALUE (authorRefusal), through `refused` (a task its earlier session holds: take it back first, P5). Without checks nothing
+// applies (0.3.1, ADR §22).
+function checkAuthorMove(config: ConfigT, task: TaskT, actor: string, to: string, sessionBase: string | undefined, refused: (err: LaneboardError) => LaneboardError): void {
+  if (!authorMoves(config, task, actor, to, sessionBase)) return;
+  throw refused(authorRefusal(config, task, to, actor, 'update'));
 }
 
 // The status the author of the work hands `task` in to with finish on a board with checks (B-U1 run 2): the check the task is in,
@@ -515,21 +533,88 @@ function handInStatus(review: readonly string[], task: TaskT): string {
 // in or passed on) is handed in already, nothing to do (alreadyHandedIn); else the hand-in with finish (handInToFirstCheck).
 function authorRefusal(config: ConfigT, task: TaskT, target: string, actor: string, via: 'finish' | 'update'): LaneboardError {
   const review = reviewStatuses(config);
-  if (review.includes(task.status) && awaitsCheck(task)) return alreadyHandedIn(config, task, actor);
-  return handInToFirstCheck(task.id, target, handInStatus(review, task), review, finalStatuses(config.statuses)[0] ?? '', actor, via);
+  if (review.includes(task.status) && handedIn(task, config)) return alreadyHandedIn(config, task, actor);
+  return handInToFirstCheck(config, task, target, actor, via);
 }
 
 // INVALID_VALUE of the author's finish, update or claim of a task that waits in a check (B-U1 run 2): it is handed in, the checkers
 // move it on. The fix is a comment (rule 13: it may be run blindly), never a hand-in again into an earlier check.
 function alreadyHandedIn(config: ConfigT, task: TaskT, actor: string): LaneboardError {
-  const by = reviewers(config).filter((name) => name !== actor);
-  const checkers = by.length > 0 ? by.join(', ') : 'a checker (anybody but the author of the work)';
   const final = finalStatuses(config.statuses)[0] ?? '';
   return new LaneboardError(
     'INVALID_VALUE',
-    `${task.id} is handed in already and waits in ${task.status} for the check of ${checkers} (${checksLine(reviewStatuses(config), final)}): nothing to do; the author never moves it to another check or into ${final}, and a note for the checkers is a comment`,
+    `${task.id} is handed in already and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): nothing to do; the author never moves it to another check or into ${final}, and a note for the checkers is a comment${noCheckerExit(config, task)}`,
     { fix: `laneboard comment ${task.id} "<note for the check>" --as ${actor}` },
   );
+}
+
+// Does `task` wait for a check (S6w r2): it is in a check status, handed in or passed on (handedIn, whoever holds it now). Nobody
+// claims such a task, and prime lists it among no free tasks: a checker checks it with finish, its author never moves it (S6u).
+export function waitsInCheck(config: ConfigT, task: TaskT): boolean {
+  return reviewStatuses(config).includes(task.status) && handedIn(task, config);
+}
+
+// The names of config review.by that may check `task`: not an author of the work (workedOn). Empty when review.by is not set.
+function checkersLeft(config: ConfigT, task: TaskT): string[] {
+  return reviewers(config).filter((name) => !workedOn(task, name));
+}
+
+// Is no checker left for a task that waits in a check (S6w r2): review.by is set and every name in it worked on the task (an author,
+// say a checker the orchestrator gave the task to), so nobody may pass it on or accept it; only the owner adds a checker.
+export function noCheckerLeft(config: ConfigT, task: TaskT): boolean {
+  return reviewers(config).length > 0 && checkersLeft(config, task).length === 0 && waitsInCheck(config, task);
+}
+
+// The owner's command that adds a checker to config review.by, keeping the ones there (config --reviewers replaces the list).
+export function addCheckerCommand(config: ConfigT): string {
+  return `laneboard config --reviewers "${[...reviewers(config), '<another checker>'].join(',')}"`;
+}
+
+// Who checks `task` in a message: the names of review.by that are no authors of it, anybody but the author when review.by is not set.
+function checkersOf(config: ConfigT, task: TaskT): string {
+  if (reviewers(config).length === 0) return 'a checker (anybody but the author of the work)';
+  const left = checkersLeft(config, task);
+  return left.length > 0 ? left.join(', ') : 'nobody: every checker in config review.by worked on it';
+}
+
+// The way out a refusal names when no checker is left for `task` (noCheckerLeft): the owner adds one; '' otherwise.
+function noCheckerExit(config: ConfigT, task: TaskT): string {
+  return noCheckerLeft(config, task) ? `; no checker is left for it, so the owner adds one: ${addCheckerCommand(config)}` : '';
+}
+
+// Tasks that wait in a check with no checker left (noCheckerLeft), with the owner's command that adds one; undefined when there is none.
+// One text for the doctor check `checks`, the config warning and the hand-in warning (noCheckerWarning, S6w r3).
+export function stuckInChecks(config: ConfigT, tasks: readonly TaskT[]): string | undefined {
+  const stuck = tasks.filter((t) => noCheckerLeft(config, t)).map((t) => `${t.id} (${t.status})`);
+  if (stuck.length === 0) return undefined;
+  return `tasks waiting in a check that no checker may check (every name in config review.by worked on them): ${stuck.join(', ')}; the owner adds a checker: ${addCheckerCommand(config)}`;
+}
+
+// The warning of a hand-in that leaves `task` with no checker (S6w r3: review.by names only its authors, e.g. only the one that handed it
+// in): the hand-in is written, and the owner's config --reviewers is the way out (stuckInChecks).
+function noCheckerWarning(config: ConfigT, task: TaskT, warnings: string[]): void {
+  const stuck = stuckInChecks(config, [task]);
+  if (stuck !== undefined) warnings.push(stuck);
+}
+
+// The refusal of a claim of a task that waits for a check (waitsInCheck, S6w r2), for everybody. Its author gets the S6u refusal
+// (alreadyHandedIn: nothing to do, a comment). A checker that may check it (in review.by when set, not an author) gets unclearCheck: the
+// fix reads the task, the message names the pass and the return. Anybody else a comment (ALREADY_CLAIMED when somebody else holds it).
+// When no checker is left, the message names the owner's way out (noCheckerExit).
+function waitingClaimRefusal(config: ConfigT, task: TaskT, actor: string, sessionBase: string | undefined): LaneboardError {
+  if (workedOn(task, actor, sessionBase)) return alreadyHandedIn(config, task, actor);
+  const by = reviewers(config);
+  if (by.length === 0 || by.includes(actor)) {
+    return unclearCheck(config, task, actor, 'claim never takes a task that waits for a check: a check needs no claim, and holding the task would make you an author of the work, who never checks it', undefined);
+  }
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const message =
+    `${task.id} is handed in and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): claim never takes a task that waits for a check ` +
+    `(a checker passes it on with finish, no claim needed; the author never moves it), and a note for the checkers is a comment${noCheckerExit(config, task)}`;
+  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor}`;
+  const holder = task.assignee;
+  if (holder !== null && holder !== actor) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: holder }, fix });
+  return new LaneboardError('INVALID_VALUE', message, { fix });
 }
 
 // The checks of a board as one line for messages: `code_review -> qa -> done`.
@@ -538,14 +623,39 @@ function checksLine(review: readonly string[], final: string): string {
 }
 
 // INVALID_VALUE of the assignee's finish or update into the final status or a later check, on a board with checks: the assignee hands
-// in to the first check (`first`: handInStatus, the check the task is in when it is in one), the checks set the rest (P1). finish: the
-// CLI fix is the caller's own command with that check (input); update: the finish that hands in.
-function handInToFirstCheck(id: string, target: string, first: string, review: readonly string[], final: string, actor: string, via: 'finish' | 'update'): LaneboardError {
-  const fix = `laneboard finish ${id} --status ${first} --result "<what you did, how you checked it>" --as ${actor}`;
-  const message = `on this board ${target} is set by a check (${checksLine(review, final)}): hand ${id} in to ${first} with finish, a checker passes it on and accepts it`;
+// in to the first check (handInStatus, the check the task is in when it is in one), the checks set the rest (P1). finish: the CLI fix is
+// the caller's own command with that check (input); update: the finish that hands in, after the reopen of a closed task (handInLine).
+function handInToFirstCheck(config: ConfigT, task: TaskT, target: string, actor: string, via: 'finish' | 'update'): LaneboardError {
+  const review = reviewStatuses(config);
+  const first = handInStatus(review, task);
+  const fix = handInLine(config, task, first, actor);
+  const closed = finalStatuses(config.statuses).includes(task.status) ? ` (it is ${task.status}: reopen it into ${reworkStatus(config)} first)` : '';
+  const message = `on this board ${target} is set by a check (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}): hand ${task.id} in to ${first} with finish${closed}, a checker passes it on and accepts it`;
   return via === 'finish'
     ? new LaneboardError('INVALID_VALUE', message, { allowed: [first], input: { field: 'status', value: target, suggestion: first }, fix })
     : new LaneboardError('INVALID_VALUE', message, { fix });
+}
+
+// The hand-in of `task` into the check `check` as one command line, run as printed (rule 13), by `actor` (no --as when undefined: who did
+// the work runs it). A task in a final status is reopened first into the work status (reworkStatus): finish never reopens a closed task
+// (ADR §20), so a bare finish there would change nothing (S6w r1).
+function handInLine(config: ConfigT, task: TaskT, check: string, actor: string | undefined): string {
+  const as = actor === undefined ? '' : ` --as ${actor}`;
+  const handIn = `laneboard finish ${task.id} --status ${check} --result "<what you did, how you checked it>"${as}`;
+  if (!finalStatuses(config.statuses).includes(task.status)) return handIn;
+  return `laneboard update ${task.id} --status ${reworkStatus(config)}${as} && ${handIn}`;
+}
+
+// Tasks that sit in a check but are not handed in (S6w r1: config turned their status into a check while they were in work there, or a
+// board from before the checks): no checker sees them. The text names each task with the hand-in its holder runs (handInLine); undefined
+// when there is none or the board has no checks. One text for the config warning and the doctor check.
+export function unseenInChecks(config: ConfigT, tasks: readonly TaskT[]): string | undefined {
+  const review = reviewStatuses(config);
+  const lines = tasks
+    .filter((t) => review.includes(t.status) && !handedIn(t, config))
+    .map((t) => `${t.id} (${t.status}, ${t.assignee === null ? 'unassigned' : `held by ${t.assignee}`}): ${handInLine(config, t, t.status, t.assignee ?? undefined)}`);
+  if (lines.length === 0) return undefined;
+  return `tasks in a check that are not handed in, so no checker sees them; the holder of each hands it in (an unassigned one: who did its work): ${lines.join('; ')}`;
 }
 
 // The return for rework as one command line, run as printed (rule 13): the comment with the caller's text, then the move into `to`.
@@ -570,12 +680,70 @@ function isReworkTarget(config: ConfigT, current: string, target: string): boole
 // meant: never a finish that passes the task on or accepts it.
 function returnForRework(config: ConfigT, id: string, current: string, target: string, text: string, actor: string): LaneboardError {
   const review = reviewStatuses(config);
-  const work = review.includes(target) ? (workStatusBeforeChecks(config) ?? config.statuses[0] ?? target) : target;
+  const work = review.includes(target) ? reworkStatus(config) || target : target;
   return new LaneboardError(
     'INVALID_VALUE',
     `${id} is handed in and ${current}: a check passes it on to a later check or accepts it into ${finalStatuses(config.statuses)[0] ?? ''} (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}), never into ${target}; to return it for rework, comment why, then laneboard update ${id} --status ${work} (the assignee hands it in again with finish)`,
     { fix: reworkFix(id, text, work, actor) },
   );
+}
+
+// The status a checker's finish names to pass a task in `status` on (S6w I2): the next check after it, from the last check the final
+// status; a task handed in to a status outside the checks goes to the first check. Exported for prime's queue (the ready command).
+export function nextAfterCheck(config: ConfigT, status: string): string {
+  const review = reviewStatuses(config);
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  return [...review.slice(review.indexOf(status) + 1), final][0] ?? final;
+}
+
+// The work status a return for rework from a check goes to (README "Return for rework"): the one before the checks, else the first.
+function reworkStatus(config: ConfigT): string {
+  return workStatusBeforeChecks(config) ?? config.statuses[0] ?? '';
+}
+
+// INVALID_VALUE of a checker's write whose meaning is not clear (S6w I2, I3): finish without --status, or naming the check the task is
+// in, or a later status than the next one (a stale read: the task moved on since), and update or claim of a waiting task into a check.
+// The fix is a read (`laneboard get`), which changes nothing: run blindly it never passes the task on, accepts it or returns it. The
+// message names both exact commands, to pass the check (finish --status <next>) and to return the task for rework (comment && update);
+// `text`: the caller's result, kept in the return command (after --, rule 13), never put into the pass.
+function unclearCheck(config: ConfigT, task: TaskT, actor: string, why: string, text: string | undefined): LaneboardError {
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const next = nextAfterCheck(config, task.status);
+  const pass = `laneboard finish ${task.id} --status ${next} --result "<result of your check>" --as ${actor}`;
+  const back = reworkFix(task.id, text ?? '<why it goes back>', reworkStatus(config), actor);
+  const passWhat = next === final ? `accept it into ${final}` : `pass it on to ${next}`;
+  return new LaneboardError(
+    'INVALID_VALUE',
+    `${task.id} is handed in and waits in ${task.status} (${checksLine(reviewStatuses(config), final)}); ${why}. Read it first (laneboard get ${task.id}), then either ${passWhat}: ${pass}; or return it for rework: ${back}`,
+    { fix: `laneboard get ${task.id}` },
+  );
+}
+
+// The refusal of update or claim into a check (S6w I1, reviewMoveRefusal 'check'): a task enters a check only by finish. A checker of a
+// task that waits in a check gets unclearCheck (pass with finish --status, or return), a name not in review.by notChecker (a comment);
+// its holder or author (or anybody, for an unassigned task) the hand-in with finish into the check it is in, else the first check;
+// anybody else the comment that asks the holder to hand it in. No refusal's fix moves the task.
+function checkEntryRefusal(config: ConfigT, task: TaskT, actor: string, to: string, sessionBase: string | undefined): LaneboardError {
+  const review = reviewStatuses(config);
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const first = handInStatus(review, task);
+  if (review.includes(task.status) && handedIn(task, config) && !workedOn(task, actor, sessionBase)) {
+    const by = reviewers(config);
+    if (by.length > 0 && !by.includes(actor)) return notChecker(task.id, task.assignee, actor, by);
+    return unclearCheck(config, task, actor, `update or claim never moves it to ${to}: a check passes it on with finish`, undefined);
+  }
+  const message = `on this board ${to} is a check (${checksLine(review, final)}): a task enters it only handed in with finish (the result, the commit), so the checkers see it`;
+  // A closed task is reopened into the work status first: finish never reopens it (S6w r1).
+  const reopen = finalStatuses(config.statuses).includes(task.status) ? `laneboard update ${task.id} --status ${reworkStatus(config)} && ` : '';
+  const closed = reopen === '' ? '' : `${task.id} is ${task.status} (closed): reopen it, then `;
+  if (task.assignee === null || task.assignee === actor || workedOn(task, actor, sessionBase)) {
+    return new LaneboardError('INVALID_VALUE', `${message}; ${closed}hand ${task.id} in: ${reopen}laneboard finish ${task.id} --status ${first}`, {
+      fix: handInLine(config, task, first, actor),
+    });
+  }
+  return new LaneboardError('INVALID_VALUE', `${message}; ${task.id} is held by ${task.assignee}: ask it to ${reopen === '' ? '' : 'reopen and '}hand the task in (${reopen}laneboard finish ${task.id} --status ${first})`, {
+    fix: `laneboard comment ${task.id} "hand it in: ${reopen}laneboard finish ${task.id} --status ${first} --result <result>" --as ${actor}`,
+  });
 }
 
 // ALREADY_CLAIMED of somebody not in review.by passing on, accepting or closing a task: the fix is the comment (it may be run blindly).
@@ -588,19 +756,31 @@ function notChecker(id: string, holder: string | null, actor: string, by: readon
   );
 }
 
-// ALREADY_CLAIMED of a check of a task its assignee did not hand in, on a board with checks: no command that closes it around the
+// ALREADY_CLAIMED of a check of a task that is not handed in, on a board with checks (whoever holds it: the hand-in is the task's, S6w r1): no command that closes it around the
 // check is named (A14); the fix asks the holder to hand it in.
 function notHandedInForCheck(id: string, holder: string, current: string, actor: string, first: string): LaneboardError {
   return new LaneboardError(
     'ALREADY_CLAIMED',
-    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; a check passes on or accepts only a task its assignee handed in (laneboard finish ${id} --status ${first}); do not take it over: ask ${holder} to hand it in`,
+    `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; a check passes on or accepts only a handed-in task (laneboard finish ${id} --status ${first}); do not take it over: ask ${holder} to hand it in`,
     { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${first} --result <result>" --as ${actor}` },
   );
 }
 
-// A17 on a board with checks: an update that moves a handed-in task takes the hand-in away (a return for rework does so on purpose).
-function handInLostWarning(id: string): string {
-  return `${id} was handed in; after this move it is not: pass it on or accept it with laneboard finish ${id} --result "<result>" instead, or the assignee hands it in again with finish`;
+// A17 on a board with checks: an update or claim that moves a handed-in task into `to` takes the hand-in away (a return for rework does so
+// on purpose). Each command it names runs on the task as it is after the move (S6w r1: no finish without --status, which a checker's
+// finish refuses): into a work status the hand-in again of `holder` (who holds it after the write; none: who did the work); into the
+// final status (closed by update, no acceptance mark) the comment with the result of the check. A check passes a task on or accepts it
+// with finish --status <next> (nextAfterCheck), named as the way instead of such a move.
+function handInLostWarning(config: ConfigT, task: TaskT, to: string, holder: string | null): string {
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const next = nextAfterCheck(config, task.status);
+  const instead = `a check passes it on or accepts it with finish --status ${next}, not by a move`;
+  if (finalStatuses(config.statuses).includes(to)) {
+    return `${task.id} was handed in; closed by this move it has no result of a check and no acceptance mark (${instead}): record the result with laneboard comment ${task.id} "<result of your check>"`;
+  }
+  const first = reviewStatuses(config)[0] ?? final;
+  const as = holder === null ? '' : ` --as ${holder}`;
+  return `${task.id} was handed in; after this move it is not (${instead}), so no checker sees it until it is handed in again: laneboard finish ${task.id} --status ${first} --result "<what you did, how you checked it>"${as}`;
 }
 
 // ALREADY_CLAIMED of a finish by somebody else into a status that is not final: acceptance only closes a task.
@@ -731,10 +911,12 @@ function checkoutWarnings(id: string, git: CheckoutState, workStart: string | un
 }
 
 // A checker's finish of somebody else's task on a board with checks (P1), under the lock: a closed task changes nothing; only review.by
-// (when set) check; the task must be handed in (handedIn: by its assignee, or passed on by an earlier check). Without --status it
-// goes to the next check, from the last one into the final status (accepted); --status names a later check or the final one. The
-// actor's own pass repeated (a lost reply) changes nothing, so it never skips the next check. `refused` turns a refusal into the
-// claim --resume one for a task of an earlier session of the actor (P5). Returns whether it wrote, passed on, and the status it left.
+// (when set) check; the task must be handed in (handedIn: handed in or passed on, whoever holds it now). --status names where it
+// goes and must be the next status (S6w I2: nextAfterCheck, the next check or from the last one the final status, accepted); without it,
+// or with another later status or the current check, unclearCheck (a read as the fix); a work status or an earlier check is the return
+// for rework (returnForRework). The actor's own pass repeated with the same --status (a lost reply) changes nothing. `refused` turns a refusal into the
+// claim --resume one for a task of an earlier session of the actor (P5); `sessionBase`: those sessions are authors of the work too (workedOn,
+// S6w r3). Returns whether it wrote, passed on, and the status it left.
 function checkerFinish(
   s: { config: ConfigT; now: string; active: StoreFileT },
   task: TaskT,
@@ -744,6 +926,7 @@ function checkerFinish(
   warnings: string[],
   notRecorded: string,
   source: ActorSource,
+  sessionBase: string | undefined,
 ): { done: boolean; passed: boolean; from?: string } {
   const id = task.id;
   const holder = task.assignee ?? '';
@@ -758,30 +941,40 @@ function checkerFinish(
   // so a check never skips the others by default (review r1).
   const at = review.indexOf(task.status);
   const later = [...review.slice(at + 1), final];
-  const next = later[0] ?? final;
+  const next = nextAfterCheck(s.config, task.status);
   // The author of the work never checks its own task (review r2): the same rule and error as update and claim. A task that waits in
   // a check is handed in already, whichever status the author names (an earlier check too: B-U1 run 2).
-  if (workedOn(task, actor) && review.includes(task.status) && awaitsCheck(task)) throw alreadyHandedIn(s.config, task, actor);
-  checkAuthorMove(s.config, task, actor, p.status ?? next);
+  if (workedOn(task, actor, sessionBase) && review.includes(task.status) && handedIn(task, s.config)) throw alreadyHandedIn(s.config, task, actor);
+  checkAuthorMove(s.config, task, actor, p.status ?? next, sessionBase, refused);
   const by = reviewers(s.config);
   if (by.length > 0 && !by.includes(actor)) throw refused(notChecker(id, task.assignee, actor, by));
-  // An unassigned task waits for the check by its events (the author handed it in, then unassigned it: review r2).
-  if (!awaitsCheck(task)) throw refused(notHandedInForCheck(id, holder, task.status, actor, handInStatus(review, task)));
-  if (passedBy(task) === actor && (p.status === undefined || p.status === task.status)) {
-    warnings.push(`no changes: ${id} is already ${task.status}, where you passed it on (finish repeated); to pass it on yourself again, name the status: laneboard finish ${id} --status ${next} --result "<result of your check>"; ${notRecorded}`);
+  // A handed-in task waits for the check whoever holds it now: unassigned or given to another name (review r2, S6w r1).
+  if (!handedIn(task, s.config)) throw refused(notHandedInForCheck(id, holder, task.status, actor, handInStatus(review, task)));
+  // The repeat of the actor's own pass into this status (a lost reply: the same --status again) changes nothing.
+  if (passedBy(task) === actor && p.status === task.status) {
+    warnings.push(`no changes: ${id} is already ${task.status}, where you passed it on (finish repeated); to pass it on yourself again: laneboard finish ${id} --status ${next} --result "<result of your check>"; ${notRecorded}`);
     return { done: false, passed: false };
   }
-  const target = p.status ?? next;
-  if (!later.includes(target)) {
-    // A work status (neither a check nor final, before or after the current one) or an earlier check is a return for rework (B-U1
-    // run 3, review r1): its fix never passes the task on or accepts it. The current check keeps the fix of the next check below.
-    if (isReworkTarget(s.config, task.status, target)) throw returnForRework(s.config, id, task.status, target, p.result, actor);
-    throw new LaneboardError('INVALID_VALUE', `${id} is handed in and ${task.status}: a check passes it on to a later check or accepts it into ${final} (${checksLine(review, final)}), so the status is one of ${later.join(', ')}`, {
-      allowed: later,
-      input: { field: 'status', value: target, suggestion: next },
-      fix: `laneboard finish ${id} --status ${next} --result "<result of your check>" --as ${actor}`,
-    });
+  // A work status (neither a check nor final, before or after the current one) or an earlier check is an explicit return for rework
+  // (B-U1 run 3, review r1): its fix is the return, never a pass or an acceptance.
+  if (p.status !== undefined && !later.includes(p.status) && isReworkTarget(s.config, task.status, p.status)) {
+    throw returnForRework(s.config, id, task.status, p.status, p.result, actor);
   }
+  // The checker names where the task goes, the next status after the check it is in (S6w I2): a finish without --status, or naming
+  // the check it is in, or a status past the next one, may come from a read before another checker passed it on (two checkers on one
+  // prime), so it is refused and its fix only reads the task (I3: no fix passes or accepts a task the caller did not name).
+  if (p.status !== next) {
+    const why =
+      p.status === undefined
+        ? `a checker's finish names where it goes (--status ${next}): it may have moved on since you read it`
+        : p.status === task.status
+          ? `--status ${p.status} is the check it is in now; a checker's finish names where it goes (--status ${next})`
+          : later.includes(p.status)
+            ? `--status ${p.status} skips ${later.slice(0, later.indexOf(p.status)).join(', ')}; a checker's finish names the next status (--status ${next})`
+            : `--status ${p.status} is not where it goes next; a checker's finish names the next status (--status ${next})`;
+    throw unclearCheck(s.config, task, actor, why, p.result);
+  }
+  const target = next;
   const from = task.status;
   const accept = target === final;
   touch(task, s.now, actor);
@@ -850,13 +1043,13 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       // The path follows the status on a board with checks (review r2): finish of an unassigned task waiting in a check (handed in,
       // then unassigned) by anybody but its author is a check (review.by when set), which never makes the checker its holder or
       // author; its author takes it back and hands it in again, never past the first check (handInToFirstCheck below).
-      const unassignedAtCheck = review.length > 0 && holder === null && review.includes(task.status) && waitingByEvents(task) && !workedOn(task, actor);
+      const unassignedAtCheck = review.length > 0 && holder === null && review.includes(task.status) && handedIn(task, s.config) && !workedOn(task, actor, ctx.sessionBase);
       byOther = (holder !== null && holder !== actor) || unassignedAtCheck;
       // A task of an earlier session of the actor's default name: take it back first, then finish (P5, S6l); its acceptance stays.
       const refused = (other: LaneboardError): LaneboardError =>
         holder !== null && heldByEarlierSession(task, ctx.sessionBase, actor) ? earlierSessionClaimed(id, holder, actor, silentFor(s.active.tasks, holder, s.now), ', then finish it again') : other;
       if (byOther && review.length > 0) {
-        const out = checkerFinish(s, task, p, actor, refused, warnings, notRecorded, actorSourceOf(ctx));
+        const out = checkerFinish(s, task, p, actor, refused, warnings, notRecorded, actorSourceOf(ctx), ctx.sessionBase);
         finished = out.done;
         passedOn = out.passed;
         checkedFrom = out.from;
@@ -869,7 +1062,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
           warnings.push(`no changes: ${id} is already ${task.status}; ${notRecorded}`);
           return toTaskView(task, false);
         }
-        if (!handedIn(task)) throw refused(notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses));
+        if (!handedIn(task, s.config)) throw refused(notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses));
         touch(task, s.now, actor);
         // The result mark (ADR §27): only finish writes it, so readers tell the result from other comments.
         addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
@@ -894,7 +1087,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       const handIn = !finals.includes(status);
       const closed = finals.includes(task.status);
       // Already there: final, or handed in to this status (a task moved there by update is handed in now).
-      const again = closed || (task.status === status && (!handIn || handedIn(task)));
+      const again = closed || (task.status === status && (!handIn || handedIn(task, s.config)));
       // Handed in again after rework (CARRYOVER S6h): a result other than the newest one is recorded; the same text again is a retry
       // after a lost reply and records nothing. A closed task keeps its result: finish never reopens it (ADR §20).
       const resubmit = again && !closed && lastResultText(task) !== p.result;
@@ -915,6 +1108,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         // The status event of the first hand-in stays the newest one into this status, so the task stays handed in (handedIn).
         finished = resubmit;
         handedInNow = resubmit;
+        if (resubmit) noCheckerWarning(s.config, task, warnings);
         return toTaskView(task, false);
       }
       if (task.assignee === null) {
@@ -925,6 +1119,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       task.status = status;
       finished = true;
       handedInNow = handIn;
+      if (handIn) noCheckerWarning(s.config, task, warnings);
       const open = handIn ? undefined : openChildrenWarning(s.active, id, finals);
       if (open) warnings.push(open);
       return toTaskView(task, false);

@@ -159,7 +159,7 @@ describe('S6u r1 B-U1 over MCP: the author never moves a task waiting in qa back
     await as('orch', ['create', 'Add endpoint', '--status', 'ready']);
     await as('dev-2', ['claim', 'API-1', '--status', 'dev']);
     await as('dev-2', ['finish', 'API-1', '--result', 'work', '--no-commit']);
-    expect((await as('rev', ['finish', 'API-1', '--result', 'review ok'])).data).toMatchObject({ status: 'qa', passed: true });
+    expect((await as('rev', ['finish', 'API-1', '--status', 'qa', '--result', 'review ok'])).data).toMatchObject({ status: 'qa', passed: true });
     const rev = (await as('orch', ['get', 'API-1'])).data.rev as number;
     const mcp = await startMcp(s.root, ['mcp', '--as', 'dev-2'], { HOME: tempDir() }, 'claude-code');
     try {
