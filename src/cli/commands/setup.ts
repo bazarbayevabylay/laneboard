@@ -1,6 +1,6 @@
 // laneboard setup
 import path from 'node:path';
-import { initTarget, LaneboardError, registerStore, samePath, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
+import { LaneboardError, registerStore, samePath, setupTarget, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
 import { HARNESS_NAMES, runSetup } from '../../setup/index.ts';
 import { setupText } from '../format.ts';
 import { flag } from './args.ts';
@@ -23,15 +23,17 @@ export const setup: CommandDef = {
   usage: `setup <${HARNESS_NAMES.join('|')}> [--remove [--global]] [--dry-run]`,
   summary:
     'Register the laneboard MCP server and instruction block for a harness (run in the project root); --remove rolls it back. ' +
-    'The project is pinned to its store: --dir, else LANEBOARD_DIR, else ./.laneboard (Claude Code: env LANEBOARD_DIR and the default agent name in .claude/settings.local.json, ' +
+    'The project is pinned to its store: --dir, else LANEBOARD_DIR, else the board of this git repository found above (a package of a monorepo, a linked worktree), else ./.laneboard (Claude Code: env LANEBOARD_DIR and the default agent name in .claude/settings.local.json, ' +
     'kept out of git by .git/info/exclude; or .claude/settings.json in a folder inside another git repository and at a repository root that holds other boards; others: in the instructions). ' +
     'An existing board is added to the machine registry. ' +
     '--remove keeps the entry of a global file (codex: ~/.codex/config.toml) while other projects of the machine registry may use it; --global removes it anyway.',
   options: { remove: { type: 'boolean' }, global: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },
   args: { min: 1, max: 1 },
   async run(c) {
-    // Like init, the pin never walks up: a store in a parent directory belongs to another project unless --dir names it.
-    const storeDir = initTarget(c.discovery);
+    // The pin walks up only inside one git repository (a package of a monorepo, a linked worktree): elsewhere a store in a parent
+    // directory may be another project's unless --dir names it.
+    const target = setupTarget(c.discovery);
+    const storeDir = target.dir;
     c.setStore(storeDir);
     const harness = c.positionals[0] ?? '';
     const remove = flag(c.values, 'remove');
@@ -39,7 +41,7 @@ export const setup: CommandDef = {
     const home = c.io.env.HOME;
     let r: ReturnType<typeof runSetup>;
     try {
-      r = runSetup({ harness, remove, global: flag(c.values, 'global'), dryRun, cwd: c.io.cwd, env: c.io.env, storeDir });
+      r = runSetup({ harness, remove, global: flag(c.values, 'global'), dryRun, cwd: c.io.cwd, env: c.io.env, storeDir, storeAbove: target.found === 'parent' || target.found === 'worktree' });
     } catch (raw) {
       // SETUP_CONFLICT for a repository root's pin: its fix runs setup at the root, which finds this folder's board only in the
       // registry. Register the board first (a board made before the registry or under another HOME is missing there), then refuse.

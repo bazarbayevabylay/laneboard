@@ -94,8 +94,10 @@ describe('A18: a linked git worktree outside the project tree uses the board of 
     // An unrelated board in the folder that holds the worktree: walking up alone would find it (behind the .git marker).
     expect((await json(path.dirname(r.wt), ['init', '--name', 'above', '--prefix', 'ABV', '--description', 'another project'], { HOME: tempDir() })).code).toBe(0);
     expect((await json(r.wt, ['list'])).doc).toMatchObject({ store: r.s.dir, warnings: [] });
-    // A board of the worktree itself (e.g. a committed .laneboard checked out there) is the nearest one.
-    expect((await json(r.wt, ['init', '--name', 'own', '--prefix', 'OWN', '--description', 'own board'], { HOME: tempDir() })).code).toBe(0);
+    // A board of the worktree itself (e.g. a committed .laneboard checked out there) is the nearest one. A bare init there is
+    // refused (the worktree is part of the main checkout's board, S6k P3), so it is made by --dir.
+    expect((await json(r.wt, ['init', '--name', 'own', '--prefix', 'OWN', '--description', 'own board'], { HOME: tempDir() })).code).toBe(6);
+    expect((await json(r.wt, ['init', '--dir', path.join(r.wt, '.laneboard'), '--name', 'own', '--prefix', 'OWN', '--description', 'own board'], { HOME: tempDir() })).code).toBe(0);
     expect((await json(path.join(r.wt), ['list'])).doc.store).toBe(path.join(r.wt, '.laneboard'));
   });
 });

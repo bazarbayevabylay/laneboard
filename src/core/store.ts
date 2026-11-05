@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describeIssue, schemaVersion, unreadableStoreFile } from './config.ts';
+import { describeIssue, schemaVersion, storePrefix, unreadableStoreFile } from './config.ts';
 import { LaneboardError } from './errors.ts';
 import { isDirectory, linkedWorktree, worktreeAt } from './git.ts';
 import { shellQuote } from './shell.ts';
@@ -23,9 +23,14 @@ export interface StoreRef {
   readOnly?: boolean;
 }
 
-// Files and folders that mark a project root of its own (a nested agent folder, a separate repository). package.json is not one:
-// packages of a monorepo have it and share the repository's board.
+// Files and folders that mark a project root of its own (a nested agent folder, a separate repository) outside git. package.json is
+// not one: packages of a monorepo have it and share the repository's board.
 export const PROJECT_MARKERS = ['.git', '.claude', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md'] as const;
+
+// The project markers when the store's folder is inside a git repository (P3, C-U1): only a repository of its own (`.git`: a nested
+// repository, a submodule). A package of a monorepo keeps its own AGENTS.md or CLAUDE.md and still shares the repository's board;
+// a board of its own (`init --dir <package>/.laneboard`) is found first by discovery, so that folder needs no marker.
+export const GIT_PROJECT_MARKERS = ['.git'] as const;
 
 // Is `dir` the machine's board registry, not a store? It has no config.json and is `<home>/.laneboard` (an init that failed
 // before its first write can leave that folder empty) or holds boards.json (the registry of another home).
@@ -53,6 +58,13 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
     const source = input.dir !== undefined ? '--dir' : 'LANEBOARD_DIR';
     const dir = path.resolve(input.cwd, explicit);
     if (!isDirectory(dir)) {
+      // A pin left behind by a moved project folder (A19): this folder's board exists, and init would only make an empty twin.
+      const stale = stalePin(input);
+      if (stale !== undefined) {
+        throw new LaneboardError('STORE_NOT_FOUND', `${source} points to ${dir}, which is not a directory; this folder's board is ${boardName(stale.dir)}`, {
+          fix: repinFix(stale.dir),
+        });
+      }
       throw new LaneboardError('STORE_NOT_FOUND', `${source} points to ${dir}, which is not a directory`, {
         fix: `fix ${source} (laneboard boards --json lists this machine's boards with their paths); if this project has no board yet: laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>", then laneboard prime`,
       });
@@ -108,16 +120,26 @@ function isWithin(inner: string, outer: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-// First project marker between cwd (included) and the folder that holds the store (excluded), as a path relative to cwd.
+// Closest folder from `dir` up that holds a `.git` (file or directory): the root of the git repository holding `dir`, or undefined.
+function gitRepositoryOf(dir: string): string | undefined {
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    if (fs.existsSync(path.join(current, '.git'))) return current;
+    if (path.dirname(current) === current) return undefined;
+  }
+}
+
+// First project marker between cwd (included) and the folder that holds the store (excluded), as a path relative to cwd. Inside
+// a git repository only `.git` marks another project (GIT_PROJECT_MARKERS); outside git also an agent folder (PROJECT_MARKERS).
 // A git worktree of the store's repository (Claude Code puts them in `<project>/.claude/worktrees/`) is that project, not another one.
 export function separateProjectMarker(storeDir: string, cwd: string): string | undefined {
   const owner = canonicalPath(path.dirname(storeDir));
   const start = path.resolve(cwd);
+  const markers: readonly string[] = gitRepositoryOf(owner) === undefined ? PROJECT_MARKERS : GIT_PROJECT_MARKERS;
   for (let current = start; canonicalPath(current) !== owner && path.dirname(current) !== current; current = path.dirname(current)) {
     // A linked worktree's main checkout (worktreeAt: the same rule discovery uses).
     const repo = worktreeAt(current)?.main;
     if (repo !== undefined && isWithin(owner, canonicalPath(repo))) return undefined;
-    const marker = PROJECT_MARKERS.find((m) => fs.existsSync(path.join(current, m)));
+    const marker = markers.find((m) => fs.existsSync(path.join(current, m)));
     if (marker) return path.relative(start, path.join(current, marker));
   }
   return undefined;
@@ -170,11 +192,68 @@ export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | 
   return `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} ${how}, but ${path.resolve(cwd)} looks like a separate project (${it}); unless this folder is part of that project, ${fix}`;
 }
 
-// Directory that init creates: --dir, then LANEBOARD_DIR, then `<cwd>/.laneboard` (no walk-up).
+// The board cwd already belongs to, without --dir and LANEBOARD_DIR: `<cwd>/.laneboard`, else one walking up finds in the same git
+// repository with no `.git` between (a package of a monorepo, P3), else the main checkout's for a linked worktree. Undefined
+// outside git (a subfolder there may be a new project) and when none is found.
+function repositoryStore(cwd: string, home: string | undefined): StoreRef | undefined {
+  const near = walkUp(cwd, home);
+  if (near?.found === 'cwd') return near;
+  const sameRepository = near !== undefined && gitRepositoryOf(path.dirname(near.dir)) !== undefined && separateProjectMarker(near.dir, cwd) === undefined;
+  return worktreeStore(cwd, near, home) ?? (sameRepository ? near : undefined);
+}
+
+// LANEBOARD_DIR that names no folder while cwd's own board exists (A19: the project folder moved, the harness still pins the old
+// path): that board, else undefined.
+function stalePin(input: DiscoveryInput): StoreRef | undefined {
+  if (input.dir !== undefined || input.envDir === undefined || input.envDir === '') return undefined;
+  if (isDirectory(path.resolve(input.cwd, input.envDir))) return undefined;
+  return repositoryStore(input.cwd, input.home);
+}
+
+// The fix for a stale LANEBOARD_DIR pin: setup in the project root writes the pin again (to the board it finds there).
+function repinFix(board: string): string {
+  return `laneboard setup claude-code in ${shellQuote(path.dirname(board))} pins the session to it again (another harness: laneboard setup <harness> there); until the next session pass --dir ${shellQuote(board)} on every command`;
+}
+
+// Directory that init creates: --dir, then LANEBOARD_DIR, then `<cwd>/.laneboard`. Refuses (STORE_EXISTS) where cwd belongs to
+// a board already: a stale LANEBOARD_DIR next to cwd's own board (A19), or a subfolder of a git repository whose board lies above
+// (C-U2); a board of its own there is made with --dir.
 export function initTarget(input: DiscoveryInput): string {
+  const stale = stalePin(input);
+  if (stale !== undefined) {
+    throw new LaneboardError('STORE_EXISTS', `LANEBOARD_DIR points to ${path.resolve(input.cwd, input.envDir ?? '')}, which is not a directory, and ${path.resolve(input.cwd)} already has a board: ${boardName(stale.dir)}`, {
+      fix: repinFix(stale.dir),
+    });
+  }
   const explicit = input.dir ?? input.envDir;
   if (explicit !== undefined && explicit !== '') return path.resolve(input.cwd, explicit);
-  return path.join(path.resolve(input.cwd), STORE_DIR_NAME);
+  const own = path.join(path.resolve(input.cwd), STORE_DIR_NAME);
+  const shared = repositoryStore(input.cwd, input.home);
+  if (shared !== undefined && shared.found !== 'cwd') {
+    throw new LaneboardError('STORE_EXISTS', `${path.resolve(input.cwd)} is part of board ${boardName(shared.dir)} of this git repository; init creates no second board here`, {
+      fix: `use that board: laneboard prime; only if this folder is a separate project with a board of its own: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>", then laneboard prime`,
+    });
+  }
+  return own;
+}
+
+// Directory that setup pins the project to: --dir, then LANEBOARD_DIR (one that names no folder gives way to cwd's own board, A19),
+// then the board cwd belongs to (repositoryStore: also from a package of a monorepo or a linked worktree, C-U2), else
+// `<cwd>/.laneboard`. `found` is `parent` or `worktree` when the board lies above cwd (named in a warning of setup).
+export function setupTarget(input: DiscoveryInput): StoreRef {
+  const stale = stalePin(input);
+  if (stale !== undefined) return stale;
+  const explicit = input.dir ?? input.envDir;
+  if (explicit !== undefined && explicit !== '') return { dir: path.resolve(input.cwd, explicit) };
+  const shared = repositoryStore(input.cwd, input.home);
+  if (shared !== undefined && shared.found !== 'cwd') return shared;
+  return { dir: path.join(path.resolve(input.cwd), STORE_DIR_NAME) };
+}
+
+// A board as messages name it: `P (<store path>)`, or the path alone when its config cannot be read.
+function boardName(storeDir: string): string {
+  const prefix = storePrefix(storeDir);
+  return prefix === null ? storeDir : `${prefix} (${storeDir})`;
 }
 
 // Path of active.json / archive.json.
