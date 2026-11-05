@@ -79,6 +79,9 @@ What `setup` writes:
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 | opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 
+The PostToolUse hook reminds after an edit without a task in progress. Under the default name it stays silent while any open task of the
+board has an assignee (anybody's: subagents share the default name); set `LANEBOARD_AGENT=<your name>` for reminders about your own tasks.
+
 Claude Code also has a plugin (`/plugin marketplace add bazarbayevabylay/laneboard`, then `/plugin install laneboard@laneboard`).
 Use the plugin or `setup claude-code`, not both: they register the same server and hooks. The SessionStart hook shows the board only
 when it is in this machine's registry (`init` and `setup` add it): a board that came with a cloned repository gets one neutral line until
@@ -118,11 +121,14 @@ block in its `AGENTS.md`; `setup codex --remove --global` removes it anyway.
 
 ### 1.4 Any MCP client
 
-A client without a `setup` of its own starts the server with the board and a default name:
-`{"command": "laneboard", "args": ["mcp", "--dir", "/abs/path/.laneboard", "--as", "<name>"]}`. Call `task_prime` first: the rules
-for MCP, the statuses in order, the fields and your and the free tasks. Without `--dir` the server looks for the board from its own
-folder; when it finds none, every call fails with `STORE_NOT_FOUND`, whose fix names the `args` to set and `details.boards` the boards of
-this machine. A client that cannot find `laneboard` needs the absolute path of `command -v laneboard` as `command` (with nvm it changes
+A client without a `setup` of its own starts the server with the board and a default name, in a config file of the project:
+`{"command": "laneboard", "args": ["mcp", "--dir", "/abs/path/.laneboard", "--as", "<name>"]}`. A global config (one for every project,
+like Codex's `~/.codex/config.toml`) never gets `--dir`: it would pin every project of the machine to this one board. Call `task_prime`
+first: the rules for MCP, the statuses in order, the fields and your and the free tasks. Without `--dir` the server takes `LANEBOARD_DIR`,
+else looks for the board from its own folder; when it finds none, every call fails with `STORE_NOT_FOUND`, whose fix says how to start
+your client for the project (in the project folder, or with `LANEBOARD_DIR=<board>`; by the client's name from `initialize`) and
+`details.boards` lists the boards of this machine. A server whose `--dir` is not the board of its folder warns on every call, as with
+`LANEBOARD_DIR`: check `prefix`. A client that cannot find `laneboard` needs the absolute path of `command -v laneboard` as `command` (with nvm it changes
 with the Node.js version).
 
 ```sh
@@ -488,6 +494,9 @@ against an agent's mistake, not against a hostile agent.
   (reply `passed: true`, `from`; still handed in, not in work) and from the last one accepts it into the final status (`accepted: true`).
 - `--reviewers x,y`: who checks (default: anybody but the author of the work). The author of the work (any name that held the task or
   handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
+- A task waiting in a check (handed in, or passed on) is handed in already: the author's `finish`, `update` or `claim` into another check
+  or the final status gets `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment; it never
+  goes back to an earlier check. `finish` without `--status` there records a new result after rework, the status stays.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
   assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix

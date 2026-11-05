@@ -20,8 +20,12 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   `finish` hands in to the first check, a checker's `finish` passes the task on and from the last check accepts it; the author of the work
   never passes on or accepts its own work; `--creators` limits who creates tasks, subtasks and imports. `prime` and `task_prime` show the
   checks, the checkers, the tasks waiting for your check and the newest comment of a checker under your task. All keys are optional.
+  A task waiting in a check never goes back to an earlier one: the author's move into another check is `INVALID_VALUE` "handed in
+  already, waits in <check> for the check of <checkers>" with a comment as the fix (ADR §51).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
-  instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server names the `args` to set and lists the boards (ADR §47).
+  instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
+  project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming
+  another project's board warns as `LANEBOARD_DIR` does (ADR §47, §51).
 - `laneboard import checklist TODO.md --status todo` imports a Markdown TODO list: an item is a task, `[x]` the final status, an indented
   item a subtask; a re-run skips imported items. `import markdown` names this command when it meets checkboxes (ADR §46).
 - `laneboard redact <ID> --text-file <file>` removes a pasted secret from a task and from the store backups (ADR §38).

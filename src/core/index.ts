@@ -10,7 +10,7 @@ export { actorPart, agentUser, defaultAgentBase, defaultAgentName, isEarlierSess
 export { GIT_TIMEOUT_MS, linkedWorktree, readCheckout, repositoryCheckouts } from './git.ts';
 export type { CheckoutState, LinkedWorktree } from './git.ts';
 export type { ActorSource, ResolvedActor } from './agent-name.ts';
-export type { DiscoveryInput, ForeignStore, StoreRef, StoreSource } from './store.ts';
+export type { DiscoveryInput, ForeignStore, ServerStoreCheck, StoreRef, StoreSource } from './store.ts';
 export { derivePrefix, loadConfig, storePrefix } from './config.ts';
 export { shellQuote } from './shell.ts';
 export { LOCK_STALE_MS, LOCK_WAIT_MS } from './lock.ts';

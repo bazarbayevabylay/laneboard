@@ -155,40 +155,60 @@ export interface ForeignStore {
   ownStore?: string;
 }
 
-// Signs that the store in use belongs to another project than cwd (see ForeignStore); undefined when there are none.
-export function foreignStore(ref: StoreRef, cwd: string, home?: string): ForeignStore | undefined {
-  if (ref.found === 'env') {
+// Signs that the store in use belongs to another project than cwd (see ForeignStore); undefined when there are none. `serverDir`: a
+// --dir is the MCP server's (`laneboard mcp --dir`), a pin of the client config that every folder the client starts in gets, so it is
+// checked as LANEBOARD_DIR is (C-U1 run 2); the --dir of one CLI command is that command's choice.
+export function foreignStore(ref: StoreRef, cwd: string, home?: string, serverDir = false): ForeignStore | undefined {
+  if (isPin(ref, serverDir)) {
     // A store of cwd's own is the clearest sign; a store walking up finds behind a project marker is another project's, not cwd's.
     const near = walkUp(cwd, home);
     if (near !== undefined && !samePath(near.dir, ref.dir) && separateProjectMarker(near.dir, cwd) === undefined) {
       return { marker: path.relative(path.resolve(cwd), near.dir), ownStore: near.dir };
     }
   }
-  if (ref.found !== 'parent' && !pinnedAbove(ref, cwd)) return undefined;
+  if (ref.found !== 'parent' && !pinnedAbove(ref, cwd, serverDir)) return undefined;
   const marker = separateProjectMarker(ref.dir, cwd);
   return marker === undefined ? undefined : { marker };
 }
 
-// Does LANEBOARD_DIR name a store whose project folder holds cwd (a pin set for a parent folder)?
-function pinnedAbove(ref: StoreRef, cwd: string): boolean {
+// Is the store a pin for every folder: LANEBOARD_DIR, or the MCP server's --dir (`serverDir`)?
+function isPin(ref: StoreRef, serverDir: boolean): boolean {
+  return ref.found === 'env' || (serverDir && ref.found === 'dir');
+}
+
+// Does a pin (isPin) name a store whose project folder holds cwd (a pin set for a parent folder)?
+function pinnedAbove(ref: StoreRef, cwd: string, serverDir = false): boolean {
   const here = canonicalPath(cwd);
   const owner = canonicalPath(path.dirname(ref.dir));
-  return ref.found === 'env' && here !== owner && isWithin(here, owner);
+  return isPin(ref, serverDir) && here !== owner && isWithin(here, owner);
+}
+
+// How the MCP server reports a store of another project (C-U1 run 2): its --dir is checked as LANEBOARD_DIR is (serverDir), and the
+// fix of that warning is the client's, since no tool takes a store path: `own` the board of cwd when one was found, `created` where
+// init would put one. A store from LANEBOARD_DIR or a parent folder keeps the CLI's text, the same for both.
+export interface ServerStoreCheck {
+  fix: (own: string | undefined, created: string) => string;
 }
 
 // Warning for a store that looks like another project's (a project marker lies between, see foreignStore): a nested agent folder
 // would otherwise write silently into it. A plain subfolder of the same project gets none.
-export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | null, home?: string): string | undefined {
-  const foreign = foreignStore(ref, cwd, home);
+// `server`: the MCP server's check (ServerStoreCheck), else the CLI's.
+export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | null, home?: string, server?: ServerStoreCheck): string | undefined {
+  const serverDir = server !== undefined;
+  const foreign = foreignStore(ref, cwd, home, serverDir);
   if (foreign === undefined) return undefined;
-  const how = ref.found === 'parent' ? 'found in a parent directory' : pinnedAbove(ref, cwd) ? 'from LANEBOARD_DIR (set for a parent folder)' : 'from LANEBOARD_DIR';
+  const pin = ref.found === 'dir' ? "from the server's --dir" : 'from LANEBOARD_DIR';
+  const how = ref.found === 'parent' ? 'found in a parent directory' : pinnedAbove(ref, cwd, serverDir) ? `${pin} (set for a parent folder)` : pin;
   const own = foreign.ownStore;
   const it = own ? `it has its own store ${own}` : `it has ${foreign.marker}`;
   // A new board goes to the folder of the marker, and by --dir: a bare init would take LANEBOARD_DIR, the store in use.
   const created = path.join(path.dirname(path.resolve(cwd, foreign.marker)), STORE_DIR_NAME);
-  const fix = own
-    ? `pass --dir ${shellQuote(own)} on every command`
-    : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${shellQuote(created)} --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(created)} on every command, starting with laneboard prime`;
+  const fix =
+    server && ref.found === 'dir'
+      ? server.fix(own, created)
+      : own
+        ? `pass --dir ${shellQuote(own)} on every command`
+        : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${shellQuote(created)} --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(created)} on every command, starting with laneboard prime`;
   return `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} ${how}, but ${path.resolve(cwd)} looks like a separate project (${it}); unless this folder is part of that project, ${fix}`;
 }
 

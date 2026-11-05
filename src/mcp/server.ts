@@ -17,7 +17,8 @@ function packageVersion(): string {
 export function createMcpServer(env: ToolEnv): Server {
   const server = new Server({ name: 'laneboard', version: packageVersion() }, { capabilities: { tools: {} }, instructions: mcpRules() });
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOL_LIST.map((t) => toolListing(t.def)) }));
-  server.setRequestHandler(CallToolRequestSchema, (request) => callTool(request.params.name, request.params.arguments, env));
+  // The client's clientInfo.name (initialize) lets a fix name that client's way to a board (C-U1 run 2).
+  server.setRequestHandler(CallToolRequestSchema, (request) => callTool(request.params.name, request.params.arguments, { ...env, client: server.getClientVersion()?.name }));
   return server;
 }
 

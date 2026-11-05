@@ -12,6 +12,16 @@ afterAll(cleanupTemp);
 
 const FLOW = ['backlog', 'ready', 'dev', 'code_review', 'qa', 'done'];
 
+// The refusal of the author of the work for API-1 waiting in `at` (S6u, B-U1 run 2): handed in already, the fix is a comment, never a
+// hand-in again into the check the task is in or passed.
+function waiting(actor: string, at: string, checkers: string): Record<string, string> {
+  return {
+    code: 'INVALID_VALUE',
+    message: `API-1 is handed in already and waits in ${at} for the check of ${checkers} (code_review -> qa -> done): nothing to do; the author never moves it to another check or into done, and a note for the checkers is a comment`,
+    fix: `laneboard comment API-1 "<note for the check>" --as ${actor}`,
+  };
+}
+
 // Run the CLI with --json in `s` as `actor`; the exit code and the parsed envelope.
 async function run(s: TestStore, actor: string, argv: string[]): Promise<{ code: number; doc: Record<string, any> }> {
   const r = await cli([...argv, '--as', actor, '--json'], { cwd: s.root });
@@ -200,8 +210,8 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
   it('claim --status of a handed-in task warns that the hand-in is lost (A17), as update', async () => {
     const s = await reviewBoard();
     await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit']);
-    // Review r2: the author passing its own task on to a later check is refused like the final status.
-    expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa'])).doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: updateFix('dev-a') });
+    // Review r2: the author passing its own task on to a later check is refused like the final status; it waits in code_review (S6u).
+    expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa'])).doc.error).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
     const moved = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev']);
     expect(moved.code).toBe(0);
     expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not: pass it on or accept it with laneboard finish API-1 --result "<result>" instead, or the assignee hands it in again with finish']);
@@ -246,21 +256,21 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
 });
 
 describe('review r2: the author of the work checks its task by no path; the path of finish follows the status', () => {
-  const updateFix = (actor: string): string => `laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as ${actor}`;
   const BY = ['rev', 'dev-a', 'orch'];
 
-  // The author dev-a (in review.by) is refused every pass and close of API-1: finish, finish --status done/qa, update, claim.
+  // The author dev-a (in review.by) is refused every pass and close of API-1: finish, finish --status done/qa/code_review, update, claim.
   async function expectAuthorRefused(s: TestStore): Promise<void> {
     for (const argv of [
       ['finish', 'API-1', '--result', 'self check'],
       ['finish', 'API-1', '--status', 'done', '--result', 'self accept'],
       ['finish', 'API-1', '--status', 'qa', '--result', 'self check'],
+      ['finish', 'API-1', '--status', 'code_review', '--result', 'hand in again'],
       ['update', 'API-1', '--status', 'done'],
       ['update', 'API-1', '--status', 'qa'],
     ]) {
       const r = await run(s, 'dev-a', argv);
       expect(r.code, argv.join(' ')).toBe(2);
-      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'INVALID_VALUE', fix: updateFix('dev-a') });
+      expect(r.doc.error, argv.join(' ')).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
     }
     expect(await row(s, 'API-1')).toMatchObject({ status: 'code_review', assignee: 'dev-b', handed_in: true });
   }
@@ -289,7 +299,7 @@ describe('review r2: the author of the work checks its task by no path; the path
     // The author is refused a pass or a close on this path too (finish without --status would take it back and hand it in again).
     for (const to of ['qa', 'done']) {
       const r = await run(s, 'dev-a', ['finish', 'API-1', '--status', to, '--result', 'self check']);
-      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard finish API-1 --status code_review --result 'self check' --as dev-a --json" });
+      expect(r.doc.error).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
     }
     expect(await row(s, 'API-1')).toMatchObject({ status: 'code_review', assignee: null });
     const pass = await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok']);
