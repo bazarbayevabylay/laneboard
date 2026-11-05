@@ -149,3 +149,29 @@ describe('S6u C-U1: mcp --dir that is not the board of the server folder warns a
     expect(JSON.parse(r.stdout).warnings).toEqual([]);
   });
 });
+
+describe('S6u r1 B-U1 over MCP: the author never moves a task waiting in qa back into code_review', () => {
+  it('task_update and task_claim with status code_review: the waiting refusal, the task stays in qa', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ['backlog', 'ready', 'dev', 'code_review', 'qa', 'done'] });
+    const as = async (actor: string, argv: string[]): Promise<Record<string, any>> =>
+      JSON.parse((await cli([...argv, '--as', actor, '--json'], { cwd: s.root })).stdout) as Record<string, any>;
+    await as('orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch']);
+    await as('orch', ['create', 'Add endpoint', '--status', 'ready']);
+    await as('dev-2', ['claim', 'API-1', '--status', 'dev']);
+    await as('dev-2', ['finish', 'API-1', '--result', 'work', '--no-commit']);
+    expect((await as('rev', ['finish', 'API-1', '--result', 'review ok'])).data).toMatchObject({ status: 'qa', passed: true });
+    const rev = (await as('orch', ['get', 'API-1'])).data.rev as number;
+    const mcp = await startMcp(s.root, ['mcp', '--as', 'dev-2'], { HOME: tempDir() }, 'claude-code');
+    try {
+      for (const tool of ['task_update', 'task_claim']) {
+        const r = await mcp.call(tool, { id: 'API-1', status: 'code_review' });
+        expect(r.isError, tool).toBe(true);
+        expect(r.structured, tool).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<note for the check>" --as dev-2' });
+        expect(String(r.structured.message), tool).toContain('API-1 is handed in already and waits in qa');
+      }
+    } finally {
+      await mcp.close();
+    }
+    expect((await as('orch', ['get', 'API-1'])).data).toMatchObject({ status: 'qa', rev });
+  });
+});

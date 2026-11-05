@@ -69,6 +69,27 @@ describe('S6u B-U1: no hand-in back into a check the task passed', () => {
     expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
 
+  it('r1: update and claim of the author back into the first check (qa -> code_review) are refused; the task stays in qa, rev unchanged', async () => {
+    const s = await inQa();
+    const before = await task(s, 'API-1');
+    for (const argv of [
+      ['update', 'API-1', '--status', 'code_review'],
+      ['claim', 'API-1', '--status', 'code_review'],
+    ]) {
+      const r = await run(s, 'dev-2', argv);
+      expect(r.code, argv.join(' ')).toBe(2);
+      expect(r.doc.error, argv.join(' ')).toEqual(WAITS_IN_QA);
+    }
+    const after = await task(s, 'API-1');
+    expect(after).toMatchObject({ status: 'qa', rev: before.rev });
+    expect(after.events).toEqual(before.events);
+    // Back to the work status stays allowed, with the warning that the hand-in is lost (A17).
+    const back = await run(s, 'dev-2', ['update', 'API-1', '--status', 'dev']);
+    expect(back.code).toBe(0);
+    expect(back.doc.data.status).toBe('dev');
+    expect(back.doc.warnings).toHaveLength(1);
+  });
+
   it('a former author that no longer holds the task gets the same refusal for an earlier check (no loop of fixes)', async () => {
     const s = await inQa();
     expect((await run(s, 'dev-2', ['update', 'API-1', '--assignee', 'dev-3'])).code).toBe(0);

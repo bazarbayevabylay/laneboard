@@ -420,7 +420,7 @@ function workedOn(task: TaskT, actor: string): boolean {
 }
 
 // One rule for a status move by update or claim on a board with checks (P1, review r1): the author of the work (workedOn) never sets
-// a later check or the final status (checkAuthorMove, shared with a checker's finish), only review.by (when set) set the final one,
+// a later check or the final status, nor another check while the task waits in one (checkAuthorMove, shared with a checker's finish), only review.by (when set) set the final one,
 // and an actor that holds the task after this write (`takes`: claim, or update with --assignee itself) does not close it either; a move of a handed-in task warns that the hand-in is lost (A17). Without checks
 // nothing here applies (0.3.1, ADR §22).
 function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, warnings: string[]): void {
@@ -484,16 +484,20 @@ export function workStatusBeforeChecks(config: ConfigT): string | undefined {
 }
 
 // Is this the move the author of the work never makes on a board with checks (review r2): `actor` worked on the task (workedOn) and
-// `to` is a later check or the final status. False without checks (0.3.1, ADR §22).
+// `to` is a later check or the final status, or any other check while the task waits in one (S6u r1: qa -> code_review would undo the
+// check it passed). A move back to a work status stays allowed (A17 warning). False without checks (0.3.1, ADR §22).
 function authorMoves(config: ConfigT, task: TaskT, actor: string, to: string): boolean {
   const review = reviewStatuses(config);
   if (review.length === 0) return false;
+  if (!workedOn(task, actor)) return false;
   const final = finalStatuses(config.statuses)[0] ?? '';
-  return (to === final || review.indexOf(to) > 0) && workedOn(task, actor);
+  if (to === final || review.indexOf(to) > 0) return true;
+  return review.includes(to) && to !== task.status && review.includes(task.status) && awaitsCheck(task);
 }
 
 // The one author rule of a board with checks (review r2), for update, claim and a checker's finish alike: the author of the work
-// (workedOn) neither passes the task on to a later check nor sets the final status; it hands in to the first check with finish.
+// (workedOn) neither passes the task on to a later check nor sets the final status, nor moves a task waiting in a check to another
+// check; it hands in with finish (handInStatus).
 // INVALID_VALUE (authorRefusal). Without checks nothing applies (0.3.1, ADR §22).
 function checkAuthorMove(config: ConfigT, task: TaskT, actor: string, to: string): void {
   if (!authorMoves(config, task, actor, to)) return;

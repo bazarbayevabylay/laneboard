@@ -17,7 +17,7 @@ export const finish: CommandDef = {
     'In the main checkout of a repository whose other worktrees have newer commits: a warning naming them, with the command that fixes the link. ' +
     'Again in the same status: a new result is recorded (handed in again after rework), the same result again changes nothing; a new commit is linked; ' +
     'a closed task keeps its result. ' +
-    'On a board with checks (laneboard config --review-statuses): your finish hands in to the first check, never into a later one or the final status; ' +
+    'On a board with checks (laneboard config --review-statuses): your finish hands in to the check the task is in, else the first check, never into a later one or the final status; ' +
     "a checker's finish passes the handed-in task on to the next check (the status event says passed) and from the last one accepts it; config review.by names the checkers.",
   options: { result: { type: 'string' }, status: { type: 'string' }, commit: { type: 'string' }, 'no-commit': { type: 'boolean' }, ...FULL_OPTION },
   args: { min: 1, max: 1 },
