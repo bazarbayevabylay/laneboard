@@ -106,10 +106,10 @@ export async function runImport(ctx: OpContext, o: ImportOptions | ChecklistImpo
   let mapped: Mapped;
   let checkedRerun: string | undefined;
   if (o.format === 'checklist') {
-    // A checked item takes the board's final status unless --done-status names another.
-    const doneStatus = o.doneStatus ?? finalStatuses(loadConfig(ctx.store.dir).statuses).at(-1) ?? o.status;
-    mapped = mapChecklist(records, { status: o.status, doneStatus, headingLabels: o.headingLabels });
     const config = loadConfig(ctx.store.dir);
+    // A checked item takes the board's final status unless --done-status names another.
+    const doneStatus = o.doneStatus ?? finalStatuses(config.statuses).at(-1) ?? o.status;
+    mapped = mapChecklist(records, { status: o.status, doneStatus, headingLabels: o.headingLabels });
     const work = workStatusBeforeChecks(config) ?? config.statuses[0] ?? o.status;
     checkedRerun = ['laneboard import checklist', shellQuote(o.shown ?? o.target), '--status', shellQuote(o.status), '--done-status', shellQuote(work), ...(o.headingLabels ? ['--heading-labels'] : []), ...o.exclude.flatMap((e) => ['--exclude', shellQuote(e)]), ...(o.dryRun ? ['--dry-run'] : [])].join(' ');
   } else {

@@ -1,7 +1,26 @@
 {
   "name": "laneboard",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Task board & CLI for AI coding agents",
+  "keywords": [
+    "tasks",
+    "kanban",
+    "task-board",
+    "agents",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "cursor",
+    "gemini-cli",
+    "opencode",
+    "mcp",
+    "cli"
+  ],
+  "homepage": "https://github.com/bazarbayevabylay/laneboard#readme",
+  "bugs": {
+    "url": "https://github.com/bazarbayevabylay/laneboard/issues"
+  },
+  "author": "laneboard maintainers",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -11,6 +30,8 @@
     "dist",
     "schema",
     "README.md",
+    "README.ru.md",
+    "CHANGELOG.md",
     "docs/agent-guide.md",
     "LICENSE"
   ],

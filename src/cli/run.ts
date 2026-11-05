@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
-import type { StoreRef } from '../core/index.ts';
+import type { DiscoveryInput, StoreRef } from '../core/index.ts';
 import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import type { PositionalHint } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
@@ -31,6 +31,16 @@ const READ_COMMANDS = (): string[] => COMMANDS.filter((c) => c.readOnly).map((c)
 export function version(): string {
   const pkg = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
   return pkg.version;
+}
+
+// The oldest Node.js major the CLI supports (package.json engines; npm only warns about engines, so the CLI says it too).
+const MIN_NODE_MAJOR = 22;
+
+// One warning line when the CLI runs on a Node.js older than it supports (audit A34), else undefined.
+export function nodeWarning(nodeVersion: string): string | undefined {
+  const major = Number(/^v?(\d+)\./.exec(nodeVersion)?.[1]);
+  if (!Number.isInteger(major) || major >= MIN_NODE_MAJOR) return undefined;
+  return `laneboard needs Node.js ${MIN_NODE_MAJOR} or newer and runs on ${nodeVersion}, so commands may fail: install Node.js ${MIN_NODE_MAJOR} (nvm install ${MIN_NODE_MAJOR} && nvm alias default ${MIN_NODE_MAJOR}), then npm i -g laneboard again`;
 }
 
 // Top-level help text.
@@ -106,12 +116,15 @@ interface Printed {
 export async function runCli(io: CliIo): Promise<number> {
   const argv = io.argv;
   const out: Printed = { json: jsonRequested(argv), store: null };
+  // An old Node.js is named on every run: a warning of the result (--json: `warnings`), on stderr next to an error.
+  const runtime = nodeWarning(io.nodeVersion ?? process.versions.node);
+  const before = runtime === undefined ? [] : [runtime];
   let def: CommandDef | undefined;
   try {
     const [name, ...rest] = argv;
     // `laneboard` alone is a person looking around: the help, not an error.
-    if (name === undefined || name === '--help' || name === '-h' || name === 'help') return print(io, out, { help: globalHelp() }, [], globalHelp());
-    if (name === '--version' || name === '-v') return print(io, out, { version: version() }, [], version());
+    if (name === undefined || name === '--help' || name === '-h' || name === 'help') return print(io, out, { help: globalHelp() }, before, globalHelp());
+    if (name === '--version' || name === '-v') return print(io, out, { version: version() }, before, version());
     if (name.startsWith('-')) {
       throw new LaneboardError('USAGE', `the command comes first: laneboard <command> [options], got ${name}`, {
         allowed: COMMANDS.map((c) => c.name),
@@ -130,19 +143,16 @@ export async function runCli(io: CliIo): Promise<number> {
     const command = def;
     const options = { ...GLOBAL_OPTIONS, ...command.options };
     // `create --title X`: the fix puts X in its place and adds create's --status <first status> of the store argv's --dir names.
-    const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined }) ?? [] };
+    // Where a command looks for its store, for a given --dir (one rule for the fix hint and the run itself).
+    const discoveryFor = (dir: string | undefined): DiscoveryInput => ({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined });
+    const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.(discoveryFor(dir)) ?? [] };
     const parsed = parseStrict(command.name, rest, options, hint);
     rejectRepeated(parsed.tokens, command.name, rest, options);
     const values: Values = parsed.values;
     const positionals = parsed.positionals;
     out.json = values.json === true;
-    if (values.help === true) return print(io, out, { help: commandHelp(command) }, [], commandHelp(command));
-    const discovery = {
-      dir: typeof values.dir === 'string' ? values.dir : undefined,
-      envDir: io.env.LANEBOARD_DIR,
-      cwd: io.cwd,
-      home: io.env.HOME || undefined,
-    };
+    if (values.help === true) return print(io, out, { help: commandHelp(command) }, before, commandHelp(command));
+    const discovery = discoveryFor(typeof values.dir === 'string' ? values.dir : undefined);
     if (positionals.length < command.args.min || positionals.length > command.args.max) {
       throw new LaneboardError('USAGE', `wrong number of arguments for ${command.name} (got ${positionals.length}): laneboard ${command.usage}`, {
         fix: argumentsFix(command.name, rest, parsed.tokens, command.usage, command.args, command.required?.(discovery)),
@@ -175,10 +185,14 @@ export async function runCli(io: CliIo): Promise<number> {
         out.store = dir;
       },
     });
-    if (result.silent) return 0;
+    if (result.silent) {
+      // A command that printed by itself (mcp, board) keeps stdout; a person still hears about the old Node.js on stderr.
+      if (!out.json && before.length) io.stderr(warningText(before));
+      return 0;
+    }
     // A store found in a parent directory (or pinned for one) may be another project's: every result says so (prime prints it in its text).
     const parent = out.ref ? parentStoreWarning(out.ref, io.cwd, storePrefix(out.ref.dir), io.env.HOME || undefined) : undefined;
-    const warnings = parent && (out.json || !result.storeWarningInText) ? [parent, ...result.warnings] : result.warnings;
+    const warnings = [...before, ...(parent && (out.json || !result.storeWarningInText) ? [parent, ...result.warnings] : result.warnings)];
     const code = print(io, out, result.data, warnings, STYLED_COMMANDS.has(command.name) ? result.human : safeText(result.human));
     return result.exitCode ?? code;
   } catch (raw) {
@@ -186,7 +200,7 @@ export async function runCli(io: CliIo): Promise<number> {
     // One command rebuilt from the user's own argv (argv.ts), else the core fix.
     const fix = cliFix(err, argv, def, { ...GLOBAL_OPTIONS, ...def?.options });
     if (out.json) io.stdout(errorEnvelope(out.store, out.store ? storePrefix(out.store) : null, err, fix));
-    else io.stderr(errorText(err, fix));
+    else io.stderr(`${warningText(before)}${errorText(err, fix)}`);
     return ERRORS[err.code].exit;
   }
 }
