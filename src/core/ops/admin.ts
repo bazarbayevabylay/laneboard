@@ -34,7 +34,7 @@ import {
 } from './doctor-checks.ts';
 import type { AttachmentMoves, CheckResult, RestorePlan } from './doctor-checks.ts';
 import type { OpContext, OpResult } from './common.ts';
-import { reworkStatus, stuckInChecks, unseenInChecks } from './update.ts';
+import { handedInOutsideChecks, reworkStatus, stuckInChecks, unseenInChecks } from './update.ts';
 
 export const InitInput = z.strictObject({
   // Board name (default: the project folder's name); the prefix is derived from it unless given.
@@ -474,7 +474,8 @@ function schemaChanged(schema: string): string {
 // has no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it; a field is
 // dropped, or gets a new type, only when no active task holds a value it would leave undeclared or of another type. Name,
 // description and prefix refresh the registry, whose check keeps the prefix unique among live boards (also for an unchanged one). Checks
-// turned on a status with tasks in work there warn with their hand-in (unseenInChecks, S6w r1); a change of the checks that leaves a
+// turned on a status with tasks in work there warn with their hand-in (unseenInChecks, S6w r1), as do tasks handed in to a status that is
+// no check (handedInOutsideChecks, S6y U1); a change of the checks that leaves a
 // waiting task with no checker (every name in review.by worked on it) warns with the owner's config --reviewers (stuckInChecks, S6w r3).
 export async function configureStore(ctx: OpContext, input: ConfigureInputT): Promise<OpResult<ConfigureResult>> {
   const p = parseInput(ConfigureInput, input);
@@ -563,6 +564,9 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
       // A status turned into a check while tasks are in work there (S6w r1): they are not handed in, so no checker sees them.
       const unseen = reviewChange ? unseenInChecks(next, active) : undefined;
       if (unseen !== undefined) warnings.push(unseen);
+      // Checks turned on with tasks handed in to a status that stays no check (S6y U1): no checker sees them either.
+      const outside = reviewChange ? handedInOutsideChecks(next, active) : undefined;
+      if (outside !== undefined) warnings.push(outside);
       // review.by now names only authors of a waiting task (S6w r3): nobody may check it until the owner adds a checker.
       const stuck = reviewChange ? stuckInChecks(next, active) : undefined;
       if (stuck !== undefined) warnings.push(stuck);
@@ -812,10 +816,11 @@ export async function doctor(ctx: OpContext, input: DoctorInputT): Promise<OpRes
     // --drop-field / --field warn about it) is no problem to fix.
     add('fields', fieldCheck(config, active.data.tasks));
     // A board with checks: every task in a check is handed in, so the checkers see it (S6w r1; config turning a status with tasks in
-    // work into a check warns too), and a checker is left for each (S6w r2: not every name in review.by an author of it, else the owner
+    // work into a check warns too), no task is handed in to a status that is no check (S6y U1: no checker sees it; finish refuses such a
+    // hand-in now, older ones stay), and a checker is left for each (S6w r2: not every name in review.by an author of it, else the owner
     // adds one). Not shown without checks.
     if (reviewStatuses(config).length > 0) {
-      const problems = [unseenInChecks(config, active.data.tasks), stuckInChecks(config, active.data.tasks)].filter((m) => m !== undefined);
+      const problems = [unseenInChecks(config, active.data.tasks), handedInOutsideChecks(config, active.data.tasks), stuckInChecks(config, active.data.tasks)].filter((m) => m !== undefined);
       add('checks', problems.length === 0 ? { ok: true, message: 'every task in a check is handed in' } : { ok: false, message: problems.join('; ') });
     }
   });

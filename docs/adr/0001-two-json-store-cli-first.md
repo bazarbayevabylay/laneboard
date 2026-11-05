@@ -713,3 +713,30 @@ Checks
   waiting, no author, in review.by or review.by empty), for any writer: it never checks the task now, giving it back does not undo that;
   the check stays with the checkers left, anybody else without review.by, else the owner's `config --reviewers` (as `stuckInChecks`).
   Checks: test/cli/s6x.test.ts; s2g grid with `resumable_total` 12 and 400.
+
+## 53. UX run 6 before publication (S6y, LB-51; UX run 6 B-U1, B-U2; supersedes §43/§51 "the assignee's finish into any status that is not final hands in" for a board with checks, and §51 S6v "notHandedIn, notHandedInForCheck: comments" for a task returned for rework)
+- U1 (I1): on a board with checks the holder's `finish --status <status that is neither a check nor final>` (`blocked`, `in_progress`,
+  `fixing` between two checks; MCP `task_finish` too) wrote a hand-in there: exit 0, `handed_in: true`, in no checker's queue,
+  doctor healthy, and a checker later "passed" it from that status. Decision (orchestrator): a hand-in lives only in a check, so such a
+  finish is refused, `INVALID_VALUE` (`handInOutsideCheck`), also for a task waiting in a check and for an unassigned task. The fix keeps
+  the meaning "this status with my result", without a hand-in: `laneboard comment <ID> --as <a> -- '<result>' && laneboard update <ID>
+  --status <that status> --as <a>` (`reworkFix`, no `input`, so the CLI keeps it); the message names the hand-in `finish <ID> --status
+  <the check it is in, else the first> --result "<what you did, how you checked it>"`. Older records (a board that turned checks on later,
+  or 0.4.0 before this): `handedInOutsideChecks` adds each such task with its holder's hand-in to doctor's check `checks` (exit 6) and to
+  the `config` warning of a change of the checks. A board without checks is unchanged (finish into any non-final status hands in).
+- U2 (I3): rev returned a task (comment, then `update --status <work>`); orch's stale `finish --status qa` got `ALREADY_CLAIMED` with the
+  fix `comment <ID> "hand it in: ..."`, whose run made that comment the newest by another name, so the author's `prime` (feedback) and
+  MCP `roles.feedback` showed it instead of the reason. Decision: a task returned for rework (`reworkReturn`: its newest status event is
+  a move without a mark and the one before it handed it in or passed it on into the status the move left) gets `returnedForRework`:
+  the refusal's own code (ALREADY_CLAIMED for a check or an acceptance, INVALID_VALUE for update/claim into a check), fix `laneboard
+  get <ID>`, message "<ID> was returned for rework by <name|you> at <time> (<from> -> <to>), reason: "<first line of that name's newest
+  comment between the two events>" (or "with no comment"); it is <status> with <holder> and not handed in, so there is nothing to check".
+  Feedback needed no change: with no stray comment the newest comment of another name is the reason.
+  Same class, found and fixed (fixes that write a comment to the author on behalf of a checker or third party): `notHandedInForCheck`
+  (checker's finish), `notHandedIn` (somebody else's acceptance on a board without checks: a stale acceptance after a return there too),
+  `checkEntryRefusal` for anybody else (update/claim into a check). Unchanged, as their state has no reason to bury: the same three on a
+  task never handed in or moved on since the return (A14: the comment asks the holder to hand it in, ADR §43); placeholder comments
+  (`claimedBy`, `notChecker`, `notFinalTarget`, `waitingClaimRefusal`, `alreadyHandedIn`: "<note for ...>", the caller writes the note).
+  Checks: test/cli/s6y.test.ts (layouts two checks, a work status between them, one check, none; every fix and the named hand-in run in
+  sh), test/mcp/s6y.test.ts. s6j "a task handed in to a status outside the checks" now builds that record before the checks are on.
+  Golden files: none changed.
