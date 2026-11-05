@@ -200,7 +200,9 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
   it('claim --status of a handed-in task warns that the hand-in is lost (A17), as update', async () => {
     const s = await reviewBoard();
     await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit']);
-    const moved = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa']);
+    // Review r2: the author passing its own task on to a later check is refused like the final status.
+    expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'qa'])).doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: updateFix('dev-a') });
+    const moved = await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev']);
     expect(moved.code).toBe(0);
     expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not: pass it on or accept it with laneboard finish API-1 --result "<result>" instead, or the assignee hands it in again with finish']);
   });
@@ -240,6 +242,81 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
     expect(JSON.parse(configText(s)).review).toEqual({ statuses: ['code_review', 'qa'], by: ['rev'], stage_by: { qa: ['qa-bot'] } });
     await run(s, 'orch', ['config', '--review-statuses', 'qa']);
     expect(JSON.parse(configText(s)).review).toEqual({ statuses: ['qa'], by: ['rev'], stage_by: { qa: ['qa-bot'] } });
+  });
+});
+
+describe('review r2: the author of the work checks its task by no path; the path of finish follows the status', () => {
+  const updateFix = (actor: string): string => `laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as ${actor}`;
+  const BY = ['rev', 'dev-a', 'orch'];
+
+  // The author dev-a (in review.by) is refused every pass and close of API-1: finish, finish --status done/qa, update, claim.
+  async function expectAuthorRefused(s: TestStore): Promise<void> {
+    for (const argv of [
+      ['finish', 'API-1', '--result', 'self check'],
+      ['finish', 'API-1', '--status', 'done', '--result', 'self accept'],
+      ['finish', 'API-1', '--status', 'qa', '--result', 'self check'],
+      ['update', 'API-1', '--status', 'done'],
+      ['update', 'API-1', '--status', 'qa'],
+    ]) {
+      const r = await run(s, 'dev-a', argv);
+      expect(r.code, argv.join(' ')).toBe(2);
+      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'INVALID_VALUE', fix: updateFix('dev-a') });
+    }
+    expect(await row(s, 'API-1')).toMatchObject({ status: 'code_review', assignee: 'dev-b', handed_in: true });
+  }
+
+  it('(1) dev-a takes the task, hands it over to dev-b, dev-b hands in: dev-a neither passes it on nor accepts it', async () => {
+    const s = await reviewBoard(BY);
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--assignee', 'dev-b'])).code).toBe(0);
+    expect((await run(s, 'dev-b', ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data.status).toBe('code_review');
+    await expectAuthorRefused(s);
+    // A checker who never held it still passes it on.
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', passed: true, assignee: 'dev-b' });
+  });
+
+  it('(2) dev-a hands in itself, then hands the task over to dev-b, dev-b hands in again: dev-a is still refused', async () => {
+    const s = await reviewBoard(BY);
+    expect((await run(s, 'dev-a', ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data.status).toBe('code_review');
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--assignee', 'dev-b'])).code).toBe(0);
+    expect((await run(s, 'dev-b', ['finish', 'API-1', '--result', 'work 2', '--no-commit'])).doc.data.status).toBe('code_review');
+    await expectAuthorRefused(s);
+  });
+
+  it('(3) the author hands in and unassigns: rev passes it on without becoming its holder, then accepts it; no dead end', async () => {
+    const s = await reviewBoard(BY);
+    await run(s, 'dev-a', ['finish', 'API-1', '--result', 'work', '--no-commit']);
+    expect((await run(s, 'dev-a', ['update', 'API-1', '--unassign'])).code).toBe(0);
+    // The author is refused a pass or a close on this path too (finish without --status would take it back and hand it in again).
+    for (const to of ['qa', 'done']) {
+      const r = await run(s, 'dev-a', ['finish', 'API-1', '--status', to, '--result', 'self check']);
+      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard finish API-1 --status code_review --result 'self check' --as dev-a --json" });
+    }
+    expect(await row(s, 'API-1')).toMatchObject({ status: 'code_review', assignee: null });
+    const pass = await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok']);
+    expect(pass.code).toBe(0);
+    expect(pass.doc.data).toMatchObject({ status: 'qa', assignee: null, passed: true, from: 'code_review', commit: null });
+    expect((await events(s, 'API-1')).filter((e) => e.type === 'assigned' && e.actor === 'rev')).toEqual([]);
+    // The repeated pass stays a no-op (a lost reply); rev names the final status to accept.
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'review ok'])).doc.data.status).toBe('qa');
+    const accept = await run(s, 'rev', ['finish', 'API-1', '--status', 'done', '--result', 'qa ok']);
+    expect(accept.code).toBe(0);
+    expect(accept.doc.data).toMatchObject({ status: 'done', assignee: null, accepted: true, from: 'qa' });
+  });
+
+  it('(3b) by=rev alone: after unassign rev passes on with finish and orch is not needed; the next finish of rev accepts with --status', async () => {
+    const s = await reviewBoard(['rev']);
+    await run(s, 'dev-a', ['finish', 'API-1', '--result', 'work', '--no-commit']);
+    await run(s, 'dev-a', ['update', 'API-1', '--unassign']);
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', assignee: null, passed: true });
+    expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'x'])).doc.error.code).toBe('ALREADY_CLAIMED');
+    expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'done', '--result', 'ok'])).doc.data).toMatchObject({ status: 'done', accepted: true });
+  });
+
+  it('(4) the normal path: dev-a hands in, rev passes code_review -> qa, orch accepts into done', async () => {
+    const s = await reviewBoard(BY);
+    expect((await run(s, 'dev-a', ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data).toMatchObject({ status: 'code_review', assignee: 'dev-a' });
+    expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', passed: true, from: 'code_review' });
+    expect((await run(s, 'orch', ['finish', 'API-1', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa', assignee: 'dev-a' });
   });
 });
 

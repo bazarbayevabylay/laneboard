@@ -369,4 +369,29 @@ describe('MCP server over stdio (SDK client)', () => {
       await mcp.close();
     }
   });
+
+  it('S6j review r2: the author of the work passes on or accepts by no tool (task_finish, task_update, task_claim)', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ['backlog', 'ready', 'dev', 'code_review', 'qa', 'done'] });
+    expect((await cli(['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,dev-a,orch', '--as', 'orch'], { cwd: s.root })).code).toBe(0);
+    await createTask(as(s, 'orch'), { title: 'Held', status: 'ready' });
+    await claimTask(as(s, 'dev-a'), { id: 'API-1', status: 'dev' });
+    expect((await cli(['update', 'API-1', '--assignee', 'dev-b', '--as', 'dev-a'], { cwd: s.root })).code).toBe(0);
+    expect((await cli(['finish', 'API-1', '--result', 'work', '--no-commit', '--as', 'dev-b'], { cwd: s.root })).code).toBe(0);
+    const mcp = await startMcp(s.root);
+    try {
+      for (const [tool, args] of [
+        ['task_finish', { id: 'API-1', result: 'self check', no_commit: true, actor: 'dev-a' }],
+        ['task_finish', { id: 'API-1', result: 'self accept', status: 'done', no_commit: true, actor: 'dev-a' }],
+        ['task_update', { id: 'API-1', status: 'qa', actor: 'dev-a' }],
+      ] as const) {
+        const r = await mcp.call(tool, args);
+        expect(r.isError, `${tool} ${JSON.stringify(args)}`).toBe(true);
+        expect(r.structured).toMatchObject({ code: 'INVALID_VALUE' });
+      }
+      expect((await mcp.call('task_get', { id: 'API-1' })).structured).toMatchObject({ status: 'code_review', assignee: 'dev-b' });
+      expect((await mcp.call('task_finish', { id: 'API-1', result: 'ok', actor: 'rev' })).structured).toMatchObject({ status: 'qa', passed: true });
+    } finally {
+      await mcp.close();
+    }
+  });
 });
