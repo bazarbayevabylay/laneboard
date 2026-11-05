@@ -281,6 +281,9 @@ same user and harness qualifies; a task of an explicit name (`dev-1` above, or `
 `--resume`. `ALREADY_CLAIMED` on a task of an earlier session offers `claim <ID> --resume --json` as its fix once that session has written
 nothing for 15 minutes; before that the fix is a comment and the message names `--resume`, and a `--resume` then works with a warning
 (a parallel live session of the same user has the same base: resume only your own work that matches the current request).
+On a board with checks a task handed in and waiting for a check is no work to resume: "Your earlier sessions" does not list it, and
+`claim --resume` of it gets "handed in already". Another session of the same base that worked on a task (by the events it wrote
+under its default name) is its author: it never passes it on or accepts it, and its queue "Waiting for your check" skips it.
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
 of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
 
@@ -510,7 +513,8 @@ against an agent's mistake, not against a hostile agent.
   such a task under the waiting ones, never among the free tasks (`unassigned`).
 - No checker left: when every name in `--reviewers` worked on a waiting task (the orchestrator gave it to the only checker), nobody
   may pass it on. The refusals, `prime` (MCP `roles.no_checker {ids, fix}`) and `doctor` (check `checks`, exit 6) name the owner's way
-  out: `laneboard config --reviewers "<names there>,<another checker>"`.
+  out: `laneboard config --reviewers "<names there>,<another checker>"`. `config --reviewers` that leaves a waiting task so, and a
+  hand-in while `--reviewers` names only its author, write and warn with the same command.
 - A checker's queue skips the check it passed the task into while another checker may make it; with no other one (`--reviewers rev`
   on two checks) the task stays in its queue, marked "(you passed the previous check)" (`roles.waiting[].passed_by_you`), with the pass.
 - `config --review-statuses` that turns a status with tasks in work into a check warns, naming each task and the hand-in its holder

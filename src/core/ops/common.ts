@@ -213,9 +213,16 @@ export function workStartedAt(task: TaskT): string | undefined {
 // an explicit name of the same form (`<base>:reviewer`) and a task handed to such a name by someone else never qualify (review S3).
 export function heldByEarlierSession(task: TaskT, sessionBase: string | undefined, actor: string): boolean {
   const holder = task.assignee;
-  if (holder === null || !isEarlierSessionName(holder, sessionBase, actor)) return false;
+  if (holder === null) return false;
   const e = assignmentEvent(task);
-  return e !== undefined && e.actor === holder && e.actor_source === 'default';
+  return e !== undefined && e.actor === holder && byEarlierSession(e, sessionBase, actor);
+}
+
+// Was event `e` written by another session of the actor's default name: its actor looks like `<sessionBase>:<session>` and wrote it
+// under its session default name (actor_source `default`). The one test of "another session of yours" by the data (review S3): for
+// claim --resume (heldByEarlierSession) and for the author of the work on a board with checks (S6w r3: the same author in any session).
+export function byEarlierSession(e: TaskEventT, sessionBase: string | undefined, actor: string): boolean {
+  return e.actor_source === 'default' && isEarlierSessionName(e.actor, sessionBase, actor);
 }
 
 // An earlier session of the default name that wrote nothing on the board for this long is taken for closed (a /clear or a restart):

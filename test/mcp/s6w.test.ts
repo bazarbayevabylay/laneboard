@@ -161,3 +161,40 @@ describe('S6w review r2 over MCP', () => {
     expect(prime.roles.no_checker).toEqual({ ids: ['API-1'], fix: 'laneboard config --reviewers "rev,<another checker>"' });
   });
 });
+
+describe('S6w review r3 over MCP: another session of the author\'s default name is the author', () => {
+  const BASE = 'claude-code@ann';
+  const SESSION_A = { LANEBOARD_DEFAULT_AGENT: BASE, CLAUDE_CODE_SESSION_ID: 'aaaa1111-1a1a-4a1a-8a1a-000000000001' };
+  const SESSION_B = { LANEBOARD_DEFAULT_AGENT: BASE, CLAUDE_CODE_SESSION_ID: 'bbbb2222-2b2b-4b2b-8b2b-000000000002' };
+
+  for (const l of [TWO, BETWEEN, ONE]) {
+    it(`${l.name}: session B's task_prime lists the task of session A neither to resume nor to check; task_claim resume, task_finish, task_update: handed in already`, async () => {
+      const s = await newStore({ prefix: 'API', statuses: l.statuses });
+      await configureStore(as(s, 'orch'), { review_statuses: l.checks });
+      await createTask(as(s, 'orch'), { title: 'Add endpoint', status: l.statuses[0] ?? '' });
+      const a = { cwd: s.root, env: SESSION_A };
+      const b = { cwd: s.root, env: SESSION_B };
+      expect((await callTool('task_claim', { id: 'API-1', status: l.work }, a)).structuredContent).toMatchObject({ assignee: `${BASE}:aaaa1111` });
+      expect((await callTool('task_finish', { id: 'API-1', result: 'work', no_commit: true }, a)).structuredContent).toMatchObject({ status: l.checks[0] });
+      const rev = stored(s, 'API-1').rev;
+      const prime = (await callTool('task_prime', {}, b)).structuredContent as Record<string, any>;
+      expect(prime.resumable).toEqual([]);
+      expect(prime.roles.waiting).toEqual([]);
+      const next = l.checks[1] ?? 'done';
+      for (const [tool, args] of [
+        ['task_claim', { id: 'API-1', resume: true }],
+        ['task_finish', { id: 'API-1', status: next, result: 'ok' }],
+        ['task_update', { id: 'API-1', status: 'done' }],
+      ] as const) {
+        const r = await callTool(tool, args, b);
+        expect(r.isError, tool).toBe(true);
+        const err = r.structuredContent as Record<string, string>;
+        expect(err, tool).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 "<note for the check>" --as ${BASE}:bbbb2222` });
+        expect(err.message, tool).toContain('is handed in already');
+      }
+      expect(stored(s, 'API-1')).toMatchObject({ status: l.checks[0], assignee: `${BASE}:aaaa1111`, rev });
+      // Another name checks it as before.
+      expect((await callTool('task_finish', { id: 'API-1', status: next, result: 'ok', actor: 'rev' }, b)).structuredContent).toMatchObject({ status: next });
+    });
+  }
+});

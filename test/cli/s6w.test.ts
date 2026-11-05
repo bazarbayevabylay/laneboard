@@ -623,3 +623,137 @@ describe('S6w review r2: nobody claims a task that waits for a check; no free ta
     expect(r.doc.error.message).toContain('not handed in with finish; a check passes on or accepts only a handed-in task (laneboard finish API-1 --status qa)');
   });
 });
+
+describe('S6w review r3: the author in any session of its default name; the free footer says what it lists; no checker left warns', () => {
+  const BASE = 'claude-code@ann';
+  const SESSION_A = { LANEBOARD_DEFAULT_AGENT: BASE, CLAUDE_CODE_SESSION_ID: 'aaaa1111-1a1a-4a1a-8a1a-000000000001' };
+  const SESSION_B = { LANEBOARD_DEFAULT_AGENT: BASE, CLAUDE_CODE_SESSION_ID: 'bbbb2222-2b2b-4b2b-8b2b-000000000002' };
+  const NAME_A = `${BASE}:aaaa1111`;
+  const NAME_B = `${BASE}:bbbb2222`;
+
+  // Run the CLI with --json under the session default name of `env` (no --as); the exit code and the parsed envelope.
+  const runIn = async (s: TestStore, env: Record<string, string>, argv: string[]): Promise<{ code: number; doc: Record<string, any> }> => {
+    const r = await cli([...argv, '--json'], { cwd: s.root, env });
+    return { code: r.code, doc: JSON.parse(r.stdout) };
+  };
+  const state = async (s: TestStore): Promise<Record<string, unknown>> => {
+    const t = await task(s, 'API-1');
+    return { status: t.status, assignee: t.assignee, rev: t.rev };
+  };
+
+  for (const l of WITH_CHECKS) {
+    for (const by of ['', 'rev,orch', `rev,${NAME_B}`]) {
+      it(`${l.name}, review.by "${by}": session A handed in; session B neither resumes, checks nor sees it as a check; rev passes; after a return B resumes`, async () => {
+        const s = await newStore({ prefix: 'API', statuses: l.statuses });
+        expect((await run(s, 'orch', ['config', '--review-statuses', l.checks.join(','), ...(by ? ['--reviewers', by] : [])])).code).toBe(0);
+        expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', l.statuses[0] ?? ''])).code).toBe(0);
+        expect((await runIn(s, SESSION_A, ['claim', 'API-1', '--status', l.work])).doc.data.assignee).toBe(NAME_A);
+        expect((await runIn(s, SESSION_A, ['finish', 'API-1', '--result', 'work', '--no-commit'])).doc.data).toMatchObject({ status: l.checks[0], assignee: NAME_A });
+        const before = await state(s);
+        // (a), (c): prime of session B lists it neither to resume nor to check.
+        const prime = (await runIn(s, SESSION_B, ['prime'])).doc.data;
+        expect(prime.agent).toBe(NAME_B);
+        expect(prime.resumable).toEqual([]);
+        expect(prime.roles.waiting).toEqual([]);
+        const text = (await cli(['prime'], { cwd: s.root, env: SESSION_B })).stdout;
+        expect(text).not.toContain('API-1');
+        expect(text).not.toContain('Your earlier sessions');
+        expect(text).not.toContain('Waiting for your check');
+        // (b): every way of session B is the author's "handed in already", never an invitation to check; the fix runs, nothing moves.
+        const next = l.checks[1] ?? l.final;
+        for (const argv of [['claim', 'API-1', '--resume'], ['claim', 'API-1'], ['finish', 'API-1', '--status', next, '--result', 'ok'], ['finish', 'API-1', '--result', 'ok'], ['update', 'API-1', '--status', l.final]]) {
+          const r = await runIn(s, SESSION_B, argv);
+          expect(r.code, argv.join(' ')).toBe(2);
+          expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 "<note for the check>" --as ${NAME_B}` });
+          expect(r.doc.error.message, argv.join(' ')).toContain(`API-1 is handed in already and waits in ${l.checks[0] ?? ''}`);
+          expect(r.doc.error.message, argv.join(' ')).not.toContain('laneboard finish');
+          expect(sh(s, r.doc.error.fix), argv.join(' ')).toBe(0);
+          expect({ ...(await state(s)), rev: before.rev }, argv.join(' ')).toEqual(before);
+        }
+        // Somebody else still checks it: rev's prime offers the pass, which runs.
+        const pass = /pass: (laneboard finish API-1 .+)$/m.exec(await primeText(s, 'rev'))?.[1] ?? '';
+        expect(pass).toBe(`laneboard finish API-1 --status ${next} --result "<result of your check>" --as rev --json`);
+        expect(sh(s, pass)).toBe(0);
+        expect(await task(s, 'API-1')).toMatchObject({ status: next });
+        // A return for rework makes it work again: session B finds it to resume and takes it back (claim --resume as before).
+        expect((await run(s, 'rev', ['update', 'API-1', '--status', l.work])).code).toBe(0);
+        expect((await runIn(s, SESSION_B, ['prime'])).doc.data.resumable.map((t: { id: string }) => t.id)).toEqual(['API-1']);
+        const resumed = await runIn(s, SESSION_B, ['claim', 'API-1', '--resume']);
+        expect(resumed.code).toBe(0);
+        expect(resumed.doc.data).toMatchObject({ assignee: NAME_B, resumed_from: NAME_A });
+      });
+    }
+  }
+
+  it('(b) control: an explicit name of the session form and a name of another base are no author; the session that only checked is none either', async () => {
+    const s = await newStore({ prefix: 'API', statuses: TWO.statuses });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'backlog'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work', '--no-commit'])).code).toBe(0);
+    // Session A checks code_review (a pass is no work on the task); session B then checks qa: both are checkers, not authors.
+    expect((await runIn(s, SESSION_A, ['finish', 'API-1', '--status', 'qa', '--result', 'cr ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+    expect((await runIn(s, SESSION_B, ['prime'])).doc.data.roles.waiting.map((t: { id: string }) => t.id)).toEqual(['API-1']);
+    // An explicit name that looks like a session of the base does not make B an author of a task it handed in.
+    expect((await run(s, 'orch', ['create', 'Second', '--status', 'backlog'])).code).toBe(0);
+    expect((await run(s, `${BASE}:cccc3333`, ['claim', 'API-2', '--status', 'dev'])).code).toBe(0);
+    expect((await run(s, `${BASE}:cccc3333`, ['finish', 'API-2', '--result', 'work', '--no-commit'])).code).toBe(0);
+    expect((await runIn(s, SESSION_B, ['prime'])).doc.data.roles.waiting.map((t: { id: string }) => t.id)).toEqual(['API-1', 'API-2']);
+    expect((await runIn(s, SESSION_B, ['finish', 'API-2', '--status', 'qa', '--result', 'cr ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+  });
+
+  it('(2) the free footer: a board with checks says its command lists the waiting tasks too, and prints what it says; without checks no note', async () => {
+    for (const checks of [true, false]) {
+      const s = await newStore({ prefix: 'API', statuses: TWO.statuses });
+      if (checks) expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa'])).code).toBe(0);
+      for (let i = 1; i <= 11; i++) expect((await run(s, 'orch', ['create', `free ${i}`, '--status', 'backlog'])).code).toBe(0);
+      for (const id of ['API-12', 'API-13']) {
+        expect((await run(s, 'orch', ['create', 'work', '--status', 'backlog'])).code).toBe(0);
+        expect((await run(s, 'dev-1', ['claim', id, '--status', 'dev'])).code).toBe(0);
+        expect((await run(s, 'dev-1', ['finish', id, '--status', 'code_review', '--result', 'work', '--no-commit'])).code).toBe(0);
+        expect((await run(s, 'dev-1', ['update', id, '--unassign'])).code).toBe(0);
+      }
+      const text = await primeText(s, 'dev-2');
+      const free = text.slice(text.indexOf('Free tasks'));
+      const [, more, footer = ''] = /^\.\.\. (\d+) more: (.*)$/m.exec(free) ?? [];
+      // The count is the free tasks the section does not show (prime may show fewer than 10 to keep its budget); without checks the two
+      // unassigned tasks in code_review are free work.
+      expect((free.match(/^ {2}API-\d+ {2}\[/gm) ?? []).length + Number(more)).toBe(checks ? 11 : 13);
+      const note = '(also lists tasks waiting for a check, handed_in true) ';
+      expect(footer.startsWith(note), footer).toBe(checks);
+      const command = footer.replace(note, '').replace(/^laneboard /, '').replace(' --json', '').split(' ');
+      const rows = (await run(s, 'dev-2', command)).doc.data.items as Array<{ id: string; handed_in: boolean }>;
+      // The free tasks; with checks the two waiting tasks are printed too, marked handed_in.
+      expect(rows.filter((t) => !t.handed_in || !checks)).toHaveLength(checks ? 11 : 13);
+      expect(rows.filter((t) => t.handed_in && checks).map((t) => t.id).sort()).toEqual(checks ? ['API-12', 'API-13'] : []);
+    }
+  });
+
+  it('(3) config --reviewers that leaves a waiting task no checker, and a hand-in when review.by is only the author: a warning with the owner\'s config --reviewers', async () => {
+    const s = await newStore({ prefix: 'API', statuses: TWO.statuses });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'backlog'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
+    const handIn = await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work', '--no-commit']);
+    expect(handIn.doc.warnings.join('\n')).not.toContain('no checker may check');
+    const cfg = await run(s, 'orch', ['config', '--reviewers', 'dev-1']);
+    expect(cfg.code).toBe(0);
+    const stuck = `tasks waiting in a check that no checker may check (every name in config review.by worked on them): API-1 (code_review); the owner adds a checker: laneboard config --reviewers "dev-1,<another checker>"`;
+    expect(cfg.doc.warnings).toContain(stuck);
+    // A hand-in while review.by is only its author: written, with the same warning; the named command, run with a name, clears it.
+    expect((await run(s, 'orch', ['create', 'Second', '--status', 'backlog'])).code).toBe(0);
+    expect((await run(s, 'dev-1', ['claim', 'API-2', '--status', 'dev'])).code).toBe(0);
+    const second = await run(s, 'dev-1', ['finish', 'API-2', '--result', 'work', '--no-commit']);
+    expect(second.code).toBe(0);
+    expect(second.doc.data).toMatchObject({ status: 'code_review' });
+    expect(second.doc.warnings).toContain(stuck.replace('API-1 (code_review)', 'API-2 (code_review)'));
+    // Handed in again with a new result after rework: the warning again.
+    const again = await run(s, 'dev-1', ['finish', 'API-2', '--result', 'work v2', '--no-commit']);
+    expect(again.doc.warnings).toContain(stuck.replace('API-1 (code_review)', 'API-2 (code_review)'));
+    const fixed = await run(s, 'orch', ['config', '--reviewers', 'dev-1,rev']);
+    expect(fixed.doc.warnings.join('\n')).not.toContain('no checker may check');
+    expect((await run(s, 'orch', ['doctor'])).code).toBe(0);
+    // A change of the checks that leaves a checker: no warning (control).
+    expect((await run(s, 'orch', ['config', '--reviewers', 'rev'])).doc.warnings.join('\n')).not.toContain('no checker may check');
+  });
+});

@@ -473,7 +473,8 @@ function schemaChanged(schema: string): string {
 // has no task (ids keep it) and must be free on this machine; a status leaves the list only when no active task is in it; a field is
 // dropped, or gets a new type, only when no active task holds a value it would leave undeclared or of another type. Name,
 // description and prefix refresh the registry, whose check keeps the prefix unique among live boards (also for an unchanged one). Checks
-// turned on a status with tasks in work there warn with their hand-in (unseenInChecks, S6w r1).
+// turned on a status with tasks in work there warn with their hand-in (unseenInChecks, S6w r1); a change of the checks that leaves a
+// waiting task with no checker (every name in review.by worked on it) warns with the owner's config --reviewers (stuckInChecks, S6w r3).
 export async function configureStore(ctx: OpContext, input: ConfigureInputT): Promise<OpResult<ConfigureResult>> {
   const p = parseInput(ConfigureInput, input);
   const warnings: string[] = [];
@@ -561,6 +562,9 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
       // A status turned into a check while tasks are in work there (S6w r1): they are not handed in, so no checker sees them.
       const unseen = reviewChange ? unseenInChecks(next, active) : undefined;
       if (unseen !== undefined) warnings.push(unseen);
+      // review.by now names only authors of a waiting task (S6w r3): nobody may check it until the owner adds a checker.
+      const stuck = reviewChange ? stuckInChecks(next, active) : undefined;
+      if (stuck !== undefined) warnings.push(stuck);
       return result(next, true);
     });
   // The registry holds no statuses: a status change alone leaves it alone.

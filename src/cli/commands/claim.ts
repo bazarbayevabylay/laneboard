@@ -10,7 +10,8 @@ export const claim: CommandDef = {
   summary:
     'Take a task: assignee := you. Fails with ALREADY_CLAIMED if someone else holds it. ' +
     'On a board with checks a task that waits for a check is claimed by nobody: a checker passes it on with finish --status <next>, no claim. ' +
-    '--resume: take over a task of another session of your session default name (your own work before /clear or a restart, listed by prime).',
+    '--resume: take over a task of another session of your session default name (your own work before /clear or a restart, listed by prime); ' +
+    'one that waits for a check is handed in already: that session and this one are its author.',
   options: { status: { type: 'string' }, 'expected-rev': { type: 'string' }, resume: { type: 'boolean' }, ...FULL_OPTION },
   args: { min: 1, max: 1 },
   async run(c) {

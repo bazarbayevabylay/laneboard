@@ -401,7 +401,8 @@ export interface SummaryResult {
   unassigned: ListItem[];
   unassigned_total: number;
   // Unfinished tasks of other sessions of `session_base` (the agent's own work before /clear, or a parallel session's) that their holder
-  // took under its session default name (heldByEarlierSession), newest update first, at most SUMMARY_RESUMABLE_MAX; empty without `session_base`.
+  // took under its session default name (heldByEarlierSession), not waiting for a check, newest update first, at most SUMMARY_RESUMABLE_MAX;
+  // empty without `session_base`.
   resumable: ListItem[];
   // Is this store in the machine registry (<home>/.laneboard/boards.json, where init and setup add a board)? null without a home in the
   // context (cannot tell). A cloned repository's committed .laneboard is not: the SessionStart hook shows none of its texts (review security F4).
@@ -422,7 +423,8 @@ export interface SummaryRoles {
   creators: string[] | null;
   // May `assignee` create tasks (no create_by, or a name in it); false without a name on a board with create_by.
   can_create: boolean;
-  // Tasks waiting in a check that `assignee` may make (waitsForCheck), oldest update first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
+  // Tasks waiting in a check that `assignee` may make (waitsForCheck: never the work of `assignee` or of its other sessions), oldest update
+  // first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
   // `next_status`: what the checker's finish names to pass it (S6w I2: finish --status <next_status>, the next check or the final status).
   // `passed_by_you`: `assignee` passed it into this check itself and no other checker may make it (S6w r2: the only checker).
   waiting: Array<ListItem & { next_status: string; passed_by_you: boolean }>;
@@ -444,10 +446,17 @@ function otherComment(task: TaskT, actor: string): LastComment | null {
 }
 
 // The roles of the board (SummaryRoles) for `assignee`, or undefined on a board without checks and create_by (as before, ADR §22).
-function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archived: boolean }>, assigned: readonly TaskT[], assignee: string | undefined): SummaryRoles | undefined {
+// `sessionBase`: the agent writes under its session default name; its other sessions' work is its own (no check of it, S6w r3).
+function summaryRoles(
+  config: ConfigT,
+  tasks: ReadonlyArray<{ task: TaskT; archived: boolean }>,
+  assigned: readonly TaskT[],
+  assignee: string | undefined,
+  sessionBase: string | undefined,
+): SummaryRoles | undefined {
   const checks = reviewStatuses(config);
   if (checks.length === 0 && config.create_by === undefined) return undefined;
-  const waiting = assignee === undefined ? [] : tasks.filter(({ task }) => waitsForCheck(config, task, assignee));
+  const waiting = assignee === undefined ? [] : tasks.filter(({ task }) => waitsForCheck(config, task, assignee, sessionBase));
   waiting.sort((a, b) => -byUpdatedDesc(a.task, b.task));
   const stuck = tasks.filter(({ task }) => noCheckerLeft(config, task)).map(({ task }) => task.id);
   const feedback: SummaryRoles['feedback'] = [];
@@ -498,7 +507,8 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   for (const { task } of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
   const finalStatus = config.statuses.at(-1) ?? '';
   // The agent's own, free and resumable work is in a configured status that is not final, so `list --assignee <name> --status
-  // <open>...` and `list --unassigned --status <open>...` (the footers of prime) find the same tasks.
+  // <open>...` finds the agent's own tasks; `list --unassigned --status <open>...` (the free tasks' footer) lists the free ones and,
+  // on a board with checks, the unassigned tasks that wait for a check too (prime's footer says so).
   const open = config.statuses.filter((st) => !finalStatuses(config.statuses).includes(st));
   const assigned = p.assignee === undefined ? [] : tasks.filter(({ task }) => task.assignee === p.assignee && open.includes(task.status));
   assigned.sort((a, b) => byUpdatedDesc(a.task, b.task));
@@ -506,12 +516,13 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
   // A task waiting for a check is no free work (S6w r2): a checker checks it with finish (the waiting list), nobody claims it.
   const free = tasks.filter(({ task }) => task.assignee === null && open.includes(task.status) && !waitsInCheck(config, task));
   free.sort((a, b) => byPriority(config, a.task, b.task) || byUpdatedDesc(a.task, b.task));
+  // A task waiting for a check is no work to resume either (S6w r3): it is handed in, and claim --resume of it is refused.
   const resumable =
     p.assignee === undefined
       ? []
-      : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? ''));
+      : tasks.filter(({ task }) => open.includes(task.status) && heldByEarlierSession(task, p.session_base, p.assignee ?? '') && !waitsInCheck(config, task));
   resumable.sort((a, b) => byUpdatedDesc(a.task, b.task));
-  const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee);
+  const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee, p.session_base);
   return {
     data: {
       prefix: config.prefix,

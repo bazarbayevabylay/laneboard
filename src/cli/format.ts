@@ -474,7 +474,9 @@ export function primeText(raw: PrimeData, rawStoreDir?: string, now = new Date()
 const OPEN_OPTIONS_MAX = 300;
 
 // The footer commands list the same tasks as prime's lists (own or free ones in a configured status that is not final), so the
-// "N more" they count is what the command prints (review S4 MINOR): `--status` per open status. Past OPEN_OPTIONS_MAX characters
+// "N more" they count is what the command prints (review S4 MINOR): `--status` per open status; on a board with checks the free
+// tasks' command prints the unassigned tasks waiting for a check too, which prime keeps out of the free ones, and a note before it
+// says so (S6w r3: list has no filter for them). Past OPEN_OPTIONS_MAX characters
 // (a config with very many statuses) the command goes without them and a note before it says it lists the final status too
 // (LB-11 b: not after it, so the copied command line stays valid in a shell).
 function openStatusOptions(d: PrimeData): { options: string; note: string } {
@@ -492,7 +494,9 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const dirLine = storeDir !== undefined && squeeze.dirOnce ? 'This board was named by --dir: add the --dir option of the Store line to every laneboard command below.' : '';
   const open = openStatusOptions(d);
   const more = (n: number): string => `\n... ${n} more: ${open.note}laneboard list --assignee ${d.agent ?? '<you>'}${open.options}${dir} --json`;
-  const freeMore = (n: number): string => `\n... ${n} more: ${open.note}laneboard list --unassigned${open.options}${dir} --json`;
+  // The free tasks never include one that waits for a check (S6w r2), but list --unassigned prints those too: the note says so (S6w r3).
+  const waitNote = (d.roles?.checks.length ?? 0) > 0 ? '(also lists tasks waiting for a check, handed_in true) ' : '';
+  const freeMore = (n: number): string => `\n... ${n} more: ${open.note}${waitNote}laneboard list --unassigned${open.options}${dir} --json`;
   const resumeMore = (n: number): string => `\n... ${n} more not shown`;
   const listed = d.agent !== null && d.tasks.length > 0;
   const noTask = d.agent === null || d.in_progress === 0;

@@ -671,3 +671,15 @@ Checks
   (d) I1 for the only checker: `waitsForCheck` hid a check from the checker that passed the task into it (passedBy), so with `--reviewers
   rev` on two checks qa showed in nobody's queue though rev's `finish --status done` works. Now the passer's queue skips it only while
   another checker (in review.by, no author) may make it; else it is listed, `roles.waiting[].passed_by_you: true`, prime marks the line.
+- S6w review r3 (CHANGES REQUESTED). The r2 claim refusal broke `claim --resume` of the author's own handed-in task under a new default
+  name: prime listed it to resume, and the refusal invited the new session to check its own work (it also listed it in "Waiting for your
+  check"). Decision: (a) a task waiting in a check is not resumable (prime/task_prime `resumable` skip it, as `unassigned` does). (b) The
+  author rule knows the sessions of a default name: `workedOn(task, actor, sessionBase)` counts another session of the base that wrote on
+  the task under its default name (`byEarlierSession`: `isEarlierSessionName` + `actor_source: default`, the one test that
+  `heldByEarlierSession` of claim --resume uses too) and worked on it. So that session gets "handed in already" on claim (also
+  `--resume`), finish and update, its queue skips the task (c), and a not-waiting task of its earlier session still refuses with
+  `claim --resume` first. Explicit names of the session form never count (review S3). Rejected: matching by the name's form alone.
+  (2) The free tasks' footer `list --unassigned` also prints the unassigned waiting tasks (list has no filter for them): on a board with
+  checks a note before the command says so. (3) `config --reviewers` (or `--review-statuses`) that leaves a waiting task with no checker,
+  and a hand-in while review.by names only its author, are written and warn with `stuckInChecks` (the owner's `config --reviewers`).
+  Checks: test/cli/s6w.test.ts, test/mcp/s6w.test.ts "S6w review r3".

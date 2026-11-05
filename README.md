@@ -147,7 +147,7 @@ mistake, not against a hostile agent.
 | Two parallel sessions | two names, so the second one's `claim` fails with `ALREADY_CLAIMED` |
 | Where a name came from | every event has `actor_source`: `explicit` or `default`; `get` marks `(default name)` |
 | Subagents of one session | share its default name, so each passes its own `--as`; `prime` under the default name says so |
-| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age; `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning |
+| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age; `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning. On a board with checks a task handed in and waiting for a check is not resumed: the same base in any session is its author, gets "handed in already" and never sees it as a check of its own |
 | Codex, Cursor, Gemini CLI, OpenCode | no default name (no session id): pass `--as` |
 
 ```sh
@@ -211,6 +211,7 @@ laneboard config --review-statuses none --reviewers none --json
   `prime` lists such a task under "Waiting for your check", never among the free tasks.
 - No checker left (every name in `--reviewers` worked on a waiting task, say the orchestrator gave it to the only checker): the
   refusals, `prime` and `doctor` (check `checks`, exit 6) name the owner's way out, `laneboard config --reviewers "<names>,<another checker>"`.
+  `config --reviewers` that leaves a waiting task so, and a hand-in while `--reviewers` names only its author, warn with that command.
 - A checker's queue skips a check it passed the task into, unless no other checker may make it (say `--reviewers rev` on two checks):
   then the task stays there, marked "(you passed the previous check)", with its pass command.
 - `config --review-statuses` that turns a status with tasks in work into a check warns with each task and its holder's
