@@ -250,11 +250,21 @@ export function checkStatus(config: ConfigT, status: string): void {
   });
 }
 
+// The label a fix offers for one that breaks the format (B-U7): lowercase, accents dropped, every run of other characters one "-",
+// starting with a letter or digit, at most 40 characters (`Zone:API` -> zone-api); a valid label is itself; undefined when nothing
+// is left (`日本`).
+export function labelSuggestion(label: string): string | undefined {
+  const plain = label.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const fitted = plain.replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40);
+  return LABEL_RE.test(fitted) ? fitted : undefined;
+}
+
 // Label format check.
 export function checkLabel(label: string): void {
   if (!LABEL_RE.test(label)) {
+    const suggestion = labelSuggestion(label);
     throw new LaneboardError('INVALID_VALUE', `label "${label}" must match ^[a-z0-9][a-z0-9._-]{0,39}$ (lowercase)`, {
-      input: { field: 'label', value: label, format: '<label like ui-bug>', ...(LABEL_RE.test(label.toLowerCase()) ? { suggestion: label.toLowerCase() } : {}) },
+      input: { field: 'label', value: label, format: '<label like ui-bug>', ...(suggestion !== undefined ? { suggestion } : {}) },
       fix: 'use lowercase letters, digits, dot, dash or underscore, e.g. ui-bug',
     });
   }
@@ -345,6 +355,9 @@ const FIELD_EXAMPLE: Record<FieldType, string> = { string: 'text', number: '1', 
 // The same examples as JSON values (MCP `fields`).
 const FIELD_JSON_EXAMPLE: Record<FieldType, string> = { string: '"text"', number: '1', boolean: 'true', 'string[]': '["a", "b"]', json: '{"k": 1}' };
 
+// A number field's CLI value: an optional minus, digits, an optional fraction (`-3`, `0.5`, `12`).
+const DECIMAL_RE = /^-?[0-9]+(\.[0-9]+)?$/;
+
 // Parse CLI-style `key=value` field arguments using the declared field types.
 export function parseFieldArgs(config: ConfigT, args: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -367,9 +380,9 @@ export function parseFieldArgs(config: ConfigT, args: readonly string[]): Record
         out[key] = raw;
         break;
       case 'number': {
-        const n = Number(raw);
-        if (raw.trim() === '' || !Number.isFinite(n)) throw bad('a number');
-        out[key] = n;
+        // Decimal notation only (B-U8): Number() also reads `0x10` as 16, `1e3`, ` 5 ` and `Infinity`.
+        if (!DECIMAL_RE.test(raw)) throw bad('a number');
+        out[key] = Number(raw);
         break;
       }
       case 'boolean':
@@ -537,16 +550,35 @@ export function checkExpectedRev(task: TaskT, archived: boolean, expected: numbe
   });
 }
 
-// Append an event (core only) and drop the oldest over limits.events_per_task.
+// Events the limit drops last (A16): the one just added, `created`, the newest `status`, the newest `assigned` and the newest result
+// comment, which the hand-in, the acceptance, the author of the work and the result are read from; their positions in `events`.
+function keptEvents(events: readonly TaskEventT[]): Set<number> {
+  const kept = new Set<number>([events.length - 1]);
+  const newest = (match: (e: TaskEventT) => boolean): void => {
+    const at = events.findLastIndex(match);
+    if (at >= 0) kept.add(at);
+  };
+  newest((e) => e.type === 'created');
+  newest((e) => e.type === 'status');
+  newest((e) => e.type === 'assigned');
+  newest((e) => e.type === 'commented' && e.data.result === true);
+  return kept;
+}
+
+// Append an event (core only) and drop the oldest over limits.events_per_task: the other events first, the kept ones (keptEvents)
+// only when they alone are over the limit.
 // `source` is set for events of a caller (explicit or default name); imported history events have none.
 export function addEvent(task: TaskT, config: ConfigT, at: string, actor: string, type: EventType, data: Record<string, unknown>, source?: ActorSource): void {
   const event: TaskEventT = source === undefined ? { at, actor, type, data } : { at, actor, actor_source: source, type, data };
   task.events.push(event);
   const over = task.events.length - config.limits.events_per_task;
-  if (over > 0) {
-    task.events.splice(0, over);
-    task.events_dropped += over;
-  }
+  if (over <= 0) return;
+  const kept = keptEvents(task.events);
+  const others = task.events.flatMap((_, i) => (kept.has(i) ? [] : [i]));
+  const keptOldest = [...kept].sort((a, b) => a - b);
+  const dropped = [...others, ...keptOldest].slice(0, over).sort((a, b) => b - a);
+  for (const i of dropped) task.events.splice(i, 1);
+  task.events_dropped += over;
 }
 
 // Mark a task as changed: rev +1 and updated_at/by.

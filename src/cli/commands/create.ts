@@ -19,7 +19,9 @@ function firstStatus(discovery: DiscoveryInput): string {
 export const create: CommandDef = {
   name: 'create',
   usage: 'create <title> --status S [--description T | --description-file P|-] [--assignee A] [--parent ID] [--label L]... [--link kind=ref]... [--field k=v]... [--full]',
-  summary: 'Create a task; prints its id, rev, status and assignee (--full: the whole task).',
+  summary:
+    'Create a task; prints its id, rev, status and assignee (--full: the whole task). The title is an argument. ' +
+    'A label: lowercase letters, digits, dot, dash or underscore, starting with a letter or digit, at most 40 (ui-bug, zone-api).',
   options: {
     status: { type: 'string' },
     description: { type: 'string' },

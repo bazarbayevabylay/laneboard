@@ -16,7 +16,7 @@ export { shellQuote } from './shell.ts';
 export { LOCK_STALE_MS, LOCK_WAIT_MS } from './lock.ts';
 export { transact } from './transact.ts';
 export type { FaultPoint, Faults, State, TransactOptions } from './transact.ts';
-export { COMMENT_LINE_MAX, DEFAULT_LIST_LIMIT, fieldsLine, finalStatuses, lastComment, MAX_COMMENT_CHARS, parseLinkArg, reviewers, reviewStatuses, suggestClosest, WAITING_OWNER_LABEL, writeReply } from './ops/common.ts';
+export { COMMENT_LINE_MAX, DEFAULT_LIST_LIMIT, fieldsLine, finalStatuses, labelSuggestion, lastComment, MAX_COMMENT_CHARS, parseLinkArg, reviewers, reviewStatuses, suggestClosest, WAITING_OWNER_LABEL, writeReply } from './ops/common.ts';
 export type { FieldInfo, LastComment, OpContext, OpResult, TaskView, WriteFacts, WriteReply } from './ops/common.ts';
 export { CreateInput, createTask } from './ops/create.ts';
 export type { CreateInputT } from './ops/create.ts';

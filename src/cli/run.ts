@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { StoreRef } from '../core/index.ts';
 import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated } from './argv.ts';
+import type { PositionalHint } from './argv.ts';
 import { COMMANDS, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
 import { safeText } from './display.ts';
@@ -68,11 +69,11 @@ function commandHelp(def: CommandDef): string {
 }
 
 // Strict parse of a command's argv; parse errors become UNKNOWN_OPTION or USAGE with a rebuilt fix.
-function parseStrict(command: string, args: string[], options: OptionSpec) {
+function parseStrict(command: string, args: string[], options: OptionSpec, hint?: PositionalHint) {
   try {
     return parseArgs({ args, options, allowPositionals: true, strict: true, tokens: true });
   } catch (err) {
-    throw parseError(err, command, args, options);
+    throw parseError(err, command, args, options, hint);
   }
 }
 
@@ -128,7 +129,9 @@ export async function runCli(io: CliIo): Promise<number> {
     }
     const command = def;
     const options = { ...GLOBAL_OPTIONS, ...command.options };
-    const parsed = parseStrict(command.name, rest, options);
+    // `create --title X`: the fix puts X in its place and adds create's --status <first status> of the store argv's --dir names.
+    const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined }) ?? [] };
+    const parsed = parseStrict(command.name, rest, options, hint);
     rejectRepeated(parsed.tokens, command.name, rest, options);
     const values: Values = parsed.values;
     const positionals = parsed.positionals;

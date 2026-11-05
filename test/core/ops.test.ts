@@ -159,7 +159,7 @@ describe('update', () => {
     await rejectsWith(attachFile(as(s), { id: 'LB-1', path: sourceFile('a.txt', 'a') }), 'TASK_ARCHIVED');
   });
 
-  it('caps events at limits.events_per_task and counts the dropped ones', async () => {
+  it('caps events at limits.events_per_task and counts the dropped ones (`created` stays, A16 S6q)', async () => {
     const s = await newStore();
     patchConfig(s, (c) => {
       c.limits.events_per_task = 3;
@@ -167,7 +167,7 @@ describe('update', () => {
     await createTask(as(s), { title: 'a', status: 'todo' });
     for (let i = 0; i < 4; i++) await commentTask(as(s), { id: 'LB-1', text: `c${i}` });
     const t = (await getTask(as(s), { id: 'LB-1' })).data;
-    expect(t.events.map((e) => e.data.text)).toEqual(['c1', 'c2', 'c3']);
+    expect(t.events.map((e) => e.data.text ?? e.type)).toEqual(['created', 'c2', 'c3']);
     expect(t.events_dropped).toBe(2);
     expect((await getTask(as(s), { id: 'LB-1', events: 1 })).data.events.map((e) => e.data.text)).toEqual(['c3']);
   });

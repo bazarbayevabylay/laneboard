@@ -22,7 +22,8 @@ describe('W2 concurrent writers', () => {
     expect(new Set(ids)).toEqual(new Set(Array.from({ length: 200 }, (_, i) => `LB-${i + 1}`)));
     expect(active.next_id).toBe(201);
     expect(active.rev).toBe(200);
-  });
+    // 7 s on an idle Mac; beside a second full `npm test` 48 s, beside two up to 60 s, the default test timeout (S6q measure).
+  }, 180_000);
 });
 
 // Poll until `check` is true (max 20 s).
@@ -102,7 +103,9 @@ describe('W7 reads across both files', () => {
     expect(wrong).toBe(0);
     // The time is the flipper's 400 writes, each fsyncing both files: 15-25 s on an idle Mac, 54 s for the flips alone beside a full
     // `npm test` (LB-30 measurements); a run under more load went past 60 s on the base without S6d. Same 200 flips, more time.
-  }, 180_000);
+    // S6q: 115 s inside `npm test` beside a second one; beside two, 60 flips took up to 69 s with or without the reader, so 200 can
+    // take about 230 s: the time is the disk under load, not the reads (lb-audit/s6q-dev/w7-probe.ts).
+  }, 300_000);
 });
 
 describe('W8 crash recovery', () => {

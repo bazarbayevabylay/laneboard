@@ -153,7 +153,8 @@ describe('A20: setup codex --remove keeps the global entry while another project
   it('a project of the registry without the AGENTS.md block, or whose board is gone, does not keep the entry', async () => {
     const home = tempDir();
     const [a, b, c] = [tempDir(), tempDir(), tempDir()];
-    for (const dir of [a, b, c]) await ok(dir, home, ['init', '--description', 'codex']);
+    // Explicit prefixes: derived from the random temp folder names, two of them could be the same (S6q flake, "prefix ... is already used").
+    for (const [dir, prefix] of [[a, 'CA'], [b, 'CB'], [c, 'CC']] as const) await ok(dir, home, ['init', '--prefix', prefix, '--description', 'codex']);
     await ok(a, home, ['setup', 'codex']);
     await ok(c, home, ['setup', 'codex']);
     fs.rmSync(path.join(c, '.laneboard'), { recursive: true });
@@ -335,8 +336,8 @@ describe('A22: backups and folder markers stay out of git (newcomer F6, F11)', (
   it('codex set up in another project only (a global ~/.codex/config.toml): --remove of claude-code here takes the exclude block out', async () => {
     const home = tempDir();
     const [a, b] = [repo(home), repo(home)];
-    await ok(a, home, ['init', '--description', 'a']);
-    await ok(b, home, ['init', '--description', 'b']);
+    await ok(a, home, ['init', '--prefix', 'EA', '--description', 'a']);
+    await ok(b, home, ['init', '--prefix', 'EB', '--description', 'b']);
     await ok(a, home, ['setup', 'claude-code']);
     await ok(b, home, ['setup', 'codex']);
     const r = await ok(a, home, ['setup', 'claude-code', '--remove']);

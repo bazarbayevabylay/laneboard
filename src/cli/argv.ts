@@ -1,6 +1,6 @@
 // Argv checks around node:util.parseArgs (`--` handling, text that starts with "-", repeated options) and every CLI fix: the one
 // place where a fix is built from the user's argv (ADR-0001 §23).
-import { ERRORS, LaneboardError, shellQuote, suggestClosest } from '../core/index.ts';
+import { ERRORS, labelSuggestion, LaneboardError, shellQuote, suggestClosest } from '../core/index.ts';
 import type { FixEdit } from '../core/index.ts';
 import type { OptionSpec } from './commands/types.ts';
 
@@ -85,13 +85,58 @@ function withTerminator(command: string, args: readonly string[], options: Optio
   return commandLine([command, ...split.positionals.slice(0, at), ...split.options, '--', ...split.positionals.slice(at), ...split.rest]);
 }
 
+// What parseError needs to turn `--title X` into the positional title: the usage line and the options the command cannot run
+// without (`required`, by the --dir of argv, if any).
+export interface PositionalHint {
+  usage: string;
+  required(dir: string | undefined): ReadonlyArray<{ name: string; value: string }>;
+}
+
+// The value of option `--name` in argv before `--` (`--name v` or `--name=v`), or undefined.
+function optionValue(args: readonly string[], name: string): string | undefined {
+  const end = optionsAt(args);
+  for (let i = 0; i < end; i++) {
+    const token = args[i] ?? '';
+    if (token.startsWith(`--${name}=`)) return token.slice(name.length + 3);
+    if (token === `--${name}` && i + 1 < end) return args[i + 1];
+  }
+  return undefined;
+}
+
+// `create --title X`: an unknown option named like a positional of the usage (`<title>`, `<id>`, `<text>`). The fix moves its value
+// to that place and adds the options the command needs (create's --status <first status>), so it runs as printed (dogfood S6j).
+// Undefined (the usual UNKNOWN_OPTION) when the place is not the next free one, the value starts with "-" or argv has `--`.
+function positionalOption(command: string, args: readonly string[], options: OptionSpec, option: string, hint: PositionalHint): LaneboardError | undefined {
+  const name = option.replace(/^--/, '');
+  const slot = usageArgs(hint.usage).indexOf(`<${name}>`);
+  const at = args.findIndex((t, i) => i < optionsAt(args) && (t === option || t.startsWith(`${option}=`)));
+  if (slot < 0 || at < 0 || args.includes('--')) return undefined;
+  const inline = args[at] !== option;
+  const next = args[at + 1];
+  const hasValue = inline || (next !== undefined && optionOf(next, options) === undefined && !next.startsWith('-'));
+  const value = inline ? (args[at] ?? '').slice(option.length + 1) : hasValue ? (next ?? '') : `<${name}>`;
+  if (value.startsWith('-')) return undefined;
+  const split = splitArgv([...args.slice(0, at), ...args.slice(at + (hasValue && !inline ? 2 : 1))], options);
+  // Its place is the next one: the positionals before it given, none after it.
+  if (split.positionals.length !== slot) return undefined;
+  const given = new Set(split.options.flatMap((t) => (t.startsWith('--') ? [t.slice(2).split('=')[0]] : [])));
+  const added = hint.required(optionValue(args, 'dir')).filter((r) => !given.has(r.name)).flatMap((r) => [`--${r.name}`, r.value]);
+  const out = [command, ...split.positionals, value, ...split.options, ...added];
+  const placeholders = [...(hasValue ? [] : [1 + split.positionals.length]), ...addedPlaceholders(added, out.length - added.length)];
+  return new LaneboardError('UNKNOWN_OPTION', `unknown option ${option} for ${command}: the ${name} is an argument, not an option (laneboard ${hint.usage})`, {
+    fix: commandLine(out, new Set(placeholders)),
+  });
+}
+
 // Map a parseArgs error to UNKNOWN_OPTION or USAGE with a fix rebuilt from argv.
-export function parseError(err: unknown, command: string, args: readonly string[], options: OptionSpec): LaneboardError {
+export function parseError(err: unknown, command: string, args: readonly string[], options: OptionSpec, hint?: PositionalHint): LaneboardError {
   const e = err as { code?: string; message?: string };
   const message = e.message ?? String(err);
   const known = Object.keys(options).map((o) => `--${o}`);
   const quoted = /'([^']+)'/.exec(message)?.[1] ?? '';
   if (e.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') {
+    const positional = hint && /^--[a-z][a-z-]*$/.test(quoted) ? positionalOption(command, args, options, quoted, hint) : undefined;
+    if (positional) return positional;
     // `--stauts` is a mistyped option; `--- section` or `-- note` is text that starts with "--".
     const optionLike = /^--[A-Za-z]/.test(quoted);
     const text = optionLike ? undefined : splitArgv(args, options).positionals.find((t) => t.startsWith(quoted));
@@ -299,6 +344,32 @@ function replaceValue(argv: readonly string[], err: LaneboardError): string | un
   return commandLine(out, new Set([index]));
 }
 
+// Options whose values are labels (create, list, view; update adds and removes).
+const LABEL_OPTIONS = ['--label', '--add-label', '--remove-label'];
+
+// A label error (B-U7): every label of argv that breaks the format is replaced at once, not only the one the error names, by its
+// labelSuggestion (`zone:api` -> zone-api, so the fix runs as printed), else the `<label like ui-bug>` placeholder.
+function labelsFixed(argv: readonly string[], err: LaneboardError): string | undefined {
+  if (err.code !== 'INVALID_VALUE' || err.input?.field !== 'label') return undefined;
+  const out = [...argv];
+  const placeholders = new Set<number>();
+  const end = optionsAt(argv);
+  for (let i = 0; i < end; i++) {
+    const token = argv[i] ?? '';
+    const inline = LABEL_OPTIONS.find((o) => token.startsWith(`${o}=`));
+    const at = inline !== undefined ? i : LABEL_OPTIONS.includes(token) && i + 1 < end ? i + 1 : undefined;
+    if (at === undefined) continue;
+    const value = inline !== undefined ? token.slice(inline.length + 1) : (argv[at] ?? '');
+    const suggestion = labelSuggestion(value);
+    if (inline === undefined) i++;
+    if (suggestion === value) continue;
+    const label = suggestion ?? err.input.format ?? '<label like ui-bug>';
+    out[at] = inline !== undefined ? `${inline}=${label}` : label;
+    if (suggestion === undefined) placeholders.add(at);
+  }
+  return commandLine(out, placeholders);
+}
+
 // Options that init derives or requires: when the value came from elsewhere (a derived prefix, a missing description), the fix adds the option.
 const ADDABLE_OPTIONS = new Set(['prefix', 'description']);
 
@@ -328,7 +399,7 @@ export function cliFix(
   options: OptionSpec,
 ): string {
   if (err.edit && command) return editedCommand(argv, err.edit, options, command.flags);
-  const replaced = replaceValue(argv, err);
+  const replaced = labelsFixed(argv, err) ?? replaceValue(argv, err);
   if (replaced) return replaced;
   const edit = derivedEdit(argv, err);
   if (edit) return editedCommand(argv, edit, options, command?.flags);
