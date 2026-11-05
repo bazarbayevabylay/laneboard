@@ -1,7 +1,7 @@
 // `laneboard setup <harness> [--remove [--global]] [--dry-run]`: write (or roll back) laneboard's MCP entry and instruction block for one harness.
 import fs from 'node:fs';
 import path from 'node:path';
-import { isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, shellQuote, STORE_DIR_NAME, storePrefix, storeState, suggestClosest } from '../core/index.ts';
+import { initTarget, isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, shellQuote, STORE_DIR_NAME, storePrefix, storeState, suggestClosest } from '../core/index.ts';
 import type { BoardEntry } from '../core/index.ts';
 import { applyPlan, planAdd, planKeep, planRemove, readText } from './files.ts';
 import type { FileResult, PlannedFile } from './files.ts';
@@ -289,8 +289,11 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   }
   // The pin is written either way (init may follow), but a pin to nothing makes every laneboard command fail until then.
   if (!input.remove && !fs.existsSync(path.join(context.storeDir, 'config.json'))) {
+    // A bare init only where it makes this very store; else by --dir (in a package of a repository whose board lies above a bare
+    // init is refused, and it never sees a --dir of setup).
+    const at = bareInitMakes(cwd, home, context.storeDir) ? '' : ` --dir ${shellQuote(context.storeDir)}`;
     warnings.push(
-      `no laneboard store at ${context.storeDir} yet: in ${cwd} run laneboard init --name <name> --description "<whose project, what work>", then laneboard prime; or run setup again with --dir <the project's .laneboard>`,
+      `no laneboard store at ${context.storeDir} yet: in ${cwd} run laneboard init${at} --name <name> --description "<whose project, what work>", then laneboard prime; or run setup again with --dir <the project's .laneboard>`,
     );
   }
   return {
@@ -305,4 +308,13 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
     },
     warnings,
   };
+}
+
+// Does a bare `laneboard init` in cwd (no --dir, no LANEBOARD_DIR) create storeDir rather than refuse or go elsewhere?
+function bareInitMakes(cwd: string, home: string | undefined, storeDir: string): boolean {
+  try {
+    return samePath(initTarget({ cwd, home }), storeDir);
+  } catch {
+    return false;
+  }
 }

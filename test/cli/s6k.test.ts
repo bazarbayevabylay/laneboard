@@ -158,3 +158,53 @@ describe('A19 init: a stale LANEBOARD_DIR next to the board of cwd (the project 
     expect(list.doc.error.fix).toContain('laneboard init --dir');
   });
 });
+
+describe('S6k r1: a nested repository or a submodule inside the monorepo is a project of its own', () => {
+  // packages/x with a .git directory (a nested repository) or libs/sub with a .git file (a submodule).
+  const cases: Array<[string, (dir: string) => void]> = [
+    ['nested repository (packages/x/.git directory)', (dir) => fs.mkdirSync(path.join(dir, '.git'), { recursive: true })],
+    ['submodule (libs/sub/.git file)', (dir) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, '.git'), 'gitdir: ../../.git/modules/libs/sub\n');
+    }],
+  ];
+  for (const [name, make] of cases) {
+    it(`${name}: setup pins its own board without the repository warning, a bare init creates it`, async () => {
+      const m = await monorepo();
+      const dir = path.join(m.root, ...(name.startsWith('nested') ? ['packages', 'x'] : ['libs', 'sub']));
+      make(dir);
+      const own = path.join(dir, '.laneboard');
+      const setup = await json(dir, ['setup', 'codex', '--dry-run'], m.env);
+      expect(setup.doc).toMatchObject({ ok: true, data: { store: own } });
+      expect(setup.doc.warnings.join('\n')).not.toContain('pinned to the board of this git repository');
+      expect((await json(dir, ['init', '--name', 'x', '--prefix', 'XX', '--description', 'own project'], m.env)).code).toBe(0);
+      expect(fs.existsSync(path.join(own, 'config.json'))).toBe(true);
+    });
+  }
+});
+
+describe('S6k r1: fixes that create a board of a package name it by --dir', () => {
+  it('setup --dir <package board> before init: the warning says init --dir, and that command works', async () => {
+    const m = await monorepo();
+    const own = path.join(m.web, '.laneboard');
+    const r = await json(m.web, ['setup', 'codex', '--dir', own, '--dry-run'], m.env);
+    const warning = r.doc.warnings.find((w: string) => w.startsWith('no laneboard store'));
+    expect(warning).toContain(`run laneboard init --dir ${own} --name`);
+    expect((await json(m.web, ['init', '--dir', own, '--name', 'web', '--prefix', 'WEB', '--description', 'web package'], m.env)).code).toBe(0);
+  });
+
+  it('setup in the folder of its own future board keeps the bare init in the warning', async () => {
+    const proj = tempDir();
+    const r = await json(proj, ['setup', 'codex', '--dry-run'], { HOME: tempDir(), USER: 'tester' });
+    expect(r.doc.warnings.join('\n')).toContain(`in ${proj} run laneboard init --name`);
+  });
+
+  it('SETUP_CONFLICT under a root pin for a package board not yet made: the fix starts with init --dir', async () => {
+    const m = await monorepo();
+    expect((await json(m.root, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    const own = path.join(m.web, '.laneboard');
+    const r = await json(m.web, ['setup', 'claude-code', '--dir', own], m.env);
+    expect(r.doc.error.code).toBe('SETUP_CONFLICT');
+    expect(r.doc.error.fix).toMatch(new RegExp(`^laneboard init --dir ${own.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} --name .* && cd `));
+  });
+});
