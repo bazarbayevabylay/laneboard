@@ -11,6 +11,7 @@ import {
   addEvent,
   checkExpectedRev,
   checkStatus,
+  deletedMark,
   finalStatuses,
   IdInput,
   locate,
@@ -24,7 +25,7 @@ import {
   txOptions,
   unique,
 } from './common.ts';
-import type { OpContext, OpResult, TaskView } from './common.ts';
+import type { DeletedMark, OpContext, OpResult, TaskView } from './common.ts';
 import { missingTask } from './links.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -168,20 +169,6 @@ export const DeleteInput = z.strictObject({
   expected_rev: RevInput.optional(),
 });
 export type DeleteInputT = z.infer<typeof DeleteInput>;
-
-// When and by whom a task was deleted: the mark of a tombstone (store@1 keeps unknown task keys, so 0.3.1 reads and keeps it).
-interface DeletedMark {
-  at: string;
-  by: string;
-}
-
-// The deleted mark of a task, or undefined for a task that was not deleted.
-function deletedMark(task: TaskT): DeletedMark | undefined {
-  const mark = (task as { deleted?: unknown }).deleted;
-  if (typeof mark !== 'object' || mark === null) return undefined;
-  const { at, by } = mark as { at?: unknown; by?: unknown };
-  return { at: typeof at === 'string' ? at : '?', by: typeof by === 'string' ? by : '?' };
-}
 
 // A deleted task cannot come back or be deleted again: what it held is gone, only its trace stays.
 function refuseDeleted(task: TaskT): void {

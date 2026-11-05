@@ -127,6 +127,8 @@ function linkText(l: LinkT, linked: readonly LinkedTask[] | undefined): string {
 export function taskText(t: TaskView & Partial<TaskDetail>): string {
   const lines = [`${t.id}  ${t.title}`];
   lines.push(`  status: ${t.status} · assignee: ${t.assignee ?? '-'} · rev: ${t.rev} · archived: ${t.archived ? `yes (${t.archived_at ?? ''})` : 'no'}`);
+  // A tombstone: only its trace stays (restore and delete are refused).
+  if (t.deleted) lines.push(`  deleted: ${t.deleted.at} by ${t.deleted.by} (only this trace is kept: description, labels, links, fields, attachments and history are gone)`);
   if (t.labels.length) lines.push(`  labels: ${t.labels.join(', ')}`);
   if (t.links.length) lines.push(`  links: ${t.links.map((l) => linkText(l, t.linked_tasks)).join(', ')}`);
   if (t.parent !== null) lines.push(`  parent: ${parentText(t)}`);
@@ -153,6 +155,12 @@ export function commentLine(c: LastComment): string {
   return `${c.result ? '=' : '>'} ${c.text}`;
 }
 
+// The title column of a list row: an archived task is marked, a deleted one (tombstone) says when and by whom.
+function titleCell(i: ListResult['items'][number]): string {
+  if (i.deleted) return `${i.title} [deleted ${i.deleted.at} by ${i.deleted.by}]`;
+  return i.archived ? `${i.title} [archived]` : i.title;
+}
+
 // Human view of a task list with the paging footer; a row with a comment gets its newest comment line under it. The data is made
 // safe for the terminal before the columns are aligned (the runner escapes the rest of the human text, run.ts).
 export function listText(result: ListResult): string {
@@ -160,7 +168,7 @@ export function listText(result: ListResult): string {
   const lines: string[] = [];
   if (r.items.length) {
     const rows = [['ID', 'STATUS', 'ASSIGNEE', 'REV', 'UPDATED', 'TITLE']];
-    for (const i of r.items) rows.push([i.id, i.status, i.assignee ?? '-', String(i.rev), i.updated_at, i.archived ? `${i.title} [archived]` : i.title]);
+    for (const i of r.items) rows.push([i.id, i.status, i.assignee ?? '-', String(i.rev), i.updated_at, titleCell(i)]);
     const [head, ...body] = table(rows);
     lines.push(head ?? '');
     r.items.forEach((item, n) => {

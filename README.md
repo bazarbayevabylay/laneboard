@@ -242,7 +242,7 @@ with no warning. Inside git only a `.git` (a nested repository, a submodule) or 
   (git does not see it); the package commits only the hooks. An older pin in `.claude/settings.json` is moved with a warning: commit that change.
   The exception: a package with a board of its own, or any folder of a repository whose root holds other boards, keeps its pin in
   the committed `.claude/settings.json` (the root's local file would pin every board in the repository). Do not commit that file's
-  `env` (a machine path), or keep one board per repository.
+  `env` (a machine path), or keep one board per repository. setup says so in one warning whenever the pin goes to that file.
 - A package with a board of its own: `laneboard init --dir packages/<name>/.laneboard`; a plain `init` in a package of a repository
   whose board lies above is refused with the fix.
 - Which board a command uses: `--dir <path>`, else `LANEBOARD_DIR`, else `.laneboard/` in the current folder or above (a linked git
@@ -298,7 +298,8 @@ the file atomically, so many agents write at once without losing data; a stale `
 - `laneboard doctor` checks and exits 6 while a problem is left; `--fix` repairs what it can (attachment files without metadata go
   to `attachments/.orphaned/`, never deleted); `--restore-backup` brings back the `.bak` version. A lock with a time in the future is
   removed after 10 s without change.
-- `laneboard delete <ID> --confirm <ID>` is for people: the archive keeps a trace (id, title, who and when). A pasted secret:
+- `laneboard delete <ID> --confirm <ID>` is for people: the archive keeps a trace (id, title, who and when); `get` and
+  `list --scope archive` show it as `deleted <at> by <who>` (`deleted {at, by}` with `--json`). A pasted secret:
   `laneboard redact <ID> --text-file <file>` removes it from the task and from the `.bak`; redact first, then delete.
 - Attachments named like keys or secrets (`.env*`, `*.pem`, `id_rsa*`, `*credentials*`, `.npmrc` and more, `attachments.deny_names`)
   are refused; `*credentials*` may refuse a harmless name too: rename the file.
@@ -341,7 +342,7 @@ Then, if laneboard is no longer needed: delete the project's `.laneboard/` and t
 
 - Boards of 0.3.x open as they are: store and `config.json` keep their format; the new config keys (checks, reviewers, creators) are
   optional, and `config@2` is written only when you turn one on. 0.3.x reads every board that has none of them.
-- MCP: `task_delete` is gone (delete is for people, CLI-only); `task_prime` is new.
+- MCP: `task_delete` is gone (delete is for people, CLI-only; a call of it is an unknown-tool error whose fix names `laneboard delete`); `task_prime` is new.
 - Re-run `laneboard setup <harness>` in each project: the instruction block, the hook matcher and the Claude Code pin are updated in place.
 - The new `deny_names` defaults apply to boards created by 0.4.0; an older board keeps its list.
 
