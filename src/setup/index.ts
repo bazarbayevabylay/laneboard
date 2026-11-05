@@ -129,6 +129,23 @@ function checkoutsUsing(c: HarnessContext): string[] {
   });
 }
 
+// The folder a moved project file lies in (the repository root, for its local settings) when setup of this harness stands there too
+// (another project file of the harness in that folder holds our part): --remove from a package keeps the file then.
+// A file this run plans too (the package's moved local file is the root's own) says nothing about the folder.
+function folderUsing(harness: Harness, f: HarnessFile, folder: string, c: HarnessContext, planned: ReadonlySet<string>): string[] {
+  const there: HarnessContext = { ...c, cwd: folder };
+  const files = harness.files.filter((g) => g !== f && g.scope === 'project' && g !== gitExclude && !planned.has(realPathOf(locate(g, there).file)));
+  return files.some((g) => mayHoldOurPart(g, there)) ? [folder] : [];
+}
+
+// The root of cwd's checkout when it is not cwd and some harness's setup stands there (a project file of its own holds our part): the
+// exclude file is that folder's too, and a package's --remove keeps its block.
+function rootUsing(c: HarnessContext, planned: ReadonlySet<string>): string[] {
+  const own = repositoryCheckouts(c.cwd)?.own;
+  if (own === undefined || samePath(own, c.cwd)) return [];
+  return HARNESSES.some((h) => folderUsing(h, gitExclude, own, c, planned).length > 0) ? [own] : [];
+}
+
 // Does this harness file hold our part now? An unreadable or unparseable file counts as no (install does not touch a file that does not apply).
 function ownsNow(f: HarnessFile, c: HarnessContext): boolean {
   const { file, shown } = locate(f, c);
@@ -193,6 +210,8 @@ interface Keepers {
   projects: ReadonlyMap<string, string[]>;
   // The exclude file: other checkouts of the repository whose setup still uses its block.
   checkouts: ReadonlyMap<string, string[]>;
+  // A file in another folder (the repository root's local settings) that setup in that folder still uses.
+  folders: ReadonlyMap<string, string[]>;
 }
 
 // Warnings about backups (written or left behind) and files kept for another harness or project. `exclude`: the exclude file setup
@@ -207,7 +226,10 @@ function planWarnings(harness: string, plan: readonly PlannedFile[], keepers: Ke
     }
     const projects = keepers.projects.get(p.file);
     const checkouts = keepers.checkouts.get(p.file);
-    if (p.result === 'kept' && checkouts !== undefined) {
+    const folders = keepers.folders.get(p.file);
+    if (p.result === 'kept' && folders !== undefined) {
+      out.push(`kept the laneboard entry in ${p.shown}: setup in ${someOf(folders)} still uses it (laneboard setup <harness> --remove there removes it)`);
+    } else if (p.result === 'kept' && checkouts !== undefined) {
       out.push(`kept the laneboard block in ${p.shown}: setup in another checkout of this repository still uses it (${someOf(checkouts)}); laneboard setup <harness> --remove there removes it`);
     } else if (p.result === 'kept' && projects !== undefined) {
       out.push(
@@ -242,19 +264,29 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const users = new Map<string, string[]>();
   const projects = new Map<string, string[]>();
   const checkouts = new Map<string, string[]>();
+  const folders = new Map<string, string[]>();
   // A file that does not apply here (Claude Code's local settings in a folder inside another repository) is not written, and our part
   // is taken out of it when an earlier setup put it there (the env moved to another file); --remove also takes it out of such a file.
   const applies = (f: HarnessFile): boolean => f.applies?.(context) ?? true;
   const files = harness.files.filter((f) => applies(f) || ownsNow(f, context));
+  // Real paths of the files this run plans: they never count as setup standing in another folder.
+  const planned = new Set(files.map((f) => realPathOf(locate(f, context).file)));
   const plan = files.map((f) => {
     const { file, shown, moved } = locate(f, context);
-    if (!input.remove && !applies(f)) return planRemove(file, shown, f.scope, f.edit(shown, context));
-    // A directory the harness was pointed to (CODEX_HOME) is the user's, never removed.
-    if (moved) roots.push(path.dirname(file));
+    // A moved project file that names its folder (the repository root's local settings) stays inside it.
+    const into = moved ? f.movedInto?.(context) : undefined;
+    if (!input.remove && !applies(f)) return planRemove(file, shown, f.scope, f.edit(shown, context), into);
+    // A directory the harness was pointed to (CODEX_HOME) is the user's, never removed; below a named folder setup may make and drop its own.
+    if (moved) roots.push(into ?? path.dirname(file));
     if (input.remove) {
       const others = otherUsers(harness, f, context);
       if (others.length) {
         users.set(file, others);
+        return planKeep(file, shown, f.scope);
+      }
+      const standing = into !== undefined ? folderUsing(harness, f, into, context, planned) : f === gitExclude ? rootUsing(context, planned) : [];
+      if (standing.length) {
+        folders.set(file, standing);
         return planKeep(file, shown, f.scope);
       }
       const sharing = f === gitExclude ? checkoutsUsing(context) : [];
@@ -269,7 +301,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
         return planKeep(file, shown, f.scope);
       }
     }
-    return (input.remove ? planRemove : planAdd)(file, shown, f.scope, f.edit(shown, context));
+    return (input.remove ? planRemove : planAdd)(file, shown, f.scope, f.edit(shown, context), into);
   });
   // Read before the write: a warning may describe what the write replaces (a stale store pin).
   const harnessWarnings = input.remove ? [] : (harness.warnings?.(context) ?? []);
@@ -278,7 +310,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const registered = !input.dryRun && !input.remove && isLiveBoard(context.storeDir);
   const excludeAt = files.findIndex((f) => f === gitExclude && applies(f));
   const exclude = input.remove || excludeAt < 0 ? undefined : plan[excludeAt]?.shown;
-  const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects, checkouts }, exclude), ...harnessWarnings];
+  const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects, checkouts, folders }, exclude), ...harnessWarnings];
   // A package of a monorepo shares the repository's board (P3): say which one, and how a separate project gets its own.
   if (!input.remove && input.storeAbove) {
     const prefix = storePrefix(context.storeDir);

@@ -362,9 +362,10 @@ function linkChainEnd(file: string, shown: string): string {
 
 // Where a planned file is read and written, checked before anything is read: a project file's real path (its backup a real file next to
 // it) inside the project, a global file's end of its symlink chain.
-function locateFile(file: string, shown: string, scope: PlannedFile['scope']): Pick<PlannedFile, 'target' | 'root' | 'identity'> {
+// `inFolder`: the folder a moved project file must stay in (default: the project, or the moved file's own folder).
+function locateFile(file: string, shown: string, scope: PlannedFile['scope'], inFolder?: string): Pick<PlannedFile, 'target' | 'root' | 'identity'> {
   if (scope !== 'project') return { target: linkChainEnd(file, shown) };
-  const root = projectRoot(file, shown);
+  const root = inFolder ?? projectRoot(file, shown);
   const { target, identity } = resolveInsideProject(file, shown, root);
   checkBackup(backupOf(target), `${shownOf(realFolder(root), target, shown)}.laneboard.bak`);
   return { target, root, ...(identity !== undefined ? { identity } : {}) };
@@ -381,9 +382,9 @@ function readLocated(at: Pick<PlannedFile, 'shown' | 'scope' | 'target' | 'ident
   return text;
 }
 
-// Plan the install of our part into one file (reads only).
-export function planAdd(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
-  const at = { file, shown, scope, ...locateFile(file, shown, scope) };
+// Plan the install of our part into one file (reads only); `inFolder` as in locateFile.
+export function planAdd(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit, inFolder?: string): PlannedFile {
+  const at = { file, shown, scope, ...locateFile(file, shown, scope, inFolder) };
   const before = readLocated(at);
   const after = edit.add(before);
   if (before === after) return { ...at, result: 'unchanged', before };
@@ -394,9 +395,9 @@ export function planAdd(file: string, shown: string, scope: PlannedFile['scope']
   return checkWritable({ ...at, result: 'updated', write: after, diff: lineDiff(before, after), before, ...(backup !== undefined ? { backup } : {}) });
 }
 
-// Plan the removal of our part: restore the original bytes when nothing else changed, delete a file we created.
-export function planRemove(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit): PlannedFile {
-  const at = { file, shown, scope, ...locateFile(file, shown, scope) };
+// Plan the removal of our part: restore the original bytes when nothing else changed, delete a file we created; `inFolder` as in locateFile.
+export function planRemove(file: string, shown: string, scope: PlannedFile['scope'], edit: TextEdit, inFolder?: string): PlannedFile {
+  const at = { file, shown, scope, ...locateFile(file, shown, scope, inFolder) };
   const before = readLocated(at);
   const original = readText(backupPath(at));
   const keptBackup = original !== null;

@@ -41,16 +41,19 @@ const NAME_LINE = 'Writes need your name: pass `--as <your-name>` on every comma
 const DEFAULT_NAME_LINE =
   'Without `--as` your writes use this session\'s default name (`laneboard prime` shows it); subagents and parallel workers of one session pass their own `--as <name>`.';
 
-// How the block pins the store: Claude Code reads LANEBOARD_DIR from .claude/settings.local.json (not committed) or
-// .claude/settings.json (a folder inside another repository); other harnesses get it inline.
-export type StorePin = 'settings-local-env' | 'settings-env' | 'inline';
+// How the block pins the store: Claude Code reads LANEBOARD_DIR from .claude/settings.local.json (not committed) of this folder or
+// of the repository root (a package of a repository, a linked worktree, pinned to the repository's board), or from
+// .claude/settings.json (a folder inside another repository with a board of its own); other harnesses get it inline.
+export type StorePin = 'settings-local-env' | 'settings-root-local-env' | 'settings-env' | 'inline';
 
 // Instruction block body (3 lines) for CLAUDE.md / AGENTS.md / GEMINI.md: what laneboard is and which store, the task rule, the name.
 export function instructionLines(storeDir: string, pin: StorePin): string {
   const where =
     pin === 'settings-local-env'
       ? 'Its store is pinned by LANEBOARD_DIR in .claude/settings.local.json (kept out of git; `laneboard prime` shows the path).'
-      : pin === 'settings-env'
+      : pin === 'settings-root-local-env'
+        ? 'Its store is pinned by LANEBOARD_DIR in .claude/settings.local.json at the root of this git repository (kept out of git; `laneboard prime` shows the path).'
+        : pin === 'settings-env'
         ? `Its store is ${storeDir} (LANEBOARD_DIR is set for this project in .claude/settings.json).`
         : `Its store is ${storeDir}: run every laneboard command with it, \`LANEBOARD_DIR=${shellWord(storeDir)} laneboard <command>\` (or export LANEBOARD_DIR=${shellWord(storeDir)} once).`;
   return [`This project tracks work with laneboard (task board & CLI for AI coding agents). ${where}`, TASK_RULE, pin === 'inline' ? NAME_LINE : DEFAULT_NAME_LINE].join('\n');
@@ -73,6 +76,9 @@ export interface HarnessFile {
   moved?: (c: HarnessContext) => string | undefined;
   // Install writes this file only when true (default always); --remove looks at it either way.
   applies?: (c: HarnessContext) => boolean;
+  // A moved project file outside the project: the folder its path must stay in (no symlink on the way leads out of it); setup may
+  // create and later delete the folders below it. Default: the moved file's own folder, which is never deleted.
+  movedInto?: (c: HarnessContext) => string | undefined;
 }
 
 export interface Harness {
