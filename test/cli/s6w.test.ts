@@ -584,6 +584,34 @@ describe('S6w review r2: nobody claims a task that waits for a check; no free ta
     expect((await run(s, 'orch', ['doctor'])).code).toBe(0);
   });
 
+  it('(d) the only checker passed code_review: qa stays in its prime and task_prime with the pass to done, marked; with another checker it is that one\'s', async () => {
+    for (const by of ['rev', 'rev,orch']) {
+      const s = await newStore({ prefix: 'API', statuses: TWO.statuses });
+      expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', by])).code).toBe(0);
+      expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'backlog'])).code).toBe(0);
+      expect((await run(s, 'dev-1', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
+      expect((await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work', '--no-commit'])).code).toBe(0);
+      expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'cr ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
+      const text = await primeText(s, 'rev');
+      const waits = (await run(s, 'rev', ['prime'])).doc.data.roles.waiting;
+      if (by === 'rev') {
+        expect(text).toMatch(/Waiting for your check:\n {2}API-1 {2}\[qa\] {2}rev \d+ {2}Add endpoint {2}\(you passed the previous check\)\n/);
+        expect(waits).toEqual([expect.objectContaining({ id: 'API-1', next_status: 'done', passed_by_you: true })]);
+        const pass = /pass: (laneboard finish API-1 .+)$/m.exec(text)?.[1] ?? '';
+        expect(pass).toBe('laneboard finish API-1 --status done --result "<result of your check>" --as rev --json');
+        expect(sh(s, pass)).toBe(0);
+        expect(await task(s, 'API-1')).toMatchObject({ status: 'done' });
+      } else {
+        expect(text).not.toContain('Waiting for your check');
+        expect(waits).toEqual([]);
+        const other = await primeText(s, 'orch');
+        expect(other).toContain('Waiting for your check:\n  API-1  [qa]');
+        expect(other).not.toContain('you passed the previous check');
+        expect((await run(s, 'orch', ['prime'])).doc.data.roles.waiting).toEqual([expect.objectContaining({ id: 'API-1', passed_by_you: false })]);
+      }
+    }
+  });
+
   it('MINOR: a checker\'s finish of a task in a check that is not handed in: "only a handed-in task" (the hand-in is the task\'s)', async () => {
     const s = await newStore({ prefix: 'API', statuses: ['todo', 'dev', 'code_review', 'qa', 'done'] });
     expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'rev,orch'])).code).toBe(0);

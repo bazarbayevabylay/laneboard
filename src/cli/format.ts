@@ -525,7 +525,10 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const waitHead = !waits ? '' : noTask ? '\nWaiting for your check:' : '\nWaiting for your check; check one with the pass command under it:';
   // Each waiting task with its ready pass command (S6w I2): the next status after its check, or the final one from the last check.
   const nextOf = new Map((d.roles?.waiting ?? []).map((w) => [w.id, w.next_status]));
-  const waitLine = (t: ListItem): string => `${line(t)}\n    pass: ${passCommand(d, t.id, nextOf.get(t.id) ?? '<next status>', dir)}`;
+  // The only checker that passed the previous check makes this one too (S6w r2): the line says so.
+  const mine = new Set((d.roles?.waiting ?? []).filter((w) => w.passed_by_you).map((w) => w.id));
+  const waitLine = (t: ListItem): string =>
+    `${line(t)}${mine.has(t.id) ? '  (you passed the previous check)' : ''}\n    pass: ${passCommand(d, t.id, nextOf.get(t.id) ?? '<next status>', dir)}`;
   // The note goes before the command, so the copied command line stays valid in a shell (LB-11 b).
   const waitMore = (n: number): string => `\n... ${n} more (rows with handed_in): laneboard list${d.roles?.checks.map((st) => ` --status ${shellQuote(st)}`).join('') ?? ''}${dir} --json`;
   const roles = rolesLine(d);

@@ -467,12 +467,20 @@ export function reviewRefusalText(config: ConfigT, refusal: ReviewRefusal, to: s
 
 // Does `task` wait in a check that `actor` may make (prime's queue for checkers, B-U6): it is in a check status, handed in or passed
 // on (handedIn, whoever holds it now: S6w r1), `actor` is in review.by (when set), is not the author of the work (workedOn)
-// and did not pass it on into this status itself (its finish there changes nothing).
+// and did not pass it on into this status itself, unless no other checker may make this check (S6w r2: review.by holds no other name
+// that is no author, so the one who passed the previous check makes this one too, or the task would show in nobody's queue).
 export function waitsForCheck(config: ConfigT, task: TaskT, actor: string): boolean {
   if (!reviewStatuses(config).includes(task.status)) return false;
   if (!handedIn(task, config)) return false;
   const by = reviewers(config);
-  return (by.length === 0 || by.includes(actor)) && !workedOn(task, actor) && passedBy(task) !== actor;
+  if (!((by.length === 0 || by.includes(actor)) && !workedOn(task, actor))) return false;
+  if (passedBy(task) !== actor) return true;
+  return by.length > 0 && !by.some((name) => name !== actor && !workedOn(task, name));
+}
+
+// Did `actor` pass `task` on into the check it is in now (prime marks such a waiting task, S6w r2)?
+export function passedOnBy(task: TaskT, actor: string): boolean {
+  return passedBy(task) === actor;
 }
 
 // The status work goes on in before the checks (P1, A-U3): the one before the first check; undefined without checks or when the

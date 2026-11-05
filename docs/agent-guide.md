@@ -511,6 +511,8 @@ against an agent's mistake, not against a hostile agent.
 - No checker left: when every name in `--reviewers` worked on a waiting task (the orchestrator gave it to the only checker), nobody
   may pass it on. The refusals, `prime` (MCP `roles.no_checker {ids, fix}`) and `doctor` (check `checks`, exit 6) name the owner's way
   out: `laneboard config --reviewers "<names there>,<another checker>"`.
+- A checker's queue skips the check it passed the task into while another checker may make it; with no other one (`--reviewers rev`
+  on two checks) the task stays in its queue, marked "(you passed the previous check)" (`roles.waiting[].passed_by_you`), with the pass.
 - `config --review-statuses` that turns a status with tasks in work into a check warns, naming each task and the hand-in its holder
   runs (`laneboard finish <ID> --status <check> --result "..." --as <holder>`); `doctor` reports them in the check `checks` (exit 6)
   until they are handed in. A move of a handed-in task by `update` or `claim` warns with the hand-in that puts it back in the queue.

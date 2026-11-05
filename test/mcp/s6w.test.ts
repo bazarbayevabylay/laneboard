@@ -136,6 +136,19 @@ describe('S6w review r2 over MCP', () => {
     expect(prime.roles).toMatchObject({ waiting: [expect.objectContaining({ id: 'API-1', next_status: 'qa' })], no_checker: null });
   });
 
+  it('the only checker passed code_review: task_prime of it lists the task in qa, next_status done, passed_by_you', async () => {
+    const s = await newStore({ prefix: 'API', statuses: TWO.statuses });
+    await configureStore(as(s, 'orch'), { review_statuses: ['code_review', 'qa'], reviewers: ['rev'] });
+    await createTask(as(s, 'orch'), { title: 'Add endpoint', status: 'backlog' });
+    await claimTask(as(s, 'dev-1'), { id: 'API-1', status: 'dev' });
+    await finishTask(as(s, 'dev-1'), { id: 'API-1', result: 'work', no_commit: true });
+    const env = { cwd: s.root, env: {} };
+    expect((await callTool('task_finish', { id: 'API-1', status: 'qa', result: 'cr ok', actor: 'rev' }, env)).structuredContent).toMatchObject({ status: 'qa', passed: true });
+    const prime = (await callTool('task_prime', { actor: 'rev' }, env)).structuredContent as Record<string, any>;
+    expect(prime.roles.waiting).toEqual([expect.objectContaining({ id: 'API-1', next_status: 'done', passed_by_you: true })]);
+    expect((await callTool('task_finish', { id: 'API-1', status: 'done', result: 'qa ok', actor: 'rev' }, env)).structuredContent).toMatchObject({ status: 'done', accepted: true });
+  });
+
   it('no checker left (the only checker holds the task): task_prime roles.no_checker names the owner\'s command', async () => {
     const s = await newStore({ prefix: 'API', statuses: ONE.statuses });
     await configureStore(as(s, 'orch'), { review_statuses: ['review'], reviewers: ['rev'] });

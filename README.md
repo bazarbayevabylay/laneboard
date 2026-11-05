@@ -211,6 +211,8 @@ laneboard config --review-statuses none --reviewers none --json
   `prime` lists such a task under "Waiting for your check", never among the free tasks.
 - No checker left (every name in `--reviewers` worked on a waiting task, say the orchestrator gave it to the only checker): the
   refusals, `prime` and `doctor` (check `checks`, exit 6) name the owner's way out, `laneboard config --reviewers "<names>,<another checker>"`.
+- A checker's queue skips a check it passed the task into, unless no other checker may make it (say `--reviewers rev` on two checks):
+  then the task stays there, marked "(you passed the previous check)", with its pass command.
 - `config --review-statuses` that turns a status with tasks in work into a check warns with each task and its holder's
   `finish <ID> --status <check> ...`; until then `doctor` reports them (check `checks`, exit 6).
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.

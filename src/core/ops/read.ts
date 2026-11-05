@@ -10,7 +10,7 @@ import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, deletedField, 
 import type { DeletedMark, FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
-import { addCheckerCommand, handedIn, nextAfterCheck, noCheckerLeft, waitsForCheck, waitsInCheck, workStatusBeforeChecks } from './update.ts';
+import { addCheckerCommand, handedIn, nextAfterCheck, noCheckerLeft, passedOnBy, waitsForCheck, waitsInCheck, workStatusBeforeChecks } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
 
@@ -424,7 +424,8 @@ export interface SummaryRoles {
   can_create: boolean;
   // Tasks waiting in a check that `assignee` may make (waitsForCheck), oldest update first, at most SUMMARY_WAITING_MAX; `waiting_total` counts all.
   // `next_status`: what the checker's finish names to pass it (S6w I2: finish --status <next_status>, the next check or the final status).
-  waiting: Array<ListItem & { next_status: string }>;
+  // `passed_by_you`: `assignee` passed it into this check itself and no other checker may make it (S6w r2: the only checker).
+  waiting: Array<ListItem & { next_status: string; passed_by_you: boolean }>;
   waiting_total: number;
   // Tasks waiting in a check with no checker left (S6w r2: every name in review.by worked on them), and the owner's command that adds a
   // checker (config --reviewers with the names there and a placeholder); null when there is none.
@@ -460,7 +461,7 @@ function summaryRoles(config: ConfigT, tasks: ReadonlyArray<{ task: TaskT; archi
     work_status: workStatusBeforeChecks(config) ?? null,
     creators: config.create_by === undefined ? null : [...config.create_by],
     can_create: config.create_by === undefined || (assignee !== undefined && config.create_by.includes(assignee)),
-    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => ({ ...toListItem(task, archived), next_status: nextAfterCheck(config, task.status) })),
+    waiting: waiting.slice(0, SUMMARY_WAITING_MAX).map(({ task, archived }) => ({ ...toListItem(task, archived), next_status: nextAfterCheck(config, task.status), passed_by_you: assignee !== undefined && passedOnBy(task, assignee) })),
     waiting_total: waiting.length,
     no_checker: stuck.length === 0 ? null : { ids: stuck, fix: addCheckerCommand(config) },
     feedback,

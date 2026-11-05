@@ -668,3 +668,6 @@ Checks
   (`roles.no_checker {ids, fix}`), doctor's check `checks` reports it (exit 6). Rejected: refusing `update --assignee` of a checker
   (reassignment is the orchestrator's step, r1). Also the checks' "not handed in" refusal says "only a handed-in task" (the hand-in is
   the task's, r1). Checks: test/cli/s6w.test.ts, test/mcp/s6w.test.ts "S6w review r2"; s6j claim --status dev now refused.
+  (d) I1 for the only checker: `waitsForCheck` hid a check from the checker that passed the task into it (passedBy), so with `--reviewers
+  rev` on two checks qa showed in nobody's queue though rev's `finish --status done` works. Now the passer's queue skips it only while
+  another checker (in review.by, no author) may make it; else it is listed, `roles.waiting[].passed_by_you: true`, prime marks the line.
