@@ -93,11 +93,11 @@ laneboard setup codex
 
 | Harness | MCP entry | Instructions | Board pin |
 |---|---|---|---|
-| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (kept out of git by `.git/info/exclude`), plus the SessionStart and PostToolUse hooks in `.claude/settings.json` |
+| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (kept out of git by `.git/info/exclude`); in a folder with a board of its own inside another git repository, or at a repository root that holds other boards, they go to the committed `.claude/settings.json` (Claude Code reads the local file only at the repository root, so a pin there would reach every board) — do not commit that machine path, or keep one board per repository; plus the SessionStart and PostToolUse hooks in `.claude/settings.json` |
 | codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<board>` in the instructions; the entry forwards `LANEBOARD_DIR` |
-| cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <board>` in the entry and the instructions |
-| gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <board>` in the entry and the instructions |
-| opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <board>` in the entry and the instructions |
+| cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
+| gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
+| opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
 
 - Claude Code hooks: SessionStart prints the rules, the board and your tasks (`laneboard prime --hook`); after `Edit`, `Write`,
   `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
@@ -240,6 +240,9 @@ with no warning. Inside git only a `.git` (a nested repository, a submodule) or 
 
 - `setup` in a package pins it to the root's board. Claude Code: the board path goes to the root's `.claude/settings.local.json`
   (git does not see it); the package commits only the hooks. An older pin in `.claude/settings.json` is moved with a warning: commit that change.
+  The exception: a package with a board of its own, or any folder of a repository whose root holds other boards, keeps its pin in
+  the committed `.claude/settings.json` (the root's local file would pin every board in the repository). Do not commit that file's
+  `env` (a machine path), or keep one board per repository.
 - A package with a board of its own: `laneboard init --dir packages/<name>/.laneboard`; a plain `init` in a package of a repository
   whose board lies above is refused with the fix.
 - Which board a command uses: `--dir <path>`, else `LANEBOARD_DIR`, else `.laneboard/` in the current folder or above (a linked git

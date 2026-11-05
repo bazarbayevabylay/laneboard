@@ -325,7 +325,7 @@ one fails with the normalized label in the fix (`zone:api` -> `zone-api`).
 
 ```sh
 laneboard config --statuses todo,in_progress,review,blocked,done --json
-laneboard config --field priority:number:"0 = highest" --field project:string --field acceptance:string[]:"acceptance criteria" --field source_id:string:"id in the old tracker" --json
+laneboard config --field priority:number:"0 = highest" --field project:string --field 'acceptance:string[]:acceptance criteria' --field source_id:string:"id in the old tracker" --json
 ```
 
 `init --statuses` sets the statuses at the start; `prime` shows the current ones. The owner or the orchestrator changes them later with
