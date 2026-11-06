@@ -186,7 +186,8 @@ describe('S6y U2: a stale check of a task returned for rework reads it; the auth
         const attempts: Array<[string, string[], string, number]> = [
           ['finish', ['finish', 'API-1', '--status', next, '--result', 'CR ok'], 'ALREADY_CLAIMED', 4],
           ['finish without --status', ['finish', 'API-1', '--result', 'CR ok'], 'ALREADY_CLAIMED', 4],
-          ['update into a check', ['update', 'API-1', '--status', from], 'INVALID_VALUE', 2],
+          // ALREADY_CLAIMED as finish (slice A2, LB-63.1: was INVALID_VALUE, exit 2).
+          ['update into a check', ['update', 'API-1', '--status', from], 'ALREADY_CLAIMED', 4],
         ];
         for (const [what, argv, code, exit] of attempts) {
           const r = await run(s, 'orch', argv);
@@ -259,7 +260,7 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
         const before = await task(s, 'API-1');
         const attempts: Array<[string, string[], string]> = [
           ['finish', ['finish', 'API-1', '--status', next, '--result', 'CR ok'], 'ALREADY_CLAIMED'],
-          ['update into a check', ['update', 'API-1', '--status', l.checks[0] ?? ''], 'INVALID_VALUE'],
+          ['update into a check', ['update', 'API-1', '--status', l.checks[0] ?? ''], 'ALREADY_CLAIMED'],
         ];
         for (const [what, argv, code] of attempts) {
           const r = await run(s, 'orch', argv);

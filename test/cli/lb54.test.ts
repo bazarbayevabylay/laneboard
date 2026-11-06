@@ -232,18 +232,20 @@ describe('LB-63.6: a name that may not check a task waiting for a check never ta
     'API-1 is handed in and waits in review for the check of r1 (review -> done): you may not check it (config review.by: r1), so you never take it: ' +
     'update --assignee takes no task that waits for a check, as claim does not; a note for the checkers is a comment';
 
-  it('update --assignee itself, alone or with --status: ALREADY_CLAIMED, nothing changes; then update --status of a task it does not hold is no takeover', async () => {
+  it('update --assignee itself, alone or with --status: ALREADY_CLAIMED, nothing changes; update --status alone: refused as well (A2)', async () => {
     const s = await waiting('r1');
     for (const argv of [['update', 'API-1', '--assignee', 'x'], ['update', 'API-1', '--status', 'in_progress', '--assignee', 'x']]) {
       const r = await json(s, [...argv, '--as', 'x']);
       expect(r.code, argv.join(' ')).toBe(4);
-      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', message: MESSAGE, details: { assignee: 'dev-1' }, fix: 'laneboard comment API-1 "<note for the check>" --as x' });
+      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', message: MESSAGE, details: { assignee: 'dev-1' }, fix: 'laneboard comment API-1 "<note for the check>" --as x --json' });
     }
     expect((await json(s, ['get', 'API-1'])).doc.data).toMatchObject({ status: 'review', assignee: 'dev-1' });
-    // update --status alone never moves the assignee: the task stays dev-1's. Whether x may move it at all (a return for rework by
-    // another hand) is slice A2's (LB-63.6 stays open), so the exit code is not asserted here.
-    await json(s, ['update', 'API-1', '--status', 'in_progress', '--as', 'x']);
-    expect((await json(s, ['get', 'API-1'])).doc.data.assignee).toBe('dev-1');
+    // update --status alone by x is refused too (slice A2, LB-63.6: a return for rework is the checkers'), so no order of the two
+    // updates takes the task; it stays dev-1's in review.
+    const moved = await json(s, ['update', 'API-1', '--status', 'in_progress', '--as', 'x']);
+    expect(moved.code).toBe(4);
+    expect(moved.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard comment API-1 "<note for the check>" --as x --json' });
+    expect((await json(s, ['get', 'API-1'])).doc.data).toMatchObject({ status: 'review', assignee: 'dev-1' });
   });
 
   it('unassigned while waiting: INVALID_VALUE with the same message', async () => {

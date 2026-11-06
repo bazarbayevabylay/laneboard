@@ -3,7 +3,7 @@ export { ERRORS, ERROR_CODES, LaneboardError, toErrorObject, toLaneboardError } 
 export type { BadInput, ErrorCode, ErrorObject, ErrorSpec, FixEdit } from './errors.ts';
 export { ACTOR_RE, ACTOR_SOURCES, CONFIG_SCHEMA, CONFIG_SCHEMA_V2, EVENT_TYPES, FIELD_TYPES, LINK_KINDS, SCOPES, STORE_SCHEMA, jsonSchemas } from './schema.ts';
 export type { ConfigT, FieldType, LinkKind, LinkT, ReviewConfigT, Scope, TaskEventT, TaskT } from './schema.ts';
-export { canonicalPath, foreignStore, GIT_PROJECT_MARKERS, initTarget, parentStoreWarning, PROJECT_MARKERS, resolveStore, samePath, separateProjectMarker, setupTarget, STORE_DIR_NAME } from './store.ts';
+export { canonicalPath, foreignStore, initTarget, parentStoreWarning, PROJECT_MARKERS, resolveStore, samePath, separateProjectMarker, setupTarget, STORE_DIR_NAME } from './store.ts';
 export { forgetBoard, isLiveBoard, listBoards, liveBoards, readRegistry, registerStore, registryFile, resolveBoard, storeState } from './boards.ts';
 export type { BoardEntry, BoardInfo, BoardsResult, LiveBoard, MissingBoard } from './boards.ts';
 export { actorPart, agentUser, defaultAgentBase, defaultAgentName, isEarlierSessionName, resolveActor } from './agent-name.ts';

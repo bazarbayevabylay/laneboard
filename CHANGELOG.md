@@ -50,6 +50,18 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - LB-57.4: `claim` without `--status` of a task you already hold moves it from the first status into the work status (the one before the checks, else the second status unless final) instead of "no changes"; a plain claim of a free task keeps its status.
 - LB-63.6: on a board with checks, `update --assignee <self>` of a task waiting for a check by a name that may not check it (and did not work on it) is refused like `claim` (`ALREADY_CLAIMED`, or `INVALID_VALUE` when unassigned).
 
+### A2
+
+- Check bypass: on a board with checks `update --status <final>` closes only a task that waits in the last check (A17 warning as before); a task in work or returned for rework is `ALREADY_CLAIMED` (unassigned: `INVALID_VALUE` with the hand-in), a task waiting in an earlier check `INVALID_VALUE` with a read as the fix. A board without checks closes by update as before.
+- LB-63.6: `update --status <work status>` of a task waiting for a check by a name that may not check it (and did not work on it) is refused (`ALREADY_CLAIMED`, `INVALID_VALUE` when unassigned), so it never takes the task in two steps, in either order; its checkers and its author still move it.
+- LB-63.1: a check of a task returned for rework, or of one its holder did not hand in, is `ALREADY_CLAIMED` by `update --status <check>` as by `finish` (was `INVALID_VALUE`).
+- LB-63.2 (part): the fixes of the refusals and warnings above (and of `update --assignee` of a waiting task) carry `--json`; the older fixes of update.ts keep their text for now.
+- LB-63.3: the `finish --json` reply of a hand-in (a status that is not final) says `handed_in: true`.
+- LB-55.1: `finish` warns "commit <sha> is already linked to <ID>" when the commit it links is linked to a task (active or archived) another name holds, with the command that links the commit of your work instead.
+- LB-55.2: the worktree warning of `finish` in the main checkout with several worktrees names one command: the finish with the sha of your worktree, then `&&` the removal of the wrong link (run as printed it changes nothing).
+- LB-55.3: with that worktree warning `finish` no longer also warns "HEAD has not moved since you claimed".
+- LB-65.9: `GIT_PROJECT_MARKERS` and `ReworkReturn` are no longer exported.
+
 ## 0.4.0
 
 The audit release: data safety, setup safety, orchestrator workflows, any MCP client, monorepos, and English docs.

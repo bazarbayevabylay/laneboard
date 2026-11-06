@@ -30,7 +30,7 @@ export const PROJECT_MARKERS = ['.git', '.claude', 'CLAUDE.md', 'AGENTS.md', 'GE
 // The project markers when the store's folder is inside a git repository (P3, C-U1): only a repository of its own (`.git`: a nested
 // repository, a submodule). A package of a monorepo keeps its own AGENTS.md or CLAUDE.md and still shares the repository's board;
 // a board of its own (`init --dir <package>/.laneboard`) is found first by discovery, so that folder needs no marker.
-export const GIT_PROJECT_MARKERS = ['.git'] as const;
+const GIT_PROJECT_MARKERS = ['.git'] as const;
 
 // Is `dir` the machine's board registry, not a store? It has no config.json and is `<home>/.laneboard` (an init that failed
 // before its first write can leave that folder empty) or holds boards.json (the registry of another home).
