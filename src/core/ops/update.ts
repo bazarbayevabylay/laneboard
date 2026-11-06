@@ -706,23 +706,38 @@ export function handedInOutsideChecks(config: ConfigT, tasks: readonly TaskT[]):
 
 // INVALID_VALUE of the holder's finish into a status that is neither a check nor final on a board with checks (S6y U1 run 6, I1: a
 // hand-in lives only in a check, there the checkers see it). The fix keeps what the command meant, the task in `target` with the result
-// and no hand-in (reworkFix: the comment, then update); the message names the hand-in, finish --status <the check it is in, else the first>.
+// and no hand-in (reworkFix: the comment, then update); the message names the hand-in, finish --status <the check it is in, else the first>, or, for a
+// task that waits in a check, says it is handed in already (alreadyHandedIn's words, review r1).
 function handInOutsideCheck(config: ConfigT, task: TaskT, target: string, text: string, actor: string): LaneboardError {
   const review = reviewStatuses(config);
   const check = handInStatus(review, task);
+  const checks = checksLine(review, finalStatuses(config.statuses)[0] ?? '');
+  const fix = reworkFix(task.id, text, target, actor);
+  // A task that waits in a check is handed in already (review r1): no hand-in to name, as in alreadyHandedIn; the move takes it out.
+  if (waitsInCheck(config, task)) {
+    return new LaneboardError(
+      'INVALID_VALUE',
+      `${task.id} is handed in already and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checks}): nothing to hand in, and ${target} is no check (a hand-in goes only to a check); ` +
+        `to put it into ${target} with your result, out of the checkers' queue (the hand-in is gone): comment, then laneboard update ${task.id} --status ${target}${noCheckerExit(config, task)}`,
+      { fix },
+    );
+  }
   return new LaneboardError(
     'INVALID_VALUE',
-    `on this board ${target} is no check (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}): finish hands a task in, and a hand-in goes only to a check, where the checkers see it; ` +
+    `on this board ${target} is no check (${checks}): finish hands a task in, and a hand-in goes only to a check, where the checkers see it; ` +
       `to hand ${task.id} in: laneboard finish ${task.id} --status ${check} --result "<what you did, how you checked it>"; to put it into ${target} with your result, not handed in: comment, then laneboard update ${task.id} --status ${target}`,
-    { fix: reworkFix(task.id, text, target, actor) },
+    { fix },
   );
 }
 
-// The return for rework that put `task` where it is (S6y U2 run 6): its newest status event (into the status it is in) is a move (update or
-// claim, no mark) and the status event before it handed the task in or passed it on (handed_in, passed) into the status the move left.
-// Who moved it, when, from where to where, and the reason: the first line of that name's newest comment between the two events (as
-// lastComment shows it). undefined when the task is handed in, closed, moved on since the return (another move: the return's state is
-// gone), never was handed in, or the events limit dropped those events.
+// The return for rework of `task` since its last hand-in (S6y U2 run 6, review r1): the newest status event that handed the task in or
+// passed it on (handed_in, passed), and the first status event after it is a move (update or claim, no mark) by a name that is no author
+// of the work (workedOn: a checker or a third party; the author's own move out of the check is no return). Later moves by the author
+// (update to blocked, back to work) keep it; a new hand-in or pass, or a later move by a name that is no author, ends it. Who returned it,
+// when, from where to where, and the reason: the first line of the returner's newest comment after the hand-in (before or after the
+// move, as lastComment shows it). undefined when the task is closed, never was handed in, is handed in again since, was accepted in
+// between, its first move after the hand-in is the author's, a name that is no author moved it after the return, or the events limit
+// dropped the hand-in.
 interface ReworkReturn {
   actor: string;
   at: string;
@@ -735,15 +750,16 @@ interface ReworkReturn {
 function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undefined {
   if (finalStatuses(config.statuses).includes(task.status)) return undefined;
   const events = task.events;
-  const statusAt = events.flatMap((e, i) => (e.type === 'status' ? [i] : []));
-  const at = statusAt.at(-1) ?? -1;
-  const handIn = statusAt.at(-2) ?? -1;
-  const move = events[at];
-  const before = events[handIn];
-  if (move === undefined || before === undefined || move.data.to !== task.status) return undefined;
-  if (move.data.handed_in === true || move.data.passed === true || move.data.accepted === true) return undefined;
-  if (before.data.to !== move.data.from || !(before.data.handed_in === true || before.data.passed === true)) return undefined;
-  const comments = events.slice(handIn + 1, at).filter((e) => e.type === 'commented' && e.actor === move.actor);
+  const handIn = events.findLastIndex((e) => e.type === 'status' && (e.data.handed_in === true || e.data.passed === true));
+  if (handIn < 0) return undefined;
+  const since = events.slice(handIn + 1);
+  const moves = since.filter((e) => e.type === 'status');
+  if (moves.some((e) => e.data.accepted === true)) return undefined;
+  const move = moves[0];
+  if (move === undefined || workedOn(task, move.actor)) return undefined;
+  // Later moves by another name that is no author (the task moved on by a third party, ADR §43 A14) end what the return means.
+  if (moves.slice(1).some((e) => !workedOn(task, e.actor))) return undefined;
+  const comments = since.filter((e) => e.type === 'commented' && e.actor === move.actor);
   return { actor: move.actor, at: move.at, from: String(move.data.from), to: String(move.data.to), reason: lastComment({ ...task, events: comments })?.text };
 }
 

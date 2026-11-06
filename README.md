@@ -197,7 +197,8 @@ laneboard config --review-statuses none --reviewers none --json
   the next check, from the last one `--status <final>` accepts it.
 - A hand-in goes only to a check, where the checkers see it: the assignee's `finish --status <work status>` (say `blocked`) is refused.
   Its fix keeps the meaning without a hand-in, `comment <ID> -- '<result>' && update <ID> --status <that status>`; the message names
-  the hand-in, `finish <ID> --status <check>`. Older such hand-ins: `config` warns and `doctor` reports them (check `checks`, exit 6).
+  the hand-in, `finish <ID> --status <check>` (for a task waiting in a check: handed in already). Older such hand-ins: `config` warns
+  and `doctor` reports them (check `checks`, exit 6).
 - Work status: the status before the first check (`todo,in_progress,blocked,code_review,qa,done` gives `blocked`; the first status when
   the first check follows it). Claims from `prime` and returns for rework go there. `config` prints `work status: <status>` (JSON
   `review.work_status`); to change it, reorder: `laneboard config --statuses todo,blocked,in_progress,code_review,qa,done`.
@@ -229,7 +230,9 @@ laneboard config --review-statuses none --reviewers none --json
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
   Another checker's stale `finish` (or `update` into a check) of the returned task gets the fix `laneboard get <ID>`, the message names
-  who returned it, when and why: no fix writes a comment that would push that reason out of the assignee's `prime`.
+  who returned it, when and why (the returner's comment since the hand-in), also after the assignee moved it (say to `blocked`), until
+  it is handed in again: no fix writes a comment that would push that reason out of the assignee's `prime`. The author's own move out
+  of a check is no return.
   A checker's `finish --status` with an earlier check or any work status (also one between two checks) is refused; its fix is that
   comment and update in one line.
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the ready

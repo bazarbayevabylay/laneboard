@@ -81,4 +81,19 @@ describe('S6y over MCP', () => {
     const prime = (await callTool('task_prime', { actor: 'dev-1' }, env)).structuredContent as Record<string, any>;
     expect(prime.roles.feedback).toEqual([{ id: 'API-1', comment: expect.objectContaining({ actor: 'rev', text: 'Empty state text missing i18n' }) }]);
   });
+
+  it('r1: rev returns the task, the author moves it to blocked; orch\'s stale task_finish --status qa still gets the read and rev\'s reason', async () => {
+    const s = await board(true);
+    const env = { cwd: s.root, env: {} };
+    await commentTask(as(s, 'rev'), { id: 'API-1', text: 'Empty state text missing i18n' });
+    await updateTask(as(s, 'rev'), { id: 'API-1', status: 'in_progress' });
+    await updateTask(as(s, 'dev-1'), { id: 'API-1', status: 'blocked' });
+    const rev = stored(s, 'API-1').rev;
+    const r = await callTool('task_finish', { id: 'API-1', status: 'qa', result: 'CR ok', actor: 'orch' }, env);
+    expect(r.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
+    expect(String((r.structuredContent as Record<string, unknown>).message)).toMatch(/^API-1 was returned for rework by rev at \S+ \(code_review -> in_progress\), reason: "Empty state text missing i18n"; it is blocked with dev-1/);
+    expect(stored(s, 'API-1')).toMatchObject({ status: 'blocked', rev });
+    const prime = (await callTool('task_prime', { actor: 'dev-1' }, env)).structuredContent as Record<string, any>;
+    expect(prime.roles.feedback).toEqual([{ id: 'API-1', comment: expect.objectContaining({ actor: 'rev', text: 'Empty state text missing i18n' }) }]);
+  });
 });

@@ -498,7 +498,8 @@ against an agent's mistake, not against a hostile agent.
   check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A hand-in goes only to a check, where
   the checkers see it: the assignee's `finish --status <work status>` (say `blocked`) is refused (`INVALID_VALUE`); its fix keeps the
   meaning without a hand-in, `laneboard comment <ID> --as <you> -- '<result>' && laneboard update <ID> --status <that status> --as <you>`,
-  and the message names the hand-in `finish <ID> --status <check>`. Such hand-ins from before (or from a board without checks that turned
+  and the message names the hand-in `finish <ID> --status <check>` (for a task waiting in a check: handed in already, nothing to hand
+  in). Such hand-ins from before (or from a board without checks that turned
   them on) are named by `config` and by `doctor` (check `checks`, exit 6) with the holder's hand-in. A checker names where the task goes:
   `finish <ID> --status <next>` passes the handed-in task on to the next check (reply `passed: true`, `from`; still handed in, not in work)
   and from the last one `--status <final>` accepts it (`accepted: true`).
@@ -546,8 +547,10 @@ against an agent's mistake, not against a hostile agent.
   `laneboard comment <ID> --as <checker> -- '<result>' && laneboard update <ID> --status <work status> --as <checker>`, never a `finish`
   that passes the task on or accepts it. A fix never changes what the refused command meant.
   A stale check of a returned task (another checker's `finish`, or `update` into a check, after the return) is refused with the fix
-  `laneboard get <ID>`: the message names who returned it, when and why (that name's comment before the return). No fix writes a
-  comment there: a newer comment of another name would replace the reason under the assignee's task in `prime`.
+  `laneboard get <ID>`: the message names who returned it, when and why (that name's newest comment since the hand-in, before or after
+  its move). It stays so after the assignee moves the task on (to `blocked`, back to work) until it is handed in again; a move out of the
+  check by the author itself is no return, and a later move by another name ends it. No fix writes a comment there: a newer comment of
+  another name would replace the reason under the assignee's task in `prime`.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
 - `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check, each with its ready command
