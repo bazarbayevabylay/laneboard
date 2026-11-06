@@ -77,7 +77,8 @@ describe('S6y over MCP', () => {
     expect(sh(s, (r.structuredContent as Record<string, string>).fix ?? '')).toBe(0);
     expect(stored(s, 'API-1')).toMatchObject({ status: 'in_progress', rev });
     const update = await callTool('task_update', { id: 'API-1', status: 'qa', actor: 'orch' }, env);
-    expect(update.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    // ALREADY_CLAIMED as task_finish (slice A2, LB-63.1).
+    expect(update.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
     const prime = (await callTool('task_prime', { actor: 'dev-1' }, env)).structuredContent as Record<string, any>;
     expect(prime.roles.feedback).toEqual([{ id: 'API-1', comment: expect.objectContaining({ actor: 'rev', text: 'Empty state text missing i18n' }), returned: { by: 'rev', at: expect.any(String) } }]);
   });

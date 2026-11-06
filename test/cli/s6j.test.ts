@@ -118,7 +118,10 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     expect(r.doc.error.message).not.toContain('laneboard update');
     const closing = await run(s, 'dev-b', ['update', 'API-1', '--status', 'done']);
     expect(closing.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for dev-a>" --as dev-b' });
-    // The orchestrator in review.by still closes by update (no acceptance mark).
+    // The orchestrator in review.by closes by update (no acceptance mark) only a task in the last check: from code_review the
+    // update would skip qa (slice A2, the check bypass), so it passes it on to qa with finish first.
+    expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).code).toBe(2);
+    expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'code ok'])).code).toBe(0);
     expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).code).toBe(0);
   });
 
@@ -250,8 +253,10 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
     expect((await run(s, 'dev-a', ['update', 'API-1', '--assignee', 'other'])).code).toBe(0);
     expect((await run(s, 'dev-a', ['update', 'API-1', '--status', 'done'])).doc.error.code).toBe('INVALID_VALUE');
     expect((await row(s, 'API-1')).status).toBe('dev');
-    // Somebody who never held it still closes it (review.by empty: anybody but the author).
-    expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).doc.data.status).toBe('done');
+    // Somebody who never held it does not close it either while it is not handed in (slice A2, the check bypass: was closed): its
+    // holder hands it in first.
+    expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'other' } });
+    expect((await row(s, 'API-1')).status).toBe('dev');
   });
 
   it('a key of a newer laneboard inside review is kept and not read: no STORE_INVALID, a warning, written back by config', async () => {

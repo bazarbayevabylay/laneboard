@@ -1,5 +1,6 @@
 // laneboard finish
 import { finishTask } from '../../core/index.ts';
+import type { WriteReply } from '../../core/index.ts';
 import { flag, str } from './args.ts';
 import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
@@ -11,7 +12,7 @@ export const finish: CommandDef = {
     'Close your task in one write: the result comment, a link to the current git commit (HEAD of this folder; --commit SHA: that commit, ' +
     'e.g. from your git worktree when you run finish elsewhere; --no-commit: none), then the final status ' +
     '(--status: any but the first one, e.g. review to hand in). Only the assignee (or anybody for an unassigned task); no --expected-rev. ' +
-    'Your finish into a status that is not final hands the task in (the status event says handed_in). ' +
+    'Your finish into a status that is not final hands the task in (the status event and the reply say handed_in). ' +
     "Somebody else's task only to accept it after its assignee handed it in with finish: into the final status, no commit link (the status event says accepted). " +
     'Commit your changes first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). ' +
     'In the main checkout of a repository whose other worktrees have newer commits: a warning naming them, with the command that fixes the link. ' +
@@ -26,6 +27,8 @@ export const finish: CommandDef = {
   async run(c) {
     const r = await finishTask(c.op(), { id: c.positionals[0] ?? '', result: str(c.values, 'result') as string, status: str(c.values, 'status'), commit: str(c.values, 'commit'), no_commit: flag(c.values, 'no-commit') || undefined });
     const what = r.reply === undefined || r.unchanged === true ? 'unchanged' : r.reply.accepted === true ? 'accepted' : r.reply.passed === true ? `passed to ${r.data.status}` : r.handed_in === true ? 'handed in' : 'finished';
-    return taskReply(c, r, what);
+    const out = taskReply(c, r, what);
+    // A hand-in says so in the short reply too (LB-63.3), not only in the human line; --full shows the task, whose status event says it.
+    return r.handed_in === true && !flag(c.values, 'full') ? { ...out, data: { ...(out.data as WriteReply), handed_in: true } } : out;
   },
 };

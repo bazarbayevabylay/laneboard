@@ -106,8 +106,9 @@ describe('S6w I1: a task enters a check only handed in with finish (update, clai
     it(`${l.name}: anybody else moving a task in work into a check gets the comment to the holder; run as printed, nothing moves`, async () => {
       const s = await board(l);
       const r = await run(s, 'orch', ['update', 'API-1', '--status', l.checks[0] ?? '']);
-      expect(r.code).toBe(2);
-      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 "hand it in: laneboard finish API-1 --status ${l.checks[0]} --result <result>" --as orch` });
+      // ALREADY_CLAIMED, as a checker's finish of that task (slice A2, LB-63.1: was INVALID_VALUE).
+      expect(r.code).toBe(4);
+      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: `laneboard comment API-1 "hand it in: laneboard finish API-1 --status ${l.checks[0]} --result <result>" --as orch` });
       expect(sh(s, r.doc.error.fix)).toBe(0);
       const after = await task(s, 'API-1');
       expect(after).toMatchObject({ status: l.work, assignee: 'dev-1' });
@@ -419,10 +420,13 @@ describe('S6w review r1', () => {
       expect(handIn).toBe(`laneboard finish API-1 --status ${l.checks[0]} --result "<what you did, how you checked it>" --as dev-1`);
       expect(sh(s, handIn)).toBe(0);
       expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], handed_in: true });
+      // A close by update skips no check (slice A2, the check bypass): with two checks rev passes it on to the last one first.
+      const last = l.checks.at(-1) ?? l.final;
+      if (last !== l.checks[0]) expect((await run(s, 'rev', ['finish', 'API-1', '--status', last, '--result', 'code ok'])).code).toBe(0);
       const closed = await run(s, 'orch', ['update', 'API-1', '--status', l.final]);
       expect(closed.code).toBe(0);
       const note = closed.doc.warnings.find((w: string) => w.includes('was handed in')) as string;
-      expect(note).toContain(`a check passes it on or accepts it with finish --status ${l.checks[1] ?? l.final}, not by a move`);
+      expect(note).toContain(`a check passes it on or accepts it with finish --status ${l.final}, not by a move`);
       const comment = /record the result with (laneboard comment .+)$/.exec(note)?.[1] ?? '';
       expect(comment).toBe('laneboard comment API-1 "<result of your check>"');
       expect(sh(s, `${comment} --as orch`)).toBe(0);
@@ -450,7 +454,8 @@ describe('S6w review r1', () => {
     const s = await closedTask(ONE);
     const r = await run(s, 'dev-2', ['update', 'API-1', '--status', 'review']);
     expect(r.doc.error).toMatchObject({
-      code: 'INVALID_VALUE',
+      // ALREADY_CLAIMED: somebody else holds it (slice A2, LB-63.1: was INVALID_VALUE).
+      code: 'ALREADY_CLAIMED',
       fix: 'laneboard comment API-1 "hand it in: laneboard update API-1 --status in_progress && laneboard finish API-1 --status review --result <result>" --as dev-2',
     });
     expect(sh(s, r.doc.error.fix)).toBe(0);

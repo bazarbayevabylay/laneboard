@@ -248,7 +248,8 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     await createTask(as(s, 'a'), { title: 'Fix login', status: 'todo' });
     await claimTask(as(s, 'dev-1'), { id: 'LB-1', status: 'in_progress' });
     const r = JSON.parse((await cli(['finish', 'LB-1', '--result', 'Ready for review', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
-    expect(r.data).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'dev-1', commit: head });
+    // handed_in: the reply says the hand-in (slice A2, LB-63.3).
+    expect(r.data).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'dev-1', commit: head, handed_in: true });
     expect(r.warnings).toEqual([]);
     expect(stored(s, 'LB-1').events.slice(-3).map((e) => [e.type, e.data])).toEqual([
       ['commented', { text: 'Ready for review', result: true }],

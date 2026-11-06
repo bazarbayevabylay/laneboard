@@ -312,6 +312,8 @@ describe('S7a U6: the documented return for rework is confirmed, not warned', ()
       'API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-1',
     ]);
     const t = await waiting(LAYOUTS[0]?.statuses ?? [], ['code_review', 'qa'], 'in_progress');
+    // A close by update skips no check (slice A2, the check bypass): rev passes it on to qa, the last check, first.
+    expect((await cli(['finish', 'API-1', '--status', 'qa', '--result', 'code ok', '--as', 'rev'], { cwd: t.root })).code).toBe(0);
     const closed = JSON.parse((await cli(['update', 'API-1', '--status', 'done', '--as', 'orch', '--json'], { cwd: t.root })).stdout);
     expect(closed.data.returned).toBeUndefined();
     expect(closed.warnings[0]).toContain('API-1 was handed in; closed by this move it has no result of a check and no acceptance mark');

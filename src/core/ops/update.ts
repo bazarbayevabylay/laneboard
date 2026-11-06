@@ -537,7 +537,35 @@ function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string
   if (refusal === 'check') throw checkEntryRefusal(config, task, actor, to, sessionBase);
   if (refusal === 'not-checker') throw notChecker(task.id, task.assignee, actor, reviewers(config));
   if (refusal === 'holder') throw handInToFirstCheck(config, task, final, actor, 'update');
+  // LB-63.6: a name that may not check a task waiting for a check never moves it out of the check either (a return for rework is the
+  // checkers'), so it never takes the task in two steps (update --status, then update --assignee itself). Its author keeps the move.
+  if (waitsInCheck(config, task) && !workedOn(task, actor, sessionBase) && !mayCheck(config, task, actor, sessionBase)) throw waitingMoveRefusal(config, task, actor);
+  // The check is never bypassed (LB triage, A2): update closes only a task that waits in the last check (the acceptance by a move, A17).
+  if (to === final && !finalStatuses(config.statuses).includes(task.status)) {
+    const unchecked = uncheckedClose(config, task, actor);
+    if (unchecked !== undefined) throw unchecked;
+  }
   return handedIn(task, config) ? handInLostWarning(config, task, to, holder) : undefined;
+}
+
+// The refusal of update --status <final> by a checker (or anybody, when review.by is not set) of a task that did not get through the
+// checks before the last one (A2, the check bypass): a task waiting in an earlier check is passed on with finish (unclearCheck: its fix
+// reads the task); a task not handed in is handed in first, by its holder (notHandedInForCheck), by whoever did its work when it is
+// unassigned (handInToFirstCheck), and a task returned for rework comes back by its holder's hand-in (returnedForRework). undefined:
+// the task waits in the last check, so the move is the acceptance (the A17 warning says it has no result of a check).
+function uncheckedClose(config: ConfigT, task: TaskT, actor: string): LaneboardError | undefined {
+  const review = reviewStatuses(config);
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  if (waitsInCheck(config, task)) {
+    const next = nextAfterCheck(config, task.status);
+    if (next === final) return undefined;
+    const left = review.slice(review.indexOf(task.status) + 1);
+    return unclearCheck(config, task, actor, `update never closes it: ${left.join(', ')} ${left.length === 1 ? 'is' : 'are'} still to check, and a check passes it on with finish`);
+  }
+  if (task.assignee === null) return handInToFirstCheck(config, task, final, actor, 'update');
+  const back = reworkReturn(config, task);
+  if (back !== undefined) return returnedForRework(task, back, actor);
+  return notHandedInForCheck(task.id, task.assignee, task.status, actor, handInStatus(review, task));
 }
 
 // Why a board with checks refuses to put `task` into `to` by `actor` (P1, P2): 'author' - the author of the work (authorMoves);
@@ -748,7 +776,21 @@ function waitingTakeRefusal(config: ConfigT, task: TaskT, actor: string): Lanebo
     `${task.id} is handed in and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): ` +
     `you may not check it (config review.by: ${reviewers(config).join(', ')}), so you never take it: update --assignee takes no task that waits for a check, as claim does not; ` +
     `a note for the checkers is a comment${noCheckerExit(config, task)}`;
-  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor}`;
+  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor} --json`;
+  if (task.assignee !== null) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: task.assignee }, fix });
+  return new LaneboardError('INVALID_VALUE', message, { fix });
+}
+
+// The refusal of update --status <a work status> of a task that waits for a check by a name that may not check it and did not work on
+// it (LB-63.6, the other order of waitingTakeRefusal: a return for rework by another hand, then update --assignee itself). The same
+// codes and fix as waitingTakeRefusal; the message names who returns it for rework.
+function waitingMoveRefusal(config: ConfigT, task: TaskT, actor: string): LaneboardError {
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const message =
+    `${task.id} is handed in and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): ` +
+    `you may not check it (config review.by: ${reviewers(config).join(', ')}), so you never move it out of the check: a checker passes it on with finish or returns it for rework; ` +
+    `a note for the checkers is a comment${noCheckerExit(config, task)}`;
+  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor} --json`;
   if (task.assignee !== null) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: task.assignee }, fix });
   return new LaneboardError('INVALID_VALUE', message, { fix });
 }
@@ -844,7 +886,7 @@ function handInOutsideCheck(config: ConfigT, task: TaskT, target: string, text: 
 // task is closed, never was handed in, its first move after the hand-in is the author's, or the events limit dropped the hand-in.
 // One definition for the refusals of a stale check (returnedForRework), the returner's warning (noReasonWarning) and the author's
 // feedback in prime and task_prime (S6z U1 run 7: a comment from before the last hand-in is never shown as the reason).
-export interface ReworkReturn {
+interface ReworkReturn {
   actor: string;
   at: string;
   from: string;
@@ -885,17 +927,18 @@ export function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undef
 // The refusal of somebody else's check, acceptance or move into a check of a task returned for rework (reworkReturn, S6y U2 run 6): its
 // holder works on it, nothing is to check. The fix only reads the task (I3), never a comment asking to hand it in: the rework is not
 // done, and under a returned task the holder's prime shows only the returner's comment since the hand-in (S6z, feedbackOf), so a note of
-// another name never reaches it there and one of the returner itself would become the reason (ADR §54 r1). `code`: the refusal's own.
-function returnedForRework(code: 'ALREADY_CLAIMED' | 'INVALID_VALUE', task: TaskT, r: ReworkReturn, actor: string): LaneboardError {
+// another name never reaches it there and one of the returner itself would become the reason (ADR §54 r1). ALREADY_CLAIMED whether it
+// came by finish or by update (LB-63.1: one situation, one code; its holder works on it).
+function returnedForRework(task: TaskT, r: ReworkReturn, actor: string): LaneboardError {
   const holder = task.assignee ?? 'its next holder';
   const why = r.reason === undefined ? 'with no comment' : `reason: ${JSON.stringify(r.reason.text)}`;
   const mover = r.actor === actor ? 'you' : r.actor;
   const note = r.actor === actor ? `a comment from you now would become the reason in ${holder}'s prime` : `under it ${holder}'s prime shows only what ${r.actor} commented since the hand-in, never a note from you`;
   return new LaneboardError(
-    code,
+    'ALREADY_CLAIMED',
     `${task.id} was returned for rework by ${mover} at ${r.at} (${r.from} -> ${r.to}), ${why}; it is ${task.status} with ${holder} and not handed in, so there is nothing to check: ` +
       `it comes back to the checkers' queue (laneboard prime) when ${holder} hands it in again; ${note}, so the fix only reads the task`,
-    code === 'ALREADY_CLAIMED' ? { details: { assignee: task.assignee }, fix: `laneboard get ${task.id}` } : { fix: `laneboard get ${task.id}` },
+    { details: { assignee: task.assignee }, fix: `laneboard get ${task.id}` },
   );
 }
 
@@ -983,8 +1026,8 @@ function unclearCheck(config: ConfigT, task: TaskT, actor: string, why: string):
 // The refusal of update or claim into a check (S6w I1, reviewMoveRefusal 'check'): a task enters a check only by finish. A checker of a
 // task that waits in a check gets unclearCheck (pass with finish --status, or return), a name not in review.by notChecker (a comment);
 // its holder or author (or anybody, for an unassigned task) the hand-in with finish into the check it is in, else the first check;
-// anybody else the comment that asks the holder to hand it in, unless a checker returned it for rework (returnedForRework: a read, S6y
-// U2). No refusal's fix moves the task.
+// anybody else the comment that asks the holder to hand it in (ALREADY_CLAIMED, LB-63.1), unless a checker returned it for rework
+// (returnedForRework: a read, S6y U2). No refusal's fix moves the task.
 function checkEntryRefusal(config: ConfigT, task: TaskT, actor: string, to: string, sessionBase: string | undefined): LaneboardError {
   const review = reviewStatuses(config);
   const final = finalStatuses(config.statuses)[0] ?? '';
@@ -1004,8 +1047,10 @@ function checkEntryRefusal(config: ConfigT, task: TaskT, actor: string, to: stri
     });
   }
   const back = reworkReturn(config, task);
-  if (back !== undefined) return returnedForRework('INVALID_VALUE', task, back, actor);
-  return new LaneboardError('INVALID_VALUE', `${message}; ${task.id} is held by ${task.assignee}: ask it to ${reopen === '' ? '' : 'reopen and '}hand the task in (${reopen}laneboard finish ${task.id} --status ${first})`, {
+  if (back !== undefined) return returnedForRework(task, back, actor);
+  // ALREADY_CLAIMED, as a checker's finish of that task (notHandedInForCheck, LB-63.1): somebody else holds it and has not handed it in.
+  return new LaneboardError('ALREADY_CLAIMED', `${message}; ${task.id} is held by ${task.assignee}: ask it to ${reopen === '' ? '' : 'reopen and '}hand the task in (${reopen}laneboard finish ${task.id} --status ${first})`, {
+    details: { assignee: task.assignee },
     fix: `laneboard comment ${task.id} "hand it in: ${reopen}laneboard finish ${task.id} --status ${first} --result <result>" --as ${actor}`,
   });
 }
@@ -1122,9 +1167,9 @@ const WORKTREES_SHOWN = 3;
 // server started in the project root) without commit or cwd, and other worktrees of the repository have another HEAD committed since
 // the actor's work began (any, when that is unknown). It names the folder, its HEAD and those worktrees (newest first). The fix never
 // guesses (it may be run blindly, rule 13): one such worktree gets the exact relink command; with several only the agent knows which
-// one holds its work, so the command takes the sha of it as a placeholder (refused as is: --commit takes hex only), and
-// the link of this HEAD stays: the fix never removes a link (the owner or the agent drops it by hand after checking). Finish from a linked worktree (also of a bare repository, which has no
-// main checkout) links that worktree's HEAD and gets none. `status`: the task's status after finish, for the command.
+// one holds its work, so the command links the sha of it, a placeholder (refused as is: --commit takes hex only), and only then, after
+// `&&`, drops the link of this HEAD (LB-55.2: one command, never a removal run blindly). Finish from a linked worktree (also of a bare
+// repository, which has no main checkout) links that worktree's HEAD and gets none. `status`: the task's status after finish, for the command.
 async function worktreeWarning(cwd: string, id: string, linked: string, workStart: string | undefined, actor: string, status: string): Promise<string | undefined> {
   const trees = await readWorktrees(cwd);
   if (trees?.main === undefined || !samePath(trees.main, trees.here)) return undefined;
@@ -1141,12 +1186,33 @@ async function worktreeWarning(cwd: string, id: string, linked: string, workStar
   const branch = trees.list.find((w) => samePath(w.path, main))?.branch ?? 'detached';
   const fix =
     only !== undefined
-      ? `if your work is in one of them, link its commit instead: laneboard update ${id} --remove-link commit=${linked} --add-link commit=${only.head} --as ${actor}`
-      : `if your work is in one of them, link the HEAD of yours (listed above): laneboard finish ${id} --status ${status} --commit <HEAD of your worktree> --result "<your result>" --as ${actor}; ` +
-        `the link of this one stays: drop it by hand once you have checked which commit holds your work`;
+      ? `if your work is in one of them, link its commit instead: laneboard update ${id} --remove-link commit=${linked} --add-link commit=${only.head} --as ${actor} --json`
+      : `if your work is in one of them, link the HEAD of yours (listed above) instead of this one: laneboard finish ${id} --status ${status} --commit <HEAD of your worktree> --result "<your result>" --as ${actor} --json ` +
+        `&& laneboard update ${id} --remove-link commit=${linked} --as ${actor} --json`;
   return (
     `the linked commit ${linked.slice(0, 12)} is HEAD of ${trees.here} (${branch}), the main checkout, and ${which}: ${named.join(', ')}; ${fix} ` +
     `(next time run finish in that folder or pass --commit <sha>; MCP task_finish: cwd "<that folder>" or commit "<sha>")`
+  );
+}
+
+// Do two commit refs name one commit: equal, or one is a prefix of at least 7 hex digits of the other (a link added by hand may be short).
+function sameCommit(a: string, b: string): boolean {
+  const [short, long] = a.length <= b.length ? [a.toLowerCase(), b.toLowerCase()] : [b.toLowerCase(), a.toLowerCase()];
+  return /^[0-9a-f]{7,}$/.test(short) && long.startsWith(short);
+}
+
+// Warning that the commit finish just linked to `id` is linked to other tasks (active or archived) already (LB-55.1): HEAD of a folder
+// where another agent committed and finished is not this agent's work. A warning, not a refusal: one commit may hold the work of two
+// tasks. The fix links the commit of the agent's work, a placeholder (refused as is: --commit takes hex only), and only then drops this
+// link (worktreeWarning's way). Tasks the actor holds itself do not count: one commit for two of its own tasks is its choice.
+// undefined: no other task links it.
+function commitLinkedWarning(tasks: readonly TaskT[], id: string, commit: string, status: string, actor: string): string | undefined {
+  const others = tasks.filter((t) => t.id !== id && t.assignee !== actor && t.links.some((l) => l.kind === 'commit' && sameCommit(l.ref, commit)));
+  if (others.length === 0) return undefined;
+  const named = others.map((t) => (t.assignee === null ? t.id : `${t.id} of ${t.assignee}`)).join(', ');
+  return (
+    `commit ${commit.slice(0, 12)} is already linked to ${named}: if it holds the work of both, nothing to do; if it is not your work (HEAD of a folder where another agent committed), ` +
+    `link the commit of yours instead: laneboard finish ${id} --status ${status} --commit <sha of your work> --result "<your result>" --as ${actor} --json && laneboard update ${id} --remove-link commit=${commit} --as ${actor} --json`
   );
 }
 
@@ -1216,7 +1282,7 @@ function checkerFinish(
   // A handed-in task waits for the check whoever holds it now: unassigned or given to another name (review r2, S6w r1).
   if (!handedIn(task, s.config)) {
     const back = reworkReturn(s.config, task);
-    throw refused(back === undefined ? notHandedInForCheck(id, holder, task.status, actor, handInStatus(review, task)) : returnedForRework('ALREADY_CLAIMED', task, back, actor));
+    throw refused(back === undefined ? notHandedInForCheck(id, holder, task.status, actor, handInStatus(review, task)) : returnedForRework(task, back, actor));
   }
   // The repeat of the actor's own pass into this status (a lost reply: the same --status again) changes nothing.
   if (passedBy(task) === actor && p.status === task.status) {
@@ -1332,7 +1398,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         }
         if (!handedIn(task, s.config)) {
           const back = reworkReturn(s.config, task);
-          throw refused(back === undefined ? notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses) : returnedForRework('ALREADY_CLAIMED', task, back, actor));
+          throw refused(back === undefined ? notHandedIn(id, holder, task.status, actor, finals.join(''), s.config.statuses) : returnedForRework(task, back, actor));
         }
         touch(task, s.now, actor);
         // The result mark (ADR §27): only finish writes it, so readers tell the result from other comments.
@@ -1376,6 +1442,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         addEvent(task, s.config, s.now, actor, 'updated', { links: [task.links, links] }, actorSourceOf(ctx));
         task.links = links;
         linked = true;
+        const shared = commitLinkedWarning([...s.active.tasks, ...s.archive.tasks], id, newCommit, status, actor);
+        if (shared !== undefined) warnings.push(shared);
       }
       if (again) {
         // The status event of the first hand-in stays the newest one into this status, so the task stays handed in (handedIn).
@@ -1399,14 +1467,13 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
     },
     txOptions(ctx, warnings),
   );
-  // An acceptance links no commit, so the checkout of who accepts says nothing about the work.
-  if (!byOther) warnings.push(...checkoutWarnings(taskId, git, workStart, p.commit !== undefined));
   // Only HEAD of the command's own folder can be another worktree's wrong commit; a named commit or folder is the caller's choice.
   const where = p.commit === undefined && p.cwd === undefined ? ctx.cwd : undefined;
-  if (!byOther && commit !== undefined && where !== undefined) {
-    const other = await worktreeWarning(where, taskId, commit, workStart, actor, data.status);
-    if (other) warnings.push(other);
-  }
+  const other = !byOther && commit !== undefined && where !== undefined ? await worktreeWarning(where, taskId, commit, workStart, actor, data.status) : undefined;
+  // An acceptance links no commit, so the checkout of who accepts says nothing about the work. With the worktree warning the "HEAD has
+  // not moved since you claimed" one says the same thing worse (LB-55.3: run finish again here would link the same HEAD), so it is left out.
+  if (!byOther) warnings.push(...checkoutWarnings(taskId, git, other === undefined ? workStart : undefined, p.commit !== undefined));
+  if (other !== undefined) warnings.push(other);
   if (finished && byOther) {
     const from = checkedFrom === undefined ? {} : { from: checkedFrom };
     return { data, warnings, reply: passedOn ? { commit: null, passed: true, ...from } : { commit: null, accepted: true, ...from } };
