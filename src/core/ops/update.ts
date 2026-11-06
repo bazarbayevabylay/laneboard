@@ -772,8 +772,8 @@ export function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undef
   const comments = since.filter((e) => e.type === 'commented' && e.actor === move.actor);
   const reason = lastComment({ ...task, events: comments }) ?? undefined;
   // A later move by a name that is no author ends the return only when it put the task back into a check (or, without checks, into the
-  // status it was handed in to: ADR §43 A14, s4 LB-9) or the return has no reason to bury (review r2); a move into work or the first
-  // status by the orchestrator keeps it, so a stale check never gets the "hand it in" comment that would push the reason out of prime.
+  // status it was handed in to: ADR §43 A14, s4 LB-9) or the return has no reason (review r2); a move into work or the first status by
+  // the orchestrator keeps it, so a stale check still gets the refusal that names the reason, never a "hand it in" comment (§54 r1).
   const handedTo = events[handIn]?.data.to;
   const intoCheck = (to: unknown): boolean => reviewStatuses(config).includes(String(to)) || to === handedTo;
   const later = moves.slice(1).filter((e) => !workedOn(task, e.actor));
@@ -782,16 +782,18 @@ export function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undef
 }
 
 // The refusal of somebody else's check, acceptance or move into a check of a task returned for rework (reworkReturn, S6y U2 run 6): its
-// holder works on it, nothing is to check. The fix only reads the task (I3): a comment asking the holder to hand it in would be the newest
-// comment of another name, so the holder's prime (feedback) would show it instead of the reason of the return. `code`: the refusal's own.
+// holder works on it, nothing is to check. The fix only reads the task (I3), never a comment asking to hand it in: the rework is not
+// done, and under a returned task the holder's prime shows only the returner's comment since the hand-in (S6z, feedbackOf), so a note of
+// another name never reaches it there and one of the returner itself would become the reason (ADR §54 r1). `code`: the refusal's own.
 function returnedForRework(code: 'ALREADY_CLAIMED' | 'INVALID_VALUE', task: TaskT, r: ReworkReturn, actor: string): LaneboardError {
   const holder = task.assignee ?? 'its next holder';
   const why = r.reason === undefined ? 'with no comment' : `reason: ${JSON.stringify(r.reason.text)}`;
   const mover = r.actor === actor ? 'you' : r.actor;
+  const note = r.actor === actor ? `a comment from you now would become the reason in ${holder}'s prime` : `under it ${holder}'s prime shows only what ${r.actor} commented since the hand-in, never a note from you`;
   return new LaneboardError(
     code,
     `${task.id} was returned for rework by ${mover} at ${r.at} (${r.from} -> ${r.to}), ${why}; it is ${task.status} with ${holder} and not handed in, so there is nothing to check: ` +
-      `it comes back to the checkers' queue (laneboard prime) when ${holder} hands it in again; a note now would bury that reason in ${holder}'s prime, so the fix only reads the task`,
+      `it comes back to the checkers' queue (laneboard prime) when ${holder} hands it in again; ${note}, so the fix only reads the task`,
     code === 'ALREADY_CLAIMED' ? { details: { assignee: task.assignee }, fix: `laneboard get ${task.id}` } : { fix: `laneboard get ${task.id}` },
   );
 }
@@ -958,7 +960,7 @@ function handInStatuses(statuses: readonly string[]): string {
 
 // ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix is one
 // command run as is (rule 13): the comment asking the holder to hand it in; the message names the orchestrator's update (LB-11 d). A task
-// returned for rework gets returnedForRework instead (S6y U2: the comment would bury the reason).
+// returned for rework gets returnedForRework instead (S6y U2, ADR §54 r1: its holder reworks it, nothing to hand in yet).
 function notHandedIn(id: string, holder: string, current: string, actor: string, final: string, statuses: readonly string[]): LaneboardError {
   const handIn = handInStatuses(statuses);
   return new LaneboardError(

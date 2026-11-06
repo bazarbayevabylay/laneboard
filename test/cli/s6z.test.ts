@@ -246,5 +246,56 @@ describe('S6z U5: the SessionStart hook shows the reason of a return under an ea
     expect(out.replace(/\n$/, '').length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
     expect(out).toMatch(/\n {2}API-1 {2}\[in_progress\] .*\n {4}last comment by rev: > 1: reason/);
     expect(out).toContain('more (7 in all): laneboard list --sessions-of');
+    // r1: the feedback covers the listed resumable only (SUMMARY_RESUMABLE_MAX), never all seven.
+    const data = (await run(s, '', ['prime'], SESSION_2)).doc.data;
+    const listed = (data.resumable as Array<{ id: string }>).map((t) => t.id);
+    expect(listed).toEqual(['API-1', 'API-2', 'API-3', 'API-4', 'API-5']);
+    expect((data.roles.feedback as Array<{ id: string }>).map((f) => f.id)).toEqual(listed);
+  });
+
+  it('r1: an earlier session\'s own note on its task is no feedback (the task\'s holder is the reader\'s name); another name\'s note is', async () => {
+    const s = await newStore({ prefix: 'API', statuses: ONE.statuses });
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'review', '--reviewers', 'rev'])).code).toBe(0);
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'todo'])).code).toBe(0);
+    expect((await run(s, '', ['claim', 'API-1', '--status', 'in_progress'], SESSION_1)).code).toBe(0);
+    expect((await run(s, '', ['comment', 'API-1', 'wip: my own note'], SESSION_1)).code).toBe(0);
+    const out = await hook(s);
+    expect(out).toMatch(/\n {2}API-1 {2}\[in_progress\] .*session 11111111 {2}Add endpoint\n/);
+    expect(out).not.toContain('wip: my own note');
+    expect((await run(s, '', ['prime'], SESSION_2)).doc.data.roles.feedback).toEqual([]);
+    // Control: a note of another name on the same task is feedback, and the own note stays out.
+    expect((await run(s, 'rev', ['comment', 'API-1', 'start with the schema'])).code).toBe(0);
+    const again = await hook(s);
+    expect(again).toMatch(/\n {2}API-1 {2}\[in_progress\] .*\n {4}last comment by rev: > start with the schema\n/);
+    expect(again).not.toContain('wip: my own note');
+    expect((await run(s, '', ['prime'], SESSION_2)).doc.data.roles.feedback).toEqual([
+      { id: 'API-1', comment: expect.objectContaining({ actor: 'rev', text: 'start with the schema' }), returned: null },
+    ]);
+  });
+});
+
+describe('S6z r1: the refusal of a stale check of a returned task says what reaches the holder\'s prime', () => {
+  it('another name\'s stale pass: its note would not reach prime (and does not); the returner\'s own: its comment becomes the reason', async () => {
+    const s = await board(TWO);
+    expect((await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work', '--no-commit'])).code).toBe(0);
+    expect((await run(s, 'rev', ['comment', 'API-1', 'R1: totals'])).code).toBe(0);
+    expect((await run(s, 'rev', ['update', 'API-1', '--status', 'dev'])).code).toBe(0);
+    const other = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'ok']);
+    expect(other.code).not.toBe(0);
+    expect(other.doc.error.fix).toBe('laneboard get API-1');
+    expect(other.doc.error.message).toContain(
+      "when dev-1 hands it in again; under it dev-1's prime shows only what rev commented since the hand-in, never a note from you, so the fix only reads the task",
+    );
+    expect(other.doc.error.message).not.toContain('bury');
+    // What the message says: orch's note does not replace rev's reason in dev-1's prime.
+    expect((await run(s, 'orch', ['comment', 'API-1', 'hand it in: please'])).code).toBe(0);
+    expect(await primeText(s, 'dev-1')).toContain('    last comment by rev: > R1: totals');
+    const own = await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'ok']);
+    expect(own.doc.error.fix).toBe('laneboard get API-1');
+    expect(own.doc.error.message).toContain("when dev-1 hands it in again; a comment from you now would become the reason in dev-1's prime, so the fix only reads the task");
+    expect(own.doc.error.message).not.toContain('bury');
+    // And the returner's comment does become the reason.
+    expect((await run(s, 'rev', ['comment', 'API-1', 'R2: rounding too'])).code).toBe(0);
+    expect(await primeText(s, 'dev-1')).toContain('    last comment by rev: > R2: rounding too');
   });
 });

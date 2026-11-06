@@ -558,7 +558,8 @@ against an agent's mistake, not against a hostile agent.
   `laneboard get <ID>`: the message names who returned it, when and why (that name's newest comment since the hand-in, before or after
   its move). It stays so after the assignee moves the task on (to `blocked`, back to work) until it is handed in again; a move out of the
   check by the author itself is no return; a later move by another name ends it only back into a check, or when the return had no
-  reason. No fix writes a comment there: a newer comment of another name would replace the reason under the assignee's task in `prime`.
+  reason. No fix writes a comment there: the assignee reworks the task, and under it `prime` shows only the returner's comment since
+  the hand-in, never a note of another name (a comment of the returner itself becomes the reason).
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
 - `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check, each with its ready command

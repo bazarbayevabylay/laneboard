@@ -252,8 +252,9 @@ export interface PrimeData {
   resumable_total?: number;
   // Only with --all-boards: every board of the machine (ADR §29), the current one first.
   boards?: OverviewBoard[];
-  // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, the newest
-  // comment of another name on each own task.
+  // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, and the feedback
+  // under each own and listed resumable task (S6z): the reason of a return for rework (null with `returned`: none given), else the newest
+  // comment of another name since the last hand-in (SummaryRoles.feedback in core/ops/read.ts).
   roles?: SummaryRoles;
 }
 

@@ -774,3 +774,11 @@ Checks
   orch's return, another name's comment, ended return, never handed in control, no-checks control, --dir, U2 repro, U5 hook with a
   reason and none, 7 resumable within PRIME_MAX_CHARS), test/mcp/s6z.test.ts; updated: s6w I3 (the return in the message has the
   placeholder, run with a reason in its place), s6m and mcp/s6y feedback (`returned`). Golden files: none changed.
+- Review r1 (supersedes §53 "a comment would bury the reason" as the ground of `returnedForRework`'s read-only fix): since U1 a note of
+  another name never reaches the author's feedback under a returned task, so the refusal no longer says it would. The refusal stays: the
+  task is not handed in, so a pass, an acceptance or a move into a check would break I1/I2 (nothing to check); its fix stays `laneboard
+  get <ID>` (I3): a "hand it in" comment asks for unfinished rework, and the returner's own comment would become the reason. The message
+  now says what reaches the holder's prime: from another name "under it <holder>'s prime shows only what <returner> commented since the
+  hand-in, never a note from you"; from the returner "a comment from you now would become the reason in <holder>'s prime". README, README.ru
+  (the unclearCheck placeholder line under the checker's finish in both) and the agent guide follow. Checks: s6z "S6z r1" block, U5 own
+  note of an earlier session (task.assignee is the reader's name), 7 resumable give 5 feedback entries. Golden files: none changed.
