@@ -219,6 +219,7 @@ laneboard config --review-statuses none --reviewers none --json
   the checkers left, else the owner's `config --reviewers`. A check needs no assignment: `finish <ID> --status <next>`.
 - Nobody claims a task waiting in a check: a check needs no claim (`finish --status <next>`), and the claim would make the checker
   an author. A checker's `claim` gets the fix `laneboard get <ID>`, the message names the pass and the return; anybody else a comment.
+  The return named in such a message carries `-- '<why it goes back>'` for its reason, never the text of the refused command.
   `prime` lists such a task under "Waiting for your check", never among the free tasks.
 - No checker left (every name in `--reviewers` worked on a waiting task, say the orchestrator gave it to the only checker): the
   refusals, `prime` and `doctor` (check `checks`, exit 6) name the owner's way out, `laneboard config --reviewers "<names>,<another checker>"`.
@@ -228,7 +229,10 @@ laneboard config --review-statuses none --reviewers none --json
 - `config --review-statuses` that turns a status with tasks in work into a check warns with each task and its holder's
   `finish <ID> --status <check> ...`; until then `doctor` reports them (check `checks`, exit 6).
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
-- Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
+- Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` (and the SessionStart
+  hook, for a task of an earlier session) shows that comment: only the returner's comment since the last hand-in, never one from an
+  earlier round. A return with no comment warns the returner with `laneboard comment <ID> --as <checker> -- '<why it goes back>'`, and
+  the assignee's `prime` says "returned for rework by <checker> at <time> with no reason - ask them or see laneboard get <ID>".
   Another checker's stale `finish` (or `update` into a check) of the returned task gets the fix `laneboard get <ID>`, the message names
   who returned it, when and why (the returner's comment since the hand-in), also after the assignee moved it (say to `blocked`), until
   it is handed in again: no fix writes a comment that would push that reason out of the assignee's `prime`. The author's own move out

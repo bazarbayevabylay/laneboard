@@ -260,7 +260,7 @@ describe('B-U6 and P1 (6): prime on a board with checks', () => {
     expect((await run(s, 'dev-a', ['comment', 'API-1', 'On it'])).code).toBe(0);
     expect(await primeText(s, 'dev-a')).toContain('last comment by rev: > Needs a test for the empty body');
     const json = (await run(s, 'dev-a', ['prime'])).doc.data;
-    expect(json.roles.feedback).toEqual([{ id: 'API-1', comment: { at: expect.any(String), actor: 'rev', text: 'Needs a test for the empty body', result: false } }]);
+    expect(json.roles.feedback).toEqual([{ id: 'API-1', comment: { at: expect.any(String), actor: 'rev', text: 'Needs a test for the empty body', result: false }, returned: { by: 'rev', at: expect.any(String) } }]);
   });
 
   it('stays under PRIME_MAX_CHARS with long titles, own tasks with comments, a long queue, free tasks and long checker names', async () => {

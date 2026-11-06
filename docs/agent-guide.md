@@ -283,7 +283,8 @@ same user and harness qualifies; a task of an explicit name (`dev-1` above, or `
 `--resume`. `ALREADY_CLAIMED` on a task of an earlier session offers `claim <ID> --resume --json` as its fix once that session has written
 nothing for 15 minutes; before that the fix is a comment and the message names `--resume`, and a `--resume` then works with a warning
 (a parallel live session of the same user has the same base: resume only your own work that matches the current request).
-On a board with checks a task handed in and waiting for a check is no work to resume: "Your earlier sessions" does not list it, and
+On a board with checks a task returned for rework shows its reason under its line there, as under an own task (or "returned for rework
+by <checker> ... with no reason"). A task handed in and waiting for a check is no work to resume: "Your earlier sessions" does not list it, and
 `claim --resume` of it gets "handed in already". Another session of the same base that worked on a task (by the events it wrote
 under its default name) is its author: it never passes it on or accepts it, and its queue "Waiting for your check" skips it.
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
@@ -510,7 +511,8 @@ against an agent's mistake, not against a hostile agent.
 - A checker's `finish` without `--status`, with the check the task is in, or past the next status is refused (`INVALID_VALUE`): it may
   come from a read before another checker passed the task on, so it would pass the next check unseen. The fix only reads the task,
   `laneboard get <ID>`; the message names both exact commands, the pass (`finish <ID> --status <next> --result "<result of your check>"`)
-  and the return for rework (below). The same command run again after a lost reply (the same `--status`) changes nothing.
+  and the return for rework (below) with a placeholder for its reason, `-- '<why it goes back>'`, never your `--result` (a stale "Code ok"
+  would become the reason). The same command run again after a lost reply (the same `--status`) changes nothing.
 - A task enters a check only with `finish` (handed in by its holder, or passed on by the check before), so it always shows in the
   checkers' queue: `update`, `claim`, `create` and `import` into a check are refused. The fix of the holder (or of anybody for an
   unassigned task) is the hand-in, `laneboard finish <ID> --status <check> --result "<what you did, how you checked it>"`; of a checker
@@ -541,7 +543,13 @@ against an agent's mistake, not against a hostile agent.
   or the final status gets `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment; it never
   goes back to an earlier check. `finish` without `--status` there records a new result after rework, the status stays.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
-  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. A checker's
+  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. The reason is
+  only the returner's newest comment since the last hand-in (before or after its move): a comment from an earlier round is never shown.
+  A return with none warns the returner with `laneboard comment <ID> --as <checker> -- '<why it goes back>'` (a comment written then
+  becomes the reason), and the assignee's `prime` says `returned for rework by <checker> at <time> with no reason - ask them or see
+  laneboard get <ID>` (`task_prime` and `prime --json`: `roles.feedback[]` `{id, comment: null, returned: {by, at}}`; with a reason
+  `comment` is that comment). Under any other own task `prime` shows the newest comment of another name since its last hand-in. The
+  SessionStart hook shows the same line under a task of an earlier session ("Your earlier sessions"). A checker's
   `finish --status` with an earlier check, a work status (wherever it lies, also between two checks) or the first status is refused
   (`INVALID_VALUE`): its fix is this return,
   `laneboard comment <ID> --as <checker> -- '<result>' && laneboard update <ID> --status <work status> --as <checker>`, never a `finish`

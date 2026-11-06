@@ -10,7 +10,7 @@ import { checkActor, checkLabel, checkStatus, DEFAULT_LIST_LIMIT, deletedField, 
 import type { DeletedMark, FieldInfo, LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { foreignTask, linkedTasks, missingTask } from './links.ts';
 import type { LinkedTask } from './links.ts';
-import { addCheckerCommand, handedIn, nextAfterCheck, noCheckerLeft, passedOnBy, waitsForCheck, waitsInCheck, workStatusBeforeChecks } from './update.ts';
+import { addCheckerCommand, handedIn, lastHandInIndex, nextAfterCheck, noCheckerLeft, passedOnBy, reworkReturn, waitsForCheck, waitsInCheck, workStatusBeforeChecks } from './update.ts';
 import type { ActorSource } from '../agent-name.ts';
 import type { StoreRef } from '../store.ts';
 
@@ -455,17 +455,31 @@ export interface SummaryRoles {
   // Tasks waiting in a check with no checker left (S6w r2: every name in review.by worked on them), and the owner's command that adds a
   // checker (config --reviewers with the names there and a placeholder); null when there is none.
   no_checker: { ids: string[]; fix: string } | null;
-  // Each task of `assigned` with a comment by another name: the newest such comment (a checker's reason to return it, B-U6).
-  feedback: Array<{ id: string; comment: LastComment }>;
+  // Each task of `assigned` and of the listed `resumable` (S6z U5 run 7) with something from another name to act on (B-U6, S6z U1):
+  // a task returned for rework (reworkReturn, the definition of the stale-check refusals) has `returned` {by, at} and as `comment` the
+  // returner's newest comment since the last hand-in, or null when it gave no reason (prime: "returned for rework by <by> at <at>
+  // with no reason"); any other task the newest comment of another name since its last hand-in (all of them for a task never handed
+  // in), `returned` null. A comment from before the last hand-in is never shown: its point was fixed and handed in.
+  feedback: Array<{ id: string; comment: LastComment | null; returned: { by: string; at: string } | null }>;
 }
 
 // How many tasks waiting for the agent's check the summary lists (the rest: list --json, handed_in).
 export const SUMMARY_WAITING_MAX = 5;
 
-// The newest comment of `task` written by a name other than `actor`, as lastComment shows a comment; null without one.
-function otherComment(task: TaskT, actor: string): LastComment | null {
-  const others = { ...task, events: task.events.filter((e) => e.type !== 'commented' || e.actor !== actor) };
-  return lastComment(others);
+// The newest comment of `task` since its last hand-in or pass (all events for a task never handed in) written by none of `own`, as
+// lastComment shows a comment; null without one.
+function otherComment(task: TaskT, own: ReadonlyArray<string | null>): LastComment | null {
+  const since = task.events.slice(lastHandInIndex(task) + 1);
+  return lastComment({ ...task, events: since.filter((e) => e.type === 'commented' && !own.includes(e.actor)) });
+}
+
+// The feedback entry of `task` for its holder (SummaryRoles.feedback), or undefined when there is nothing from another name. `own`:
+// the names that are the reader's (the summary's assignee and the task's holder, an earlier session of it for a resumable task).
+function feedbackOf(config: ConfigT, task: TaskT, own: ReadonlyArray<string | null>): SummaryRoles['feedback'][number] | undefined {
+  const back = reworkReturn(config, task);
+  if (back !== undefined) return { id: task.id, comment: back.reason ?? null, returned: { by: back.actor, at: back.at } };
+  const comment = otherComment(task, own);
+  return comment === null ? undefined : { id: task.id, comment, returned: null };
 }
 
 // The roles of the board (SummaryRoles) for `assignee`, or undefined on a board without checks and create_by (as before, ADR §22).
@@ -474,6 +488,7 @@ function summaryRoles(
   config: ConfigT,
   tasks: ReadonlyArray<{ task: TaskT; archived: boolean }>,
   assigned: readonly TaskT[],
+  resumable: readonly TaskT[],
   assignee: string | undefined,
   sessionBase: string | undefined,
 ): SummaryRoles | undefined {
@@ -483,9 +498,9 @@ function summaryRoles(
   waiting.sort((a, b) => -byUpdatedDesc(a.task, b.task));
   const stuck = tasks.filter(({ task }) => noCheckerLeft(config, task)).map(({ task }) => task.id);
   const feedback: SummaryRoles['feedback'] = [];
-  for (const task of assigned) {
-    const comment = checks.length === 0 || assignee === undefined ? null : otherComment(task, assignee);
-    if (comment !== null) feedback.push({ id: task.id, comment });
+  for (const task of checks.length === 0 || assignee === undefined ? [] : [...assigned, ...resumable]) {
+    const entry = feedbackOf(config, task, [assignee ?? null, task.assignee]);
+    if (entry !== undefined) feedback.push(entry);
   }
   return {
     checks,
@@ -546,7 +561,14 @@ export async function taskSummary(ctx: OpContext, input: SummaryInputT): Promise
       ? []
       : tasks.filter(({ task }) => heldBySessionsOf(config, task, p.session_base, p.assignee ?? ''));
   resumable.sort((a, b) => -byUpdatedDesc(a.task, b.task));
-  const roles = summaryRoles(config, tasks, assigned.map(({ task }) => task), p.assignee, p.session_base);
+  const roles = summaryRoles(
+    config,
+    tasks,
+    assigned.map(({ task }) => task),
+    resumable.slice(0, SUMMARY_RESUMABLE_MAX).map(({ task }) => task),
+    p.assignee,
+    p.session_base,
+  );
   return {
     data: {
       prefix: config.prefix,

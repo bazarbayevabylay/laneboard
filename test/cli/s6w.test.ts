@@ -249,15 +249,17 @@ describe('S6w I3: no fix of a checker refusal passes on or accepts; the message 
       message:
         'API-1 is handed in and waits in qa (code_review -> qa -> done); --status qa is the check it is in now; a checker\'s finish names where it goes (--status done). ' +
         'Read it first (laneboard get API-1), then either accept it into done: laneboard finish API-1 --status done --result "<result of your check>" --as orch; ' +
-        "or return it for rework: laneboard comment API-1 --as orch -- 'qa failed: crash on submit' && laneboard update API-1 --status dev --as orch",
+        "or return it for rework: laneboard comment API-1 --as orch -- '<why it goes back>' && laneboard update API-1 --status dev --as orch",
       fix: 'laneboard get API-1',
     });
     expect(sh(s, r.doc.error.fix)).toBe(0);
     expect(await task(s, 'API-1')).toMatchObject({ status: 'qa', rev: before.rev });
-    // The pass named in the message never carries the failure text; the return does, and runs as printed.
+    // Neither named command carries the caller's result (S6z U2: a stale "Code ok" would become the reason); the return, with its
+    // placeholder replaced by the reason, runs as printed.
     const { pass, back } = namedCommands(r.doc.error.message);
     expect(pass).not.toContain('failed');
-    expect(sh(s, back)).toBe(0);
+    expect(back).not.toContain('failed');
+    expect(sh(s, back.replace("'<why it goes back>'", "'qa failed: crash on submit'"))).toBe(0);
     const after = await task(s, 'API-1');
     expect(after).toMatchObject({ status: 'dev', assignee: 'dev-1' });
     expect(after.events.at(-2)).toMatchObject({ type: 'commented', actor: 'orch', data: { text: 'qa failed: crash on submit' } });
@@ -275,7 +277,7 @@ describe('S6w I3: no fix of a checker refusal passes on or accepts; the message 
         expect(sh(s, r.doc.error.fix)).toBe(0);
         expect(await task(s, 'API-1'), check).toMatchObject({ status: check, rev: before.rev });
         const { pass, back } = namedCommands(r.doc.error.message);
-        expect(back, check).toBe(`laneboard comment API-1 --as orch -- '- needs rework: no tests' && laneboard update API-1 --status ${l.work} --as orch`);
+        expect(back, check).toBe(`laneboard comment API-1 --as orch -- '<why it goes back>' && laneboard update API-1 --status ${l.work} --as orch`);
         const next = l.checks[i + 1] ?? l.final;
         expect(sh(s, pass), check).toBe(0);
         expect((await task(s, 'API-1')).status, check).toBe(next);
