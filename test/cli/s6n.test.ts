@@ -203,6 +203,25 @@ describe('import checklist (P6)', () => {
     expect(readStore(b.dir, 'active')).toEqual(before);
   });
 
+  // LB-64.3, review r1: the --status check is for checklist flags only. A markdown file imported before is skipped as it is:
+  // its status changed in the file to a value the board does not have does not stop the import of a new file.
+  it('markdown: a file imported before with a new unknown status is skipped, a new file is imported', async () => {
+    const b = await board();
+    fs.mkdirSync(path.join(b.root, 'tasks'));
+    const md = (title: string, stage: string): string => `---\ntitle: ${title}\nstage: ${stage}\n---\n`;
+    fs.writeFileSync(path.join(b.root, 'tasks', 'a.md'), md('one', 'todo'));
+    const first = await b.json(['import', 'markdown', 'tasks', '--status-key', 'stage', '--as', 'c']);
+    expect(first.code).toBe(0);
+    const a = first.data.created[0].id;
+    fs.writeFileSync(path.join(b.root, 'tasks', 'a.md'), md('one', 'blocked'));
+    fs.writeFileSync(path.join(b.root, 'tasks', 'b.md'), md('two', 'todo'));
+    const again = await b.json(['import', 'markdown', 'tasks', '--status-key', 'stage', '--as', 'c']);
+    expect(again.code, JSON.stringify(again.error)).toBe(0);
+    expect(again.data.skipped).toEqual([{ id: a, source: 'tasks/a.md' }]);
+    expect(again.data.created).toMatchObject([{ source: 'tasks/b.md', title: 'two', status: 'todo' }]);
+    expect(byTitle(b).get('one')).toMatchObject({ status: 'todo' });
+  });
+
   it('usage: --status is required, key options are markdown/json only, checklist options are checklist only, an unknown status names --status', async () => {
     const b = await board();
     expect((await b.json(['import', 'checklist', 'TODO.md'])).error).toMatchObject({ code: 'USAGE', fix: 'laneboard import checklist TODO.md --json --status <status>' });

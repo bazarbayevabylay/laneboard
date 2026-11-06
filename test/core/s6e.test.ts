@@ -613,4 +613,16 @@ describe('archive of an open task with an assignee (LB-64.4)', () => {
     expect(held.warnings).toEqual(['LB-1 is in_progress (not a final status) and assigned to other: archived anyway; to bring it back: laneboard restore LB-1']);
     expect((await archiveTasks(as(s, 'owner'), { ids: ['LB-2', 'LB-3'] })).warnings).toEqual([]);
   });
+
+  // Review r1: the bulk form names the status itself, so a warning on each task it picks would be noise.
+  it('the bulk form (status + updated_before) archives an open task with an assignee without a warning', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'open, held, old', status: 'in_progress', assignee: 'other' });
+    const active = readStore(s.dir, 'active');
+    const tasks = active.tasks.map((t) => ({ ...t, updated_at: '2020-01-01T00:00:00.000Z' }));
+    writeRaw(path.join(s.dir, 'active.json'), `${JSON.stringify({ ...active, tasks, content_sha256: contentSha(tasks) }, null, 2)}\n`);
+    const bulk = await archiveTasks(as(s, 'owner'), { status: 'in_progress', updated_before: '1d' });
+    expect(bulk.data.archived).toEqual([{ id: 'LB-1', rev: 2 }]);
+    expect(bulk.warnings).toEqual([]);
+  });
 });

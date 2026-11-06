@@ -41,6 +41,10 @@ export type ImportTaskT = z.infer<typeof ImportTask>;
 export const ImportInput = z.strictObject({
   tasks: z.array(ImportTask),
   dry_run: z.boolean().optional(),
+  // The statuses come from the command's options (import checklist --status / --done-status), not from the files:
+  // an unknown one is a mistake of the command and is checked on skipped sources too (LB-64.3). Statuses read from
+  // files (markdown, json) are checked only on new tasks: a source imported before is skipped as it is.
+  statuses_from_options: z.boolean().optional(),
 });
 export type ImportInputT = z.infer<typeof ImportInput>;
 
@@ -166,6 +170,7 @@ function plan(
   archive: StoreFileT,
   tasks: readonly ImportTaskT[],
   actor: string | undefined,
+  statusesFromOptions: boolean,
 ): { fresh: ImportTaskT[]; skipped: ImportResult['skipped']; parents: Map<string, string | null> } {
   const known = importedSources([active, archive]);
   const fresh: ImportTaskT[] = [];
@@ -182,8 +187,8 @@ function plan(
     const before = known.get(t.source);
     if (before !== undefined) {
       skipped.push({ id: before.id, source: t.source });
-      // An unknown status is a mistake of the command even when nothing is new (LB-64.3): the same error as on a fresh file.
-      if (!config.statuses.includes(t.status)) note(problems.statuses, t.status, t.source);
+      // A status from the command's options is a mistake of the command even when nothing is new (LB-64.3): the same error as on a fresh file.
+      if (statusesFromOptions && !config.statuses.includes(t.status)) note(problems.statuses, t.status, t.source);
     } else fresh.push(t);
   }
   for (const t of fresh) checkTask(config, t, problems);
@@ -229,7 +234,7 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
     const view = await readBoth(ctx.store, { lockWaitMs: ctx.lockWaitMs, warnings });
     // Who may create tasks (P2) is asked in a dry run too, when the name is known.
     if (ctx.actor !== undefined) checkCreator(view.config, view.active, ctx.actor);
-    const { fresh, skipped, parents } = plan(view.config, view.active, view.archive, p.tasks, ctx.actor);
+    const { fresh, skipped, parents } = plan(view.config, view.active, view.archive, p.tasks, ctx.actor, p.statuses_from_options === true);
     // A subtask of a new parent has no parent id yet: parent_source names that parent (LB-64.1).
     const created = fresh.map((t) => {
       const parent = parents.has(t.source) ? (parents.get(t.source) ?? null) : undefined;
@@ -243,7 +248,7 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
     { files: ['active', 'archive'] },
     (s) => {
       checkCreator(s.config, s.active, actor);
-      const { fresh, skipped, parents } = plan(s.config, s.active, s.archive, p.tasks, actor);
+      const { fresh, skipped, parents } = plan(s.config, s.active, s.archive, p.tasks, actor, p.statuses_from_options === true);
       if (s.active.next_id === undefined) throw new LaneboardError('STORE_INVALID', 'active.json next_id is missing');
       // next_id never decreases and never reuses an id, even after a hand edit (W9).
       const max = maxIdNumber(s.active.tasks, s.archive.tasks);
