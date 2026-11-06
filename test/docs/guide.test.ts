@@ -1,4 +1,5 @@
-// The docs are executable: every ```sh block of docs/agent-guide.md, README.md (and README.ru.md once it exists) runs, in order, in one
+// The docs are executable: every ```sh block of docs/agent-guide.md, the other docs/*.md listed in FILES, README.md (and README.ru.md once
+// it exists) runs, in order, in one
 // bash session in a fresh temp project and temp HOME, through the CLI compiled from src/ (tsc, as `npm run build` does: one node start
 // per command, without type stripping). A command must exit 0, or the code named by a trailing `# exit <n>`.
 // ```json file=<path> blocks are written to that path at their place. Only blocks marked <!-- guide:skip <reason> --> do not run
@@ -137,6 +138,15 @@ function run(steps: readonly Step[]): { failed?: Step; code?: number; log: strin
 const RU_README = path.join(REPO, 'README.ru.md');
 const FILES: Array<[string, number]> = [
   ['docs/agent-guide.md', 40],
+  // The pages the README links to for details; each starts with its own `init`, so it runs on its own.
+  ['docs/install.md', 7],
+  ['docs/configuration.md', 9],
+  ['docs/task-cycle.md', 11],
+  ['docs/agent-names.md', 5],
+  ['docs/orchestrators.md', 17],
+  ['docs/monorepo.md', 6],
+  ['docs/board-http-api.md', 3],
+  ['docs/storage.md', 4],
   ['README.md', 8],
   ...(fs.existsSync(RU_README) ? [['README.ru.md', 8] as [string, number]] : []),
 ];
@@ -158,6 +168,13 @@ describe('README.ru.md mirrors README.md', () => {
     const en = path.join(REPO, 'README.md');
     expect(headingLevels(RU_README)).toEqual(headingLevels(en));
     expect(parse(RU_README).steps.length).toBe(parse(en).steps.length);
+  });
+});
+
+describe('docs/*.md', () => {
+  it('every page of docs/ is listed in FILES, so its sh blocks run', () => {
+    const pages = fs.readdirSync(path.join(REPO, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`);
+    expect(pages.filter((p) => !FILES.some(([file]) => file === p))).toEqual([]);
   });
 });
 
