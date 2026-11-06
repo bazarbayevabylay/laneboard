@@ -291,20 +291,24 @@ function closedEarlierSessionTask(config: ConfigT, id: string, holder: string, s
   );
 }
 
-// Did `holder` take `task` back with claim --resume itself (the event that gave it the task is its `assigned` event with `resumed: true`)?
-function resumedByHolder(task: TaskT, holder: string): boolean {
+// Milliseconds since `holder` took `task` back with claim --resume itself (the event that gave it the task is its `assigned` event
+// with `resumed: true`); undefined when it holds the task by another event (its own claim, create, a reassignment).
+function resumedByHolderAgo(task: TaskT, holder: string, now: string): number | undefined {
   const e = assignmentEvent(task);
-  return e !== undefined && e.type === 'assigned' && e.actor === holder && e.data.resumed === true;
+  if (e === undefined || e.type !== 'assigned' || e.actor !== holder || e.data.resumed !== true) return undefined;
+  return Math.max(0, Date.parse(now) - Date.parse(e.at));
 }
 
-// ALREADY_CLAIMED for a task another session of the actor's default name took back with claim --resume and that wrote less than
-// EARLIER_SESSION_SILENT_MS ago (LB-54.4): two new sessions resumed the same task, and it stays with the first. The fix is the comment;
-// the message names when it may be resumed (that session silent for EARLIER_SESSION_SILENT_MS, then earlierSessionClaimed offers it).
-function resumedByLiveSession(id: string, holder: string, actor: string, silentMs: number): LaneboardError {
+// ALREADY_CLAIMED for a task another session of the actor's default name took back with claim --resume less than
+// EARLIER_SESSION_SILENT_MS ago (LB-54.4): two sessions resume the same task one right after the other (two tabs after one restart),
+// and it stays with the first. An older resume is the next /clear of a long task: that one takes the usual path (exit 0, the warning
+// of resumeWarnings), review A1 r1. The fix is the comment; the message names when it may be resumed.
+function resumedByLiveSession(id: string, holder: string, actor: string, resumedAgo: number): LaneboardError {
   return new LaneboardError(
     'ALREADY_CLAIMED',
-    `task ${id} was taken back with claim --resume by ${holder}, another session of your default name that wrote ${minutesText(silentMs)} ago: two sessions resumed the same task, ` +
-      `and it stays with the one that took it first, so do not take it over; if that session is closed, the task can be resumed once it has written nothing for ${minutesText(EARLIER_SESSION_SILENT_MS)}: laneboard claim ${id} --resume`,
+    `task ${id} was taken back with claim --resume by ${holder}, another session of your default name, ${minutesText(resumedAgo)} ago: ` +
+      `a task resumed within ${minutesText(EARLIER_SESSION_SILENT_MS)} stays with the session that took it, as another one may be a parallel session at work, so do not take it over; ` +
+      `if that session is closed, the task can be resumed once its resume is ${minutesText(EARLIER_SESSION_SILENT_MS)} old: laneboard claim ${id} --resume`,
     { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
   );
 }
@@ -324,9 +328,9 @@ function claimWorkStatus(config: ConfigT): string | undefined {
 // less than EARLIER_SESSION_SILENT_MS ago (a parallel session may still be at work: two tabs after a restart, A-U6) and names the
 // parent task held by the same session (finish of the parent needs it back too, A-U2). On a board with checks a task that waits for a check
 // is claimed by nobody (S6w r2, waitingClaimRefusal): a checker checks it with finish, and a claim would make the checker its author.
-// LB-54: a closed task of an earlier session is not resumed (closedEarlierSessionTask), nor one another session resumed and still writes
-// in (resumedByLiveSession); --resume of a free task warns that it was a plain claim. Without --status an own or resumed task in the
-// first status moves into the work status (claimWorkStatus, LB-54.2, LB-57.4).
+// LB-54: a closed task of an earlier session is not resumed (closedEarlierSessionTask), nor one another session resumed less than
+// EARLIER_SESSION_SILENT_MS ago (resumedByLiveSession); --resume of a free task warns that it was a plain claim. Without --status
+// an own or resumed task in the first status moves into the work status (claimWorkStatus, LB-54.2, LB-57.4).
 export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(ClaimInput, input);
@@ -346,8 +350,8 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const earlier = heldByEarlierSession(task, ctx.sessionBase, actor);
       if (earlier && holder !== null) {
         if (finalStatuses(s.config.statuses).includes(task.status)) throw closedEarlierSessionTask(s.config, id, holder, task.status, actor);
-        const silent = silentFor(s.active.tasks, holder, s.now);
-        if (resumedByHolder(task, holder) && silent < EARLIER_SESSION_SILENT_MS) throw resumedByLiveSession(id, holder, actor, silent);
+        const resumedAgo = resumedByHolderAgo(task, holder, s.now);
+        if (resumedAgo !== undefined && resumedAgo < EARLIER_SESSION_SILENT_MS) throw resumedByLiveSession(id, holder, actor, resumedAgo);
       }
       const resumed = p.resume === true && earlier;
       if (holder !== null && holder !== actor && !resumed) {

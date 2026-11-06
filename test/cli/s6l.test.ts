@@ -142,7 +142,7 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
 });
 
 describe('P5 (A-U6): a resume of a session active less than 15 min ago warns', () => {
-  // Changed in 0.4.1 (LB-54.4): the second of two resumes of the same task is refused while the first session writes
+  // Changed in 0.4.1 (LB-54.4): the second of two resumes of the same task is refused while the first resume is younger than 15 min
   // (test/cli/lb54.test.ts); the warning stays for a session that holds the task by its own claim (a /clear right after it).
   it('two new sessions resume the same task: the first without a warning, the second ALREADY_CLAIMED; a live own claim: exit 0 with the warning', async () => {
     const s = await abandoned(16 * MIN);

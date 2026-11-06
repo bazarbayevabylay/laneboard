@@ -1,8 +1,8 @@
 // LB-54, LB-57.4, LB-63.6 (0.4.1, slice A1): claim and comment.
 // 54.1 claim --resume never takes a closed task of an earlier session (nor names --resume for it); 54.2 and 57.4 a claim without
 // --status of a task the actor holds or takes back with --resume moves it from the first status into the work status; 54.3 --resume of a
-// free task warns that it was a plain claim; 54.4 a task another session took back with --resume stays with it while that session
-// writes (the second of two parallel resumes is refused); 54.5 a comment of a session that lost its task says so; 63.6 a name that
+// free task warns that it was a plain claim; 54.4 a task another session took back with --resume less than 15 min ago stays with it
+// (the second of two parallel resumes is refused; a later resume, the next /clear, works with the warning); 54.5 a comment of a session that lost its task says so; 63.6 a name that
 // may not check a task waiting for a check never takes it with update --assignee (claim never does).
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTemp, cli, newStore } from '../helpers.ts';
@@ -129,8 +129,8 @@ describe('LB-54.3: --resume of a free task warns that it was a plain claim', () 
   });
 });
 
-describe('LB-54.4: a task taken back with --resume stays with that session while it writes', () => {
-  it('two new sessions resume the same task: the second is refused; once the first is silent 15 min, it resumes', async () => {
+describe('LB-54.4: a task taken back with --resume less than 15 min ago stays with that session', () => {
+  it('two new sessions resume the same task: the second is refused; once that resume is 15 min old, it resumes', async () => {
     const s = await earlierTask('doing', 16 * MIN);
     expect((await json(s, ['claim', 'WORD-1', '--resume'], SESSION_2)).doc.data).toMatchObject({ assignee: NAME_2, resumed_from: NAME_1 });
     later(30_000);
@@ -139,7 +139,7 @@ describe('LB-54.4: a task taken back with --resume stays with that session while
       expect(r.code, argv.join(' ')).toBe(4);
       expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: NAME_2 }, fix: `laneboard comment WORD-1 "<note for ${NAME_2}>" --as ${NAME_3}` });
       expect(r.doc.error.message, argv.join(' ')).toBe(
-        `task WORD-1 was taken back with claim --resume by ${NAME_2}, another session of your default name that wrote <1 min ago: two sessions resumed the same task, and it stays with the one that took it first, so do not take it over; if that session is closed, the task can be resumed once it has written nothing for 15 min: laneboard claim WORD-1 --resume`,
+        `task WORD-1 was taken back with claim --resume by ${NAME_2}, another session of your default name, <1 min ago: a task resumed within 15 min stays with the session that took it, as another one may be a parallel session at work, so do not take it over; if that session is closed, the task can be resumed once its resume is 15 min old: laneboard claim WORD-1 --resume`,
       );
     }
     expect((await json(s, ['get', 'WORD-1'], SESSION_3)).doc.data.assignee).toBe(NAME_2);
@@ -147,6 +147,33 @@ describe('LB-54.4: a task taken back with --resume stays with that session while
     const r = await json(s, ['claim', 'WORD-1', '--resume'], SESSION_3);
     expect(r.code).toBe(0);
     expect(r.doc.data).toMatchObject({ assignee: NAME_3, resumed_from: NAME_2 });
+  });
+
+  it('the resume is 14 min old and its session wrote just now: still refused (the age of the resume counts, not the last write)', async () => {
+    const s = await earlierTask('doing', 16 * MIN);
+    expect((await json(s, ['claim', 'WORD-1', '--resume'], SESSION_2)).code).toBe(0);
+    later(14 * MIN);
+    expect((await json(s, ['comment', 'WORD-1', 'still at it'], SESSION_2)).code).toBe(0);
+    const r = await json(s, ['claim', 'WORD-1', '--resume'], SESSION_3);
+    expect(r.code).toBe(4);
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: NAME_2 } });
+    expect(r.doc.error.message).toContain(`by ${NAME_2}, another session of your default name, 14 min ago`);
+  });
+
+  // Review A1 r1 (MAJOR): the second /clear of a long task. S2 took it back with --resume long ago and wrote a minute ago; S3 is the
+  // next session after a /clear, and the SessionStart hook offers it `claim --resume`: exit 0 with the warning, as on 0.4.0.
+  it('S1 -> S2 claim --resume -> S2 comment -> S3 claim --resume (a second /clear): exit 0 with the warning', async () => {
+    const s = await earlierTask('doing', 16 * MIN);
+    expect((await json(s, ['claim', 'WORD-1', '--resume'], SESSION_2)).doc.data).toMatchObject({ assignee: NAME_2, resumed_from: NAME_1 });
+    later(40 * MIN);
+    expect((await json(s, ['comment', 'WORD-1', 'step done'], SESSION_2)).code).toBe(0);
+    later(1 * MIN);
+    const r = await json(s, ['claim', 'WORD-1', '--resume'], SESSION_3);
+    expect(r.code).toBe(0);
+    expect(r.doc.data).toMatchObject({ status: 'doing', assignee: NAME_3, resumed_from: NAME_2 });
+    expect(r.doc.warnings).toEqual([
+      `WORD-1 taken from a session active 1 min ago (${NAME_2}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-1 "<note for ${NAME_2}>"`,
+    ]);
   });
 
   it('a live session that holds the task by its own claim: --resume still works, with the warning (a /clear right after the claim)', async () => {
@@ -213,6 +240,10 @@ describe('LB-63.6: a name that may not check a task waiting for a check never ta
       expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', message: MESSAGE, details: { assignee: 'dev-1' }, fix: 'laneboard comment API-1 "<note for the check>" --as x' });
     }
     expect((await json(s, ['get', 'API-1'])).doc.data).toMatchObject({ status: 'review', assignee: 'dev-1' });
+    // update --status alone never moves the assignee: the task stays dev-1's. Whether x may move it at all (a return for rework by
+    // another hand) is slice A2's (LB-63.6 stays open), so the exit code is not asserted here.
+    await json(s, ['update', 'API-1', '--status', 'in_progress', '--as', 'x']);
+    expect((await json(s, ['get', 'API-1'])).doc.data.assignee).toBe('dev-1');
   });
 
   it('unassigned while waiting: INVALID_VALUE with the same message', async () => {
