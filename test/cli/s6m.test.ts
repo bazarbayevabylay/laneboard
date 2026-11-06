@@ -189,7 +189,9 @@ describe('S6j tail: create and import right past the checks follow the author ru
     const fix: string = refused.doc.error.fix;
     expect(fix).toContain('laneboard import checklist TODO.md --status ready --done-status dev');
     const argv = (fix.match(/laneboard (import checklist [^;]*?)(?=;|$)/)?.[1] ?? '').split(' ');
-    const done = await run(s, 'dev-b', argv);
+    // The command carries --json (LB-63.2); run() adds its own after --as.
+    expect(argv.at(-1)).toBe('--json');
+    const done = await run(s, 'dev-b', argv.slice(0, -1));
     expect(done.code).toBe(0);
     expect(done.doc.data.created).toHaveLength(2);
   });

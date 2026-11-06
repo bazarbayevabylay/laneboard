@@ -158,7 +158,7 @@ describe('P5 (A-U6): a resume of a session active less than 15 min ago warns', (
     expect(taken.code).toBe(0);
     expect(taken.doc.data).toMatchObject({ assignee: NAME_3, resumed_from: NAME_1 });
     expect(taken.doc.warnings).toContain(
-      `WORD-2 taken from a session active <1 min ago (${NAME_1}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-2 "<note for ${NAME_1}>"`,
+      `WORD-2 taken from a session active <1 min ago (${NAME_1}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-2 "<note for ${NAME_1}>" --json`,
     );
   });
 

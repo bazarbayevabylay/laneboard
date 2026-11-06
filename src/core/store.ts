@@ -66,7 +66,7 @@ export function resolveStore(input: DiscoveryInput): StoreRef {
         });
       }
       throw new LaneboardError('STORE_NOT_FOUND', `${source} points to ${dir}, which is not a directory`, {
-        fix: `fix ${source} (laneboard boards --json lists this machine's boards with their paths); if this project has no board yet: laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>", then laneboard prime`,
+        fix: `fix ${source} (laneboard boards --json lists this machine's boards with their paths); if this project has no board yet: laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>" --json, then laneboard prime --json`,
       });
     }
     return { dir, found: input.dir !== undefined ? 'dir' : 'env' };
@@ -185,7 +185,8 @@ function pinnedAbove(ref: StoreRef, cwd: string, serverDir = false): boolean {
 
 // How the MCP server reports a store of another project (C-U1 run 2): its --dir is checked as LANEBOARD_DIR is (serverDir), and the
 // fix of that warning is the client's, since no tool takes a store path: `own` the board of cwd when one was found, `created` where
-// init would put one. A store from LANEBOARD_DIR or a parent folder keeps the CLI's text, the same for both.
+// init would put one. A store found in a parent folder gets the client's fix too (review D1: no tool takes --dir, prime has its own
+// tool); one from LANEBOARD_DIR keeps the CLI's text, the same for both.
 export interface ServerStoreCheck {
   fix: (own: string | undefined, created: string) => string;
 }
@@ -204,11 +205,11 @@ export function parentStoreWarning(ref: StoreRef, cwd: string, prefix: string | 
   // A new board goes to the folder of the marker, and by --dir: a bare init would take LANEBOARD_DIR, the store in use.
   const created = path.join(path.dirname(path.resolve(cwd, foreign.marker)), STORE_DIR_NAME);
   const fix =
-    server && ref.found === 'dir'
+    server && (ref.found === 'dir' || ref.found === 'parent')
       ? server.fix(own, created)
       : own
         ? `pass --dir ${shellQuote(own)} on every command`
-        : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${shellQuote(created)} --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(created)} on every command, starting with laneboard prime`;
+        : `find its own board with laneboard boards --json and pass --dir <its path> on every command, or create one: laneboard init --dir ${shellQuote(created)} --name <name> --description "<whose project, what work>" --json, then pass --dir ${shellQuote(created)} on every command, starting with laneboard prime --json`;
   return `using store ${ref.dir}${prefix ? ` (prefix ${prefix})` : ''} ${how}, but ${path.resolve(cwd)} looks like a separate project (${it}); unless this folder is part of that project, ${fix}`;
 }
 
@@ -232,7 +233,7 @@ function stalePin(input: DiscoveryInput): StoreRef | undefined {
 
 // The fix for a stale LANEBOARD_DIR pin: setup in the project root writes the pin again (to the board it finds there).
 function repinFix(board: string): string {
-  return `laneboard setup claude-code in ${shellQuote(path.dirname(board))} pins the session to it again (another harness: laneboard setup <harness> there); until the next session pass --dir ${shellQuote(board)} on every command`;
+  return `laneboard setup claude-code --json in ${shellQuote(path.dirname(board))} pins the session to it again (another harness: laneboard setup <harness> --json there); until the next session pass --dir ${shellQuote(board)} on every command`;
 }
 
 // Directory that init creates: --dir, then LANEBOARD_DIR, then `<cwd>/.laneboard`. Refuses (STORE_EXISTS) where cwd belongs to
@@ -251,7 +252,7 @@ export function initTarget(input: DiscoveryInput): string {
   const shared = repositoryStore(input.cwd, input.home);
   if (shared !== undefined && shared.found !== 'cwd') {
     throw new LaneboardError('STORE_EXISTS', `${path.resolve(input.cwd)} is part of board ${boardName(shared.dir)} of this git repository; init creates no second board here`, {
-      fix: `use that board: laneboard prime; only if this folder is a separate project with a board of its own: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>", then laneboard prime`,
+      fix: `use that board: laneboard prime --json; only if this folder is a separate project with a board of its own: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>" --json, then laneboard prime --json`,
     });
   }
   return own;
@@ -349,7 +350,7 @@ export function validateStoreJson(json: unknown, kind: FileKind, label: string, 
   const repeated = opts.allowDuplicateIds ? [] : repeatedIds(data.tasks);
   if (repeated.length) {
     throw new LaneboardError('STORE_INVALID', `duplicate id ${repeated.join(', ')} in ${label}: two tasks have the same id`, {
-      fix: 'laneboard doctor --fix (the copy created later gets a new id)',
+      fix: 'laneboard doctor --fix --json (the copy created later gets a new id)',
     });
   }
   return { data, version };
@@ -362,7 +363,7 @@ const CONFLICT_MARKER_RE = /^(<{7}|>{7})( |$)/m;
 function notJson(file: string, label: string, raw: string, err: Error): LaneboardError {
   if (CONFLICT_MARKER_RE.test(raw)) {
     return new LaneboardError('STORE_INVALID', `${label} has git merge conflict markers (<<<<<<< ... >>>>>>>): ${file}`, {
-      fix: `resolve the merge conflict in ${shellQuote(file)} (keep the tasks of both sides, then laneboard doctor --fix gives a repeated id a new one), or take one side: git checkout --ours ${shellQuote(file)}; last resort, the previous version: laneboard doctor --restore-backup`,
+      fix: `resolve the merge conflict in ${shellQuote(file)} (keep the tasks of both sides, then laneboard doctor --fix --json gives a repeated id a new one), or take one side: git checkout --ours ${shellQuote(file)}; last resort, the previous version: laneboard doctor --restore-backup --json`,
     });
   }
   return new LaneboardError('STORE_INVALID', `${label} is not valid JSON: ${err.message}`);
@@ -393,7 +394,7 @@ export function parseStoreFile(raw: string, file: string, kind: FileKind, label:
   }
   const { data, version } = validateStoreJson(json, kind, label, opts);
   if (contentSha(data.tasks) !== data.content_sha256) {
-    warnings.push(`${label} content_sha256 mismatch: the file was edited by hand; check it with laneboard doctor`);
+    warnings.push(`${label} content_sha256 mismatch: the file was edited by hand; check it with laneboard doctor --json`);
   }
   const beforeJson = JSON.stringify(data);
   return { kind, data, raw, version, beforeJson, beforeIds: new Set(data.tasks.map((t) => t.id)) };

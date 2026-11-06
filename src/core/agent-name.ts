@@ -20,7 +20,7 @@ export interface ResolvedActor {
 const SESSION_CHARS = 8;
 const MAX_ACTOR = 64;
 // The harness whose session id the CLI can read without setup (the Claude Code plugin).
-const SESSION_HARNESS = 'claude-code';
+export const SESSION_HARNESS = 'claude-code';
 
 // `user.name` from one git config file (only the [user] section; includes are not followed), or undefined.
 function gitUserName(file: string): string | undefined {

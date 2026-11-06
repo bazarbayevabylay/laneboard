@@ -230,16 +230,16 @@ function planWarnings(harness: string, plan: readonly PlannedFile[], keepers: Ke
     const checkouts = keepers.checkouts.get(p.file);
     const folders = keepers.folders.get(p.file);
     if (p.result === 'kept' && folders !== undefined) {
-      out.push(`${kept} the laneboard entry in ${p.shown}: setup in ${someOf(folders)} still uses it (laneboard setup <harness> --remove there removes it)`);
+      out.push(`${kept} the laneboard entry in ${p.shown}: setup in ${someOf(folders)} still uses it (laneboard setup <harness> --remove --json there removes it)`);
     } else if (p.result === 'kept' && checkouts !== undefined) {
-      out.push(`${kept} the laneboard block in ${p.shown}: setup in another checkout of this repository still uses it (${someOf(checkouts)}); laneboard setup <harness> --remove there removes it`);
+      out.push(`${kept} the laneboard block in ${p.shown}: setup in another checkout of this repository still uses it (${someOf(checkouts)}); laneboard setup <harness> --remove --json there removes it`);
     } else if (p.result === 'kept' && projects !== undefined) {
       out.push(
-        `${kept} the laneboard entry in ${p.shown} (a global file, other projects may use it: ${someOf(projects)}); laneboard setup ${harness} --remove --global removes it`,
+        `${kept} the laneboard entry in ${p.shown} (a global file, other projects may use it: ${someOf(projects)}); laneboard setup ${harness} --remove --global --json removes it`,
       );
     } else if (p.result === 'kept') {
       const names = keepers.harnesses.get(p.file) ?? [];
-      out.push(`${kept} the laneboard block in ${p.shown}: ${names.join(', ')} still use${names.length === 1 ? 's' : ''} it (laneboard setup ${names[0] ?? '<harness>'} --remove removes it)`);
+      out.push(`${kept} the laneboard block in ${p.shown}: ${names.join(', ')} still use${names.length === 1 ? 's' : ''} it (laneboard setup ${names[0] ?? '<harness>'} --remove --json removes it)`);
     }
     if (p.keptBackup) out.push(`${kept} ${bak} (your file before setup; not restored because the file changed since): delete it when not needed`);
   }
@@ -251,7 +251,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const harness = findHarness(input.harness);
   if (input.global && !input.remove) {
     throw new LaneboardError('USAGE', '--global goes with --remove: it also removes the entry from a global file other projects may use', {
-      fix: `laneboard setup ${harness.name}`,
+      fix: `laneboard setup ${harness.name} --json`,
       edit: { drop: [{ name: 'global' }] },
     });
   }
@@ -318,7 +318,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
     const prefix = storePrefix(context.storeDir);
     const own = path.join(cwd, STORE_DIR_NAME);
     warnings.push(
-      `pinned to the board of this git repository, ${context.storeDir}${prefix ? ` (prefix ${prefix})` : ''}, found above ${cwd}; only if this folder is a separate project: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>", then laneboard setup ${harness.name} --dir ${shellQuote(own)}`,
+      `pinned to the board of this git repository, ${context.storeDir}${prefix ? ` (prefix ${prefix})` : ''}, found above ${cwd}; only if this folder is a separate project: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>" --json, then laneboard setup ${harness.name} --dir ${shellQuote(own)} --json`,
     );
   }
   // The pin is written either way (init may follow), but a pin to nothing makes every laneboard command fail until then.
@@ -327,7 +327,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
     // init is refused, and it never sees a --dir of setup).
     const at = bareInitMakes(cwd, home, context.storeDir) ? '' : ` --dir ${shellQuote(context.storeDir)}`;
     warnings.push(
-      `no laneboard store at ${context.storeDir} yet: in ${cwd} run laneboard init${at} --name <name> --description "<whose project, what work>", then laneboard prime; or run setup again with --dir <the project's .laneboard>`,
+      `no laneboard store at ${context.storeDir} yet: in ${cwd} run laneboard init${at} --name <name> --description "<whose project, what work>" --json, then laneboard prime --json; or run setup again with --dir <the project's .laneboard>`,
     );
   }
   return {

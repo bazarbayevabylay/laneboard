@@ -172,7 +172,7 @@ describe('LB-54.4: a task taken back with --resume less than 15 min ago stays wi
     expect(r.code).toBe(0);
     expect(r.doc.data).toMatchObject({ status: 'doing', assignee: NAME_3, resumed_from: NAME_2 });
     expect(r.doc.warnings).toEqual([
-      `WORD-1 taken from a session active 1 min ago (${NAME_2}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-1 "<note for ${NAME_2}>"`,
+      `WORD-1 taken from a session active 1 min ago (${NAME_2}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-1 "<note for ${NAME_2}>" --json`,
     ]);
   });
 

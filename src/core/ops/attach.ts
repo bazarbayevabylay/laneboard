@@ -176,7 +176,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
         if (index < 0) {
           throw new LaneboardError('ATTACHMENT_NOT_FOUND', `${id} has no attachment "${name}"`, {
             allowed: task.attachments.map((a) => a.name),
-            fix: `see attachment names: laneboard get ${id}`,
+            fix: `see attachment names: laneboard get ${id} --json`,
           });
         }
         task.attachments.splice(index, 1);
@@ -218,7 +218,7 @@ export async function attachFile(ctx: OpContext, input: AttachInputT): Promise<O
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
       if (task.attachments.some((a) => a.name === name)) {
         throw new LaneboardError('ATTACHMENT_EXISTS', `${id} already has an attachment "${name}"`, {
-          fix: `pick another --name, or remove the old one first: laneboard attach ${id} --remove ${name}`,
+          fix: `pick another --name, or remove the old one first: laneboard attach ${id} --remove ${name} --json`,
         });
       }
       const dir = attachmentDir(storeDir, id);

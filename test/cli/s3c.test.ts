@@ -47,9 +47,9 @@ async function finish(s: TestStore, extra: string[] = ['--as', 'dev-1'], env: Re
 }
 
 const dirtyWarning = (sha: string) =>
-  `the working tree has uncommitted changes to tracked files, so the linked commit ${sha.slice(0, 12)} may not hold your work; commit your work and run laneboard finish LB-1 again to link the new commit (work without a commit: --no-commit)`;
+  `the working tree has uncommitted changes to tracked files, so the linked commit ${sha.slice(0, 12)} may not hold your work; commit your work and run laneboard finish LB-1 --json again to link the new commit (work without a commit: --no-commit)`;
 const staleWarning = (sha: string) =>
-  `the linked commit ${sha.slice(0, 12)} is from before your work: HEAD has not moved since you claimed LB-1; commit your work and run laneboard finish LB-1 again to link the new commit (work without a commit: --no-commit)`;
+  `the linked commit ${sha.slice(0, 12)} is from before your work: HEAD has not moved since you claimed LB-1; commit your work and run laneboard finish LB-1 --json again to link the new commit (work without a commit: --no-commit)`;
 
 describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
   it('changes staged but not committed (a pre-commit hook refused the commit): the warning', async () => {

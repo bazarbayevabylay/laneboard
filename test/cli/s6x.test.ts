@@ -228,7 +228,7 @@ describe('B-U2: a checker that gets a task waiting for its check is warned that 
     return s;
   }
   const HEAD = 'API-1 waits in review for a check, and you hold it now: a holder is an author of the work and never checks it (giving it to another name later does not change that); ';
-  const TAIL = '. A check needs no claim or assignment: a checker runs laneboard finish API-1 --status done --result "<result of your check>"';
+  const TAIL = '. A check needs no claim or assignment: a checker runs laneboard finish API-1 --status done --result "<result of your check>" --json';
 
   it('rev of rev,orch takes it: the check stays with orch, who accepts it', async () => {
     const s = await waiting('rev,orch');

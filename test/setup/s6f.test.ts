@@ -69,7 +69,7 @@ describe('A19: a pin of an earlier setup to a store that is gone is replaced (li
     expect(local.env).toEqual({ LANEBOARD_DIR: path.join(moved, '.laneboard'), LANEBOARD_DEFAULT_AGENT: 'claude-code@tester' });
     expect(r.warnings).toContain(
       `.claude/settings.local.json pinned LANEBOARD_DIR=${path.join(old, '.laneboard')}, which holds no store any more (the project folder was moved or renamed?), so setup pins ${path.join(moved, '.laneboard')} there instead; ` +
-        `laneboard boards --forget ${path.join(old, '.laneboard')} drops the old path from the machine registry`,
+        `laneboard boards --forget ${path.join(old, '.laneboard')} --json drops the old path from the machine registry`,
     );
     expect(fs.existsSync(old)).toBe(false);
     // The old entry is listed as missing until forget drops it; then one board is left, the moved one with its task.
@@ -113,7 +113,7 @@ describe('A19: a pin of an earlier setup to a store that is gone is replaced (li
       fs.writeFileSync(file, JSON.stringify({ env }));
       const r = await run(proj, home, ['setup', 'claude-code']);
       expect(r.code).toBe(6);
-      expect(r.json.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `laneboard setup claude-code --dir ${env.LANEBOARD_DIR}` });
+      expect(r.json.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `laneboard setup claude-code --dir ${env.LANEBOARD_DIR} --json` });
       expect(JSON.parse(fs.readFileSync(file, 'utf8')).env).toEqual(env);
     }
   });
@@ -143,7 +143,7 @@ describe('A20: setup codex --remove keeps the global entry while another project
     const r = await ok(a, home, ['setup', 'codex', '--remove']);
     expect(result(r, '~/.codex/config.toml')).toBe('kept');
     expect(result(r, 'AGENTS.md')).toBe('deleted');
-    expect(r.warnings).toEqual([`kept the laneboard entry in ~/.codex/config.toml (a global file, other projects may use it: ${b}); laneboard setup codex --remove --global removes it`]);
+    expect(r.warnings).toEqual([`kept the laneboard entry in ~/.codex/config.toml (a global file, other projects may use it: ${b}); laneboard setup codex --remove --global --json removes it`]);
     expect(fs.readFileSync(config, 'utf8')).toBe(before);
     const all = await ok(a, home, ['setup', 'codex', '--remove', '--global']);
     expect(result(all, '~/.codex/config.toml')).toBe('deleted');
@@ -197,8 +197,8 @@ describe('A20: setup codex --remove keeps the global entry while another project
 
 describe('A21: a registry folder that cannot be written is a warning (newcomer F3)', () => {
   const warning = (home: string): string =>
-    `this board is not in the machine registry (${path.join(home, '.laneboard')} cannot be written: EACCES), so laneboard boards does not list it and its prefix was checked only against the boards listed there; ` +
-    'once that folder is writable, laneboard config --name <name> in the project adds it';
+    `this board is not in the machine registry (${path.join(home, '.laneboard')} cannot be written: EACCES), so laneboard boards --json does not list it and its prefix was checked only against the boards listed there; ` +
+    'once that folder is writable, laneboard config --name <name> --json in the project adds it';
 
   it('read-only HOME: init and config exit 0 with the warning; init says registered false', async () => {
     const home = tempDir();
@@ -326,7 +326,7 @@ describe('A22: backups and folder markers stay out of git (newcomer F6, F11)', (
     await ok(proj, home, ['setup', 'gemini']);
     const first = await ok(proj, home, ['setup', 'cursor', '--remove']);
     expect(result(first, '.git/info/exclude')).toBe('kept');
-    expect(first.warnings).toContain('kept the laneboard block in .git/info/exclude: gemini still uses it (laneboard setup gemini --remove removes it)');
+    expect(first.warnings).toContain('kept the laneboard block in .git/info/exclude: gemini still uses it (laneboard setup gemini --remove --json removes it)');
     // AGENTS.md of cursor is not gemini's file, so it goes; the exclude block alone does not count as gemini or cursor being set up.
     expect(result(first, 'AGENTS.md')).toBe('deleted');
     const last = await ok(proj, home, ['setup', 'gemini', '--remove']);
@@ -380,7 +380,7 @@ describe('CARRYOVER S6b-r2: a file shared through a link is one file for --remov
     await ok(proj, home, ['setup', 'codex']);
     const r = await ok(proj, home, ['setup', 'codex', '--remove']);
     expect(result(r, 'AGENTS.md')).toBe('kept');
-    expect(r.warnings).toContain('kept the laneboard block in AGENTS.md: claude-code still uses it (laneboard setup claude-code --remove removes it)');
+    expect(r.warnings).toContain('kept the laneboard block in AGENTS.md: claude-code still uses it (laneboard setup claude-code --remove --json removes it)');
     expect(fs.readFileSync(path.join(proj, 'AGENTS.md'), 'utf8')).toContain('<!-- laneboard:start -->');
   });
 });
@@ -400,7 +400,7 @@ describe('A23: boards --forget drops an entry whose path holds no store (LB-26)'
     expect(live.code).toBe(2);
     expect(live.json.error).toMatchObject({ code: 'INVALID_VALUE', details: { path: path.join(b, '.laneboard'), prefix: 'KEEP' } });
     // An agent may run the fix blindly: it never moves or deletes the live board.
-    expect(live.json.error?.fix).toBe('nothing to do: a live board stays listed; laneboard boards shows the entries marked missing, the only ones --forget drops');
+    expect(live.json.error?.fix).toBe('nothing to do: a live board stays listed; laneboard boards --json shows the entries marked missing, the only ones --forget drops');
     expect(live.json.error?.fix).not.toMatch(/delete|move|\brm\b|mv\b/);
     expect(readRegistry(home).map((e) => e.prefix)).toEqual(['KEEP']);
   });
@@ -446,7 +446,7 @@ describe('A23 + A21: boards --forget with a registry folder that cannot be writt
       expect(r.json.error).toMatchObject({
         code: 'STORE_READ_ONLY',
         message: `--forget GONE: the machine registry ${dir} cannot be written, so nothing was forgotten`,
-        fix: `make ${dir} writable, then run laneboard boards --forget GONE again`,
+        fix: `make ${dir} writable, then run laneboard boards --forget GONE --json again`,
       });
       // A value that names nothing is still STORE_NOT_FOUND.
       expect((await run(tempDir(), home, ['boards', '--forget', 'NOPE'])).json.error).toMatchObject({ code: 'STORE_NOT_FOUND' });

@@ -47,7 +47,7 @@ function problemsFix(details: Record<string, unknown>, format: ImportFormat, che
   const has = (key: string): boolean => Array.isArray(details[key]) && (details[key] as unknown[]).length > 0;
   const steps: string[] = [];
   if (has('unknown_fields')) {
-    steps.push('for each key in details.unknown_fields: ask the board owner to declare it (laneboard config --field <key>:<type>), or pass --field-map <key>=<declared field>, or --ignore-key <key> (drops it)');
+    steps.push('for each key in details.unknown_fields: ask the board owner to declare it (laneboard config --field <key>:<type> --json), or pass --field-map <key>=<declared field>, or --ignore-key <key> (drops it)');
   }
   if (has('unknown_statuses')) {
     steps.push(
@@ -82,7 +82,7 @@ function checklistHint(ctx: OpContext, root: string, o: ImportOptions, checklist
   const file = one === undefined ? undefined : path.join(root, one.source);
   const shown = o.shown ?? o.target;
   const target = file === undefined ? '<file>' : shellQuote(file === o.target ? shown : path.join(shown, path.relative(o.target, file)));
-  return `checklist items (- [ ] / - [x]) are not read by import markdown: ${files}; to make a task of each item run: laneboard import checklist ${target} --status ${first} --dry-run (checked items get the final status, indented items get their parent)`;
+  return `checklist items (- [ ] / - [x]) are not read by import markdown: ${files}; to make a task of each item run: laneboard import checklist ${target} --status ${first} --dry-run --json (checked items get the final status, indented items get their parent)`;
 }
 
 // Hand mapped tasks to the core; the fix of a core problem list names this command's flags.
@@ -112,7 +112,7 @@ export async function runImport(ctx: OpContext, o: ImportOptions | ChecklistImpo
     const doneStatus = o.doneStatus ?? finalStatuses(config.statuses).at(-1) ?? o.status;
     mapped = mapChecklist(records, { status: o.status, doneStatus, headingLabels: o.headingLabels });
     const work = workStatusBeforeChecks(config) ?? config.statuses[0] ?? o.status;
-    checkedRerun = ['laneboard import checklist', shellQuote(o.shown ?? o.target), '--status', shellQuote(o.status), '--done-status', shellQuote(work), ...(o.headingLabels ? ['--heading-labels'] : []), ...o.exclude.flatMap((e) => ['--exclude', shellQuote(e)]), ...(o.dryRun ? ['--dry-run'] : [])].join(' ');
+    checkedRerun = ['laneboard import checklist', shellQuote(o.shown ?? o.target), '--status', shellQuote(o.status), '--done-status', shellQuote(work), ...(o.headingLabels ? ['--heading-labels'] : []), ...o.exclude.flatMap((e) => ['--exclude', shellQuote(e)]), ...(o.dryRun ? ['--dry-run'] : []), '--json'].join(' ');
   } else {
     mapped = mapRecords(records, { ...o, actor: ctx.actor ?? 'import', now: new Date().toISOString() });
   }
@@ -125,7 +125,7 @@ export async function runImport(ctx: OpContext, o: ImportOptions | ChecklistImpo
   const hint = o.format === 'markdown' ? checklistHint(ctx, root, o, mapped.checklists) : undefined;
   if (hint !== undefined) warnings.push(hint);
   if (mapped.truncated) warnings.push(`${mapped.truncated} history text(s) were cut to the comment limit`);
-  if (mapped.unlabeled.length) warnings.push(`--heading-labels: no label for heading(s) ${mapped.unlabeled.map((h) => JSON.stringify(h)).join(', ')} (labels use a-z 0-9 . _ -); add labels later with laneboard update <id> --add-label <label>`);
+  if (mapped.unlabeled.length) warnings.push(`--heading-labels: no label for heading(s) ${mapped.unlabeled.map((h) => JSON.stringify(h)).join(', ')} (labels use a-z 0-9 . _ -); add labels later with laneboard update <id> --add-label <label> --json`);
   if (!records.length) warnings.push(`no ${o.format === 'json' ? '.json' : '.md'} files found in ${o.target}`);
   return { data: { format: o.format, ...result.data, ignored: mapped.ignored }, warnings };
 }

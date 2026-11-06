@@ -419,7 +419,8 @@ export interface SummaryResult {
   // board until archived, but they are no work of the agent (LB-10).
   assigned: ListItem[];
   // Work in progress (LB-57.3): active tasks assigned to `assignee` (without one: to anybody) neither in the first status nor in the
-  // final one, as "in work" of view (workMarks). A task still in the first status is listed in `assigned`, not counted here.
+  // final one, handed in or not (unlike "in work" of view, workMarks, which leaves handed-in tasks out). A task still in the first status is
+  // listed in `assigned`, not counted here.
   in_progress: number;
   // Active tasks assigned to `assignee` (without one: to anybody) not in the final status, the first one included: prime --edit-hook
   // stays quiet while there is one (LB-66). Without `assignee`, with `session_actor`: a task an earlier session of `session_base` took

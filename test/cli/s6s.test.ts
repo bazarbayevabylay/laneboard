@@ -200,7 +200,7 @@ describe('a package of a monorepo pinned to the repository board', () => {
     fs.writeFileSync(m.rootLocal, JSON.stringify({ env: { LANEBOARD_DIR: theirs } }));
     const r = await json(m.web, ['setup', 'claude-code'], m.env);
     expect(r.code).toBe(6);
-    expect(r.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: m.rootLocal, value: theirs }, fix: `laneboard setup claude-code --dir ${theirs}` });
+    expect(r.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: m.rootLocal, value: theirs }, fix: `laneboard setup claude-code --dir ${theirs} --json` });
     expect(fs.existsSync(path.join(m.web, '.claude'))).toBe(false);
   });
 
@@ -277,7 +277,7 @@ describe('--remove in a package while setup stands at the repository root', () =
     expect(r.code).toBe(0);
     expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(local);
     expect(fs.readFileSync(exclude, 'utf8')).toBe(block);
-    expect(r.doc.warnings).toContain(`kept the laneboard entry in ${m.rootLocal}: setup in ${m.root} still uses it (laneboard setup <harness> --remove there removes it)`);
+    expect(r.doc.warnings).toContain(`kept the laneboard entry in ${m.rootLocal}: setup in ${m.root} still uses it (laneboard setup <harness> --remove --json there removes it)`);
     expect(fs.existsSync(path.join(m.web, '.claude'))).toBe(false);
     expect(m.git(['status', '--porcelain', '--untracked-files=all']).split('\n').filter((l) => l.includes('settings.local.json'))).toEqual([]);
   });
@@ -292,7 +292,7 @@ describe('SETUP_CONFLICT follows the file Claude Code reads', () => {
     expect((await json(wt, ['init', '--dir', path.join(wt, '.laneboard'), '--description', 'wt'], m.env)).code).toBe(0);
     const r = await json(wt, ['setup', 'claude-code'], m.env);
     expect(r.code).toBe(6);
-    expect(r.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: m.rootLocal, value: m.store }, fix: `cd ${m.root} && laneboard setup claude-code && cd ${wt} && laneboard setup claude-code` });
+    expect(r.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', details: { file: m.rootLocal, value: m.store }, fix: `cd ${m.root} && laneboard setup claude-code --json && cd ${wt} && laneboard setup claude-code --json` });
     expect(fs.existsSync(path.join(wt, '.claude'))).toBe(false);
     // As the fix says: the main checkout sees the worktree's board, moves its env out of the local file, and the worktree pins its own.
     expect((await json(m.root, ['setup', 'claude-code'], m.env)).code).toBe(0);
@@ -319,7 +319,7 @@ describe('another board appears in the repository after setup in a package', () 
   }
 
   const leftWarning = (m: Mono): string =>
-    `${m.rootLocal} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code there pins it again`;
+    `${m.rootLocal} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code --json there pins it again`;
 
   it('review C2: --dry-run says it would take the left pin out and leaves the root local file as it is', async () => {
     const m = await withLaterBoard();
@@ -327,7 +327,7 @@ describe('another board appears in the repository after setup in a package', () 
     const r = await json(m.web, ['setup', 'claude-code', '--dry-run'], m.env);
     expect(r.code, JSON.stringify(r.doc)).toBe(0);
     expect(r.doc.warnings).toContain(
-      `${m.rootLocal} holds the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup would take it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code there pins it again`,
+      `${m.rootLocal} holds the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup would take it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code --json there pins it again`,
     );
     expect(r.doc.warnings.join('\n')).not.toContain('setup took it out');
     expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(before);
@@ -387,7 +387,7 @@ describe('another board appears in the repository after setup in a package', () 
     expect(r.code, JSON.stringify(r.doc)).toBe(0);
     expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(local);
     const inB = await json(b, ['setup', 'claude-code'], m.env);
-    expect(inB.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${m.root} && laneboard setup claude-code && cd ${b} && laneboard setup claude-code` });
+    expect(inB.doc.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${m.root} && laneboard setup claude-code --json && cd ${b} && laneboard setup claude-code --json` });
   });
 
   it("control: the user's own LANEBOARD_DIR (one key) in the root local file stays", async () => {

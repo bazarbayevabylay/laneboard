@@ -91,20 +91,20 @@ describe('config --field / --drop-field', () => {
       code: 'INVALID_VALUE',
       message: 'cannot change fields that 2 active task(s) hold: drop priority: 2 hold a value (WEB-1, WEB-2); remove each of those values (laneboard update <ID> --unset-field <key>), then run this command again',
       details: { in_use: [{ field: 'priority', change: 'drop', tasks: ['WEB-1', 'WEB-2'] }] },
-      fix: `for id in WEB-1 WEB-2; do laneboard update "$id" --unset-field priority --dir ${store} --as owner; done`,
+      fix: `for id in WEB-1 WEB-2; do laneboard update "$id" --unset-field priority --dir ${store} --as owner --json; done`,
     });
     expect(configText(store)).toBe(before);
     // The fix runs from any folder (it names the store): each call is a real command.
     const calls = fixCalls(r.error.fix);
     expect(calls).toEqual([
-      ['update', 'WEB-1', '--unset-field', 'priority', '--dir', store, '--as', 'owner'],
-      ['update', 'WEB-2', '--unset-field', 'priority', '--dir', store, '--as', 'owner'],
+      ['update', 'WEB-1', '--unset-field', 'priority', '--dir', store, '--as', 'owner', '--json'],
+      ['update', 'WEB-2', '--unset-field', 'priority', '--dir', store, '--as', 'owner', '--json'],
     ]);
     for (const argv of calls) expect((await cli(argv, { cwd: tempDir(), env: {} })).code).toBe(0);
     const ok = await doc(run(['config', '--drop-field', 'priority', '--json']));
     expect(ok).toMatchObject({ code: 0, data: { changed: true, fields: {} } });
     // The archived WEB-4 keeps its value: a warning, no block; doctor stays healthy (exit 0).
-    expect(ok.warnings).toEqual(['1 archived task(s) keep a value of the removed field priority (WEB-4): restore brings it back, then laneboard update <ID> --unset-field priority']);
+    expect(ok.warnings).toEqual(['1 archived task(s) keep a value of the removed field priority (WEB-4): restore brings it back, then laneboard update <ID> --unset-field priority --json']);
     const doctor = await doc(run(['doctor', '--json']));
     expect(doctor).toMatchObject({ code: 0, data: { healthy: true } });
     expect((await doc(run(['create', 'six', '--status', 'todo', '--field', 'priority=1', '--as', 'dev', '--json']))).error.code).toBe('UNKNOWN_FIELD');
@@ -113,11 +113,11 @@ describe('config --field / --drop-field', () => {
   it('the fix names a store whose path has a space, a quote and $ as one argument: the loop unsets the values, then the drop goes through', async () => {
     const { store, run } = await board("My Proj's $x");
     const r = await doc(run(['config', '--drop-field', 'priority', '--as', 'owner', '--json']));
-    expect(r.error.fix).toBe(`for id in WEB-1 WEB-2; do laneboard update "$id" --unset-field priority --dir '${store.replaceAll("'", "'\\''")}' --as owner; done`);
+    expect(r.error.fix).toBe(`for id in WEB-1 WEB-2; do laneboard update "$id" --unset-field priority --dir '${store.replaceAll("'", "'\\''")}' --as owner --json; done`);
     const calls = fixCalls(r.error.fix);
     expect(calls).toEqual([
-      ['update', 'WEB-1', '--unset-field', 'priority', '--dir', store, '--as', 'owner'],
-      ['update', 'WEB-2', '--unset-field', 'priority', '--dir', store, '--as', 'owner'],
+      ['update', 'WEB-1', '--unset-field', 'priority', '--dir', store, '--as', 'owner', '--json'],
+      ['update', 'WEB-2', '--unset-field', 'priority', '--dir', store, '--as', 'owner', '--json'],
     ]);
     for (const argv of calls) expect((await cli(argv, { cwd: tempDir(), env: {} })).code).toBe(0);
     expect(await doc(run(['config', '--drop-field', 'priority', '--json']))).toMatchObject({ code: 0, data: { changed: true, fields: {} } });
@@ -127,7 +127,7 @@ describe('config --field / --drop-field', () => {
     const { run } = await board();
     const r = await doc(run(['config', '--drop-field', 'priority', '--json']));
     expect(r.error.fix).toContain('--unset-field priority --dir ');
-    expect(r.error.fix).toContain(' --as <your-name>; done');
+    expect(r.error.fix).toContain(' --as <your-name> --json; done');
   });
 
   it('a new type that active values do not fit: INVALID_VALUE (change "type"), nothing written; a type every value fits is written; create follows the new type', async () => {
@@ -153,7 +153,7 @@ describe('config --field / --drop-field', () => {
     const typed = await doc(run(['config', '--field', 'priority:string', '--json']));
     expect(typed.code).toBe(0);
     expect(typed.warnings).toEqual([
-      '1 archived task(s) hold priority values that are not string (WEB-4): restore brings them back as they are, then laneboard update <ID> --field priority=<string>',
+      '1 archived task(s) hold priority values that are not string (WEB-4): restore brings them back as they are, then laneboard update <ID> --field priority=<string> --json',
     ]);
     expect((await run(['create', 'six', '--status', 'todo', '--field', 'priority=high', '--as', 'dev'])).code).toBe(0);
     expect((await doc(run(['get', 'WEB-5', '--json']))).data.fields).toEqual({ priority: 'high' });
@@ -263,7 +263,7 @@ describe('config --field / --drop-field', () => {
     fs.writeFileSync(path.join(src, 'a.md'), '---\ntitle: A\nstatus: todo\ncolor: red\n---\nbody\n');
     const r = await doc(run(['import', 'markdown', src, '--status-key', 'status', '--as', 'dev', '--json']));
     expect(r.error.code).toBe('UNKNOWN_FIELD');
-    expect(r.error.fix).toContain('ask the board owner to declare it (laneboard config --field <key>:<type>)');
+    expect(r.error.fix).toContain('ask the board owner to declare it (laneboard config --field <key>:<type> --json)');
     expect(r.error.fix).not.toContain('config.json');
   });
 });

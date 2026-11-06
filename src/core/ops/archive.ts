@@ -66,7 +66,7 @@ function cutoff(updatedBefore: string, now: Date): string {
 
 // Warning for an archived task that is not finished and has an assignee: the work may still be going on.
 function openTaskWarning(task: TaskT): string {
-  return `${task.id} is ${task.status} (not a final status) and assigned to ${task.assignee}: archived anyway; to bring it back: laneboard restore ${task.id}`;
+  return `${task.id} is ${task.status} (not a final status) and assigned to ${task.assignee}: archived anyway; to bring it back: laneboard restore ${task.id} --json`;
 }
 
 // Archive tasks by id (atomically, all or none) or in bulk by status and age; archive.json is written first (W6).
@@ -110,7 +110,7 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
           const found = locate(s, id);
           if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
           if (found.archived) {
-            throw new LaneboardError('TASK_ARCHIVED', `task ${id} is already archived`, { fix: `nothing to do; to see it: laneboard get ${id}` });
+            throw new LaneboardError('TASK_ARCHIVED', `task ${id} is already archived`, { fix: `nothing to do; to see it: laneboard get ${id} --json` });
           }
           checkExpectedRev(found.task, false, p.expected_rev);
           return found.task;
@@ -158,7 +158,7 @@ export async function restoreTask(ctx: OpContext, input: RestoreInputT): Promise
       const id = normalizeId(p.id, s.config.prefix);
       const found = locate(s, id);
       if (!found) throw missingTask(ctx, id, s.config.prefix, 'write');
-      if (!found.archived) throw new LaneboardError('INVALID_VALUE', `task ${id} is not archived`, { input: { field: 'id', value: id }, fix: `nothing to do; to see it: laneboard get ${id}` });
+      if (!found.archived) throw new LaneboardError('INVALID_VALUE', `task ${id} is not archived`, { input: { field: 'id', value: id }, fix: `nothing to do; to see it: laneboard get ${id} --json` });
       refuseDeleted(found.task);
       const task = found.task;
       touch(task, s.now, actor);
@@ -186,7 +186,7 @@ function refuseDeleted(task: TaskT): void {
   if (!mark) return;
   throw new LaneboardError('INVALID_VALUE', `${task.id} was deleted at ${mark.at} by ${mark.by}`, {
     input: { field: 'id', value: task.id },
-    fix: `nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get ${task.id}`,
+    fix: `nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get ${task.id} --json`,
   });
 }
 

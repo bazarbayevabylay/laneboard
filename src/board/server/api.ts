@@ -114,7 +114,7 @@ export async function storeFor(ctx: ApiContext, key: string | null): Promise<Sto
   if (!tab || tab.missing) {
     throw new LaneboardError('INVALID_VALUE', `board ${key} is not one of the readable boards of this machine`, {
       allowed: tabs.filter((t) => !t.missing).map((t) => t.key),
-      fix: 'pick a board from `allowed` (laneboard boards lists them)',
+      fix: 'pick a board from `allowed` (laneboard boards --json lists them)',
     });
   }
   return { dir: tab.path, found: 'board', readOnly: true };
@@ -170,7 +170,7 @@ export function taskId(raw: string): string {
     return decodeURIComponent(raw);
   } catch {
     // URIError: the address itself is broken (a lone or truncated %), so no task can have this id.
-    throw new LaneboardError('INVALID_VALUE', `task id ${raw} in the address is not valid URL encoding`, { fix: 'use an exact id like LB-12 (see laneboard list)' });
+    throw new LaneboardError('INVALID_VALUE', `task id ${raw} in the address is not valid URL encoding`, { fix: 'use an exact id like LB-12 (see laneboard list --json)' });
   }
 }
 

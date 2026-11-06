@@ -23,6 +23,7 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 
 - `config --reviewers` warns only for `claude-code@<user>` without `:<session>`; `codex@<user>` or `alice@corp` get no warning (LB-62.3).
 - `setup claude-code --dry-run` over a pin of an earlier setup in `.claude/settings.json` says `would move the env`, never `moved` (LB-59.2).
+- `setup claude-code --dry-run` over a pin an earlier setup left in the repository root's `.claude/settings.local.json` says `would take it out`, never `took it out` (LB-59.2).
 
 ### D2
 
@@ -80,6 +81,13 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - LB-63.5: `PORT_IN_USE` exits 4 (conflict, http 409), not 5 "busy, retry once": the same port stays taken.
 - `finish` in a main checkout with several worktrees, its commit linked to another name's task already: one warning (the worktree one, naming those tasks), not two with almost the same command.
 - MCP tool descriptions: `task_update` names the refusals on a board with checks (`ALREADY_CLAIMED` for another name's task), `task_claim` the first status and the closed task, `task_finish` `handed_in`, `task_prime` `tasks` vs `in_progress` and `roles.waiting[].last_return`.
+
+### E1
+
+- LB-63.2: every laneboard command in the fix of an error or in a warning carries `--json`, also the ones the slices before left: `get`, `attach`, `archive`, `restore`, `redact`, `boards`, `init`, `config`, `doctor`, `setup`, `import` (was only the default fixes and update). A test reads every fix and warning text in `src/` and fails on a command without `--json`.
+- MCP: a store found in a parent directory that looks like another project's warns with the client's fix (a board of its own, then start the client for it), not with the CLI's `--dir` on every command and `laneboard prime`.
+- MCP: a link of the right form with a wrong value (`ref` empty or over 2000 characters, an unknown `kind`) keeps the fix of that value (`add_links.0.ref must not be empty`); only a link that is no `{kind, ref}` object gets the fix that names the form (review D1).
+- `claim --help` says that, without `--status`, one's own task or one taken back with `--resume` leaves the first status for the work status, and that a closed task is not resumed (LB-54.1, LB-57.4).
 
 ## 0.4.0
 

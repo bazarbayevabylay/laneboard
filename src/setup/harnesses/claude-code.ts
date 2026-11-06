@@ -180,7 +180,7 @@ function checkRootPin(c: HarnessContext): void {
       details: { file, value: dir },
       // Setup at the root moves its env into its settings.json once this folder's board is in the registry (setup here registers
       // a live board when it refuses with this error; the init of the fix registers a new one).
-      fix: `${init}cd ${shellWord(root)} && laneboard setup claude-code && cd ${shellWord(c.cwd)} && laneboard setup claude-code`,
+      fix: `${init}cd ${shellWord(root)} && laneboard setup claude-code --json && cd ${shellWord(c.cwd)} && laneboard setup claude-code --json`,
     },
   );
 }
@@ -208,7 +208,7 @@ function checkPin(file: string, text: string | null, c: HarnessContext, replacin
   if (replacing && stalePin(text, c) !== undefined) return;
   throw new LaneboardError('SETUP_CONFLICT', `${file} sets env.LANEBOARD_DIR to ${dir}, not to ${c.storeDir}; setup does not overwrite your value`, {
     details: { file, value: dir },
-    fix: `laneboard setup claude-code --dir ${shellWord(dir)}`,
+    fix: `laneboard setup claude-code --dir ${shellWord(dir)} --json`,
   });
 }
 
@@ -284,7 +284,7 @@ function stalePinWarnings(c: HarnessContext): string[] {
   if (dir === undefined) return [];
   const old = path.resolve(c.cwd, dir);
   const head = `${shown} pinned LANEBOARD_DIR=${dir}, which holds no store any more (the project folder was moved or renamed?), so setup pins ${c.storeDir} there instead`;
-  return [registered(c, old) ? `${head}; laneboard boards --forget ${shellWord(old)} drops the old path from the machine registry` : head];
+  return [registered(c, old) ? `${head}; laneboard boards --forget ${shellWord(old)} --json drops the old path from the machine registry` : head];
 }
 
 // A pin of an earlier setup in .claude/settings.json (committed) that this run moves to the local file: say so, the change to commit.
@@ -314,7 +314,7 @@ function leftPinWarnings(c: HarnessContext): string[] {
   const dir = envString(text, ENV_DIR) ?? '';
   const [held, took] = c.dryRun ? ['holds', 'would take it out'] : ['held', 'took it out'];
   return [
-    `${file} ${held} the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup ${took}. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code there pins it again`,
+    `${file} ${held} the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup ${took}. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code --json there pins it again`,
   ];
 }
 
@@ -398,7 +398,7 @@ export const claudeCode: Harness = {
   warnings(c) {
     const dir = installedPlugin(c);
     const plugin = dir
-      ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove`]
+      ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove --json`]
       : [];
     return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...plugin];
   },
