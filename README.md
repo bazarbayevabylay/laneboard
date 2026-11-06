@@ -79,6 +79,8 @@ laneboard list --scope all --json
 
 `create` needs `--status` (no default): without it the error's `fix` is the same command with the first configured status.
 The title is an argument, not an option: `create --title X` fails with the right command as its fix.
+An option given twice is `USAGE` (`--status is given 2 times`), except `--json` and `--as` with the same value: a fix you add
+`--as <name> --json` to still runs.
 Every write replies short: `id`, the new `rev`, `status`, `assignee` (`attach` adds `attachment`, `finish` adds `commit`);
 the whole task is `laneboard get WEB-1` or `--full` on the write. People read better without `--json`: `list`, `get`, `events`, `view`.
 
@@ -243,7 +245,7 @@ laneboard config --review-statuses none --reviewers none --json
   placeholder); anybody else a comment.
   `prime` lists such a task under "Waiting for your check", never among the free tasks.
 - No checker left (every name in `--reviewers` worked on a waiting task, say the orchestrator gave it to the only checker): the
-  refusals, `prime` and `doctor` (check `checks`, exit 6) name the owner's way out, `laneboard config --reviewers "<names>,<another checker>"`.
+  refusals, `prime` and `doctor` (check `checks`, exit 6) name the owner's way out, `laneboard config --reviewers "<names>,<another checker>" --json`.
   `config --reviewers` that leaves a waiting task so, and a hand-in while `--reviewers` names only its author, warn with that command.
 - A checker's queue skips a check it passed the task into, unless no other checker may make it (say `--reviewers rev` on two checks):
   then the task stays there, marked "(you passed the previous check)", with its pass command.

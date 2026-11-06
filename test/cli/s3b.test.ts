@@ -268,7 +268,7 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     // A closed task is not reopened by a later hand-in.
     const late = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(late.data.status).toBe('done');
-    expect(late.warnings[0]).toBe('no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")');
+    expect(late.warnings[0]).toBe('no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)');
   });
 
   it('MCP task_finish takes status review as well', async () => {
@@ -306,7 +306,7 @@ describe('finish warns when the linked commit may not hold the work (owner, S3b)
     const again = await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1'], { cwd: s.root });
     expect(again.stdout).toBe(`LB-1 unchanged (rev 3, done, dev-1); commit ${second.slice(0, 12)} linked\n`);
     // Rewritten in S3c (review S3b MINOR): a new link is a change, so the warning no longer says "no changes".
-    expect(again.stderr).toContain(`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>"); commit ${second.slice(0, 12)} linked`);
+    expect(again.stderr).toContain(`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json); commit ${second.slice(0, 12)} linked`);
     expect(again.stderr).not.toContain('uncommitted');
     const t = stored(s, 'LB-1');
     expect(t.links).toEqual([{ kind: 'commit', ref: first }, { kind: 'commit', ref: second }]);
@@ -456,7 +456,7 @@ describe('review S3 NIT: finish checks the owner before "already closed"', () =>
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
     const r = await cli(['finish', 'LB-1', '--result', 'x', '--as', 'dev-2', '--json'], { cwd: s.root });
     expect(r.code).toBe(0);
-    expect(JSON.parse(r.stdout)).toMatchObject({ data: { id: 'LB-1', rev: 1, status: 'done', assignee: 'dev-1' }, warnings: ['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")'] });
+    expect(JSON.parse(r.stdout)).toMatchObject({ data: { id: 'LB-1', rev: 1, status: 'done', assignee: 'dev-1' }, warnings: ['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)'] });
     const back = await cli(['finish', 'LB-1', '--result', 'x', '--status', 'review', '--as', 'dev-2', '--json'], { cwd: s.root });
     expect(back.code).toBe(4);
     expect(JSON.parse(back.stdout).error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' } });

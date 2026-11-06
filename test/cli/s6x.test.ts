@@ -241,7 +241,7 @@ describe('B-U2: a checker that gets a task waiting for its check is warned that 
   it('the only checker takes it: no checker left, the owner\'s config --reviewers', async () => {
     const s = await waiting('rev2');
     const r = await json(s, ['update', 'API-1', '--assignee', 'rev2', '--as', 'rev2']);
-    expect(r.doc.warnings).toEqual([`${HEAD}no checker is left for it, so the owner adds one: laneboard config --reviewers "rev2,<another checker>"${TAIL}`]);
+    expect(r.doc.warnings).toEqual([`${HEAD}no checker is left for it, so the owner adds one: laneboard config --reviewers "rev2,<another checker>" --json${TAIL}`]);
   });
 
   it('no reviewers set: anybody else checks it; the orchestrator gives it to rev: rev is named', async () => {

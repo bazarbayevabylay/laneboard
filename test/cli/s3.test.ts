@@ -138,7 +138,7 @@ describe('laneboard finish', () => {
     expect(r.code).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(doc.data).toEqual({ id: 'LB-1', rev: 1, status: 'done', assignee: 'dev-1' });
-    expect(doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")']);
+    expect(doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
     expect(stored(s, 'LB-1').rev).toBe(1);
   });
 

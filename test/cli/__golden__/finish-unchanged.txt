@@ -4,11 +4,11 @@ exit 0
 --- stdout
 LB-1 unchanged (rev 2, done, a)
 --- stderr
-warning: no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")
+warning: no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)
 
 $ laneboard finish LB-1 --result again --as a --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":2,"status":"done","assignee":"a"},"warnings":["no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 \"<text>\")"]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":2,"status":"done","assignee":"a"},"warnings":["no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 \"<text>\" --json)"]}
 --- stderr
 

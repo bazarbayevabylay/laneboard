@@ -549,7 +549,7 @@ describe('S6w review r2: nobody claims a task that waits for a check; no free ta
     expect((await run(s, 'orch', ['update', 'API-1', '--assignee', 'rev'])).code).toBe(0);
     return s;
   };
-  const ADD = 'laneboard config --reviewers "rev,<another checker>"';
+  const ADD = 'laneboard config --reviewers "rev,<another checker>" --json';
 
   it('(c) no checker left: the refusals, prime of every name and doctor name the owner\'s config --reviewers; run with a name, it passes', async () => {
     const s = await soleChecker();
@@ -751,7 +751,7 @@ describe('S6w review r3: the author in any session of its default name; the free
     expect(handIn.doc.warnings.join('\n')).not.toContain('no checker may check');
     const cfg = await run(s, 'orch', ['config', '--reviewers', 'dev-1']);
     expect(cfg.code).toBe(0);
-    const stuck = `tasks waiting in a check that no checker may check (every name in config review.by worked on them): API-1 (code_review); the owner adds a checker: laneboard config --reviewers "dev-1,<another checker>"`;
+    const stuck = `tasks waiting in a check that no checker may check (every name in config review.by worked on them): API-1 (code_review); the owner adds a checker: laneboard config --reviewers "dev-1,<another checker>" --json`;
     expect(cfg.doc.warnings).toContain(stuck);
     // A hand-in while review.by is only its author: written, with the same warning; the named command, run with a name, clears it.
     expect((await run(s, 'orch', ['create', 'Second', '--status', 'backlog'])).code).toBe(0);

@@ -172,7 +172,7 @@ function checkRootPin(c: HarnessContext): void {
   // A pin an earlier setup left there that no longer applies: this run takes it out (localEdit), so it is no conflict.
   if (leftRootPin(text, c)) return;
   // init by --dir: a bare one makes <cwd>/.laneboard only, and is refused in a package of a repository whose board lies above.
-  const init = isLiveBoard(c.storeDir) ? '' : `laneboard init --dir ${shellWord(c.storeDir)} --name <name> --description "<whose project, what work>" && `;
+  const init = isLiveBoard(c.storeDir) ? '' : `laneboard init --dir ${shellWord(c.storeDir)} --name <name> --description "<whose project, what work>" --json && `;
   throw new LaneboardError(
     'SETUP_CONFLICT',
     `${file} sets env.LANEBOARD_DIR to ${dir}; Claude Code reads that file in every folder of the repository and it wins over ${SETTINGS} here, so sessions in this folder would use ${dir}, not ${c.storeDir}; nothing was written`,

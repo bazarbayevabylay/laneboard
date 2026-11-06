@@ -226,6 +226,8 @@ With `--json` stdout holds exactly one JSON document, also on errors; stderr sta
 
 Every error has a `fix`: one command, run it or adapt it (fill in `<placeholders>`). On `UNKNOWN_*` copy a value from `allowed`.
 `create` has no default status: without `--status` it fails with `USAGE`, and the fix is your command with the first configured status.
+An option given twice is `USAGE` (`--status is given 2 times`; `--as a --as b` too), except `--json` and `--as` with the same value:
+a fix you add `--as <name> --json` to still runs.
 
 ```sh
 laneboard update DEMO-2 --status doing --json  # exit 2
@@ -557,7 +559,7 @@ against an agent's mistake, not against a hostile agent.
   such a task under the waiting ones, never among the free tasks (`unassigned`).
 - No checker left: when every name in `--reviewers` worked on a waiting task (the orchestrator gave it to the only checker), nobody
   may pass it on. The refusals, `prime` (MCP `roles.no_checker {ids, fix}`) and `doctor` (check `checks`, exit 6) name the owner's way
-  out: `laneboard config --reviewers "<names there>,<another checker>"`. `config --reviewers` that leaves a waiting task so, and a
+  out: `laneboard config --reviewers "<names there>,<another checker>" --json`. `config --reviewers` that leaves a waiting task so, and a
   hand-in while `--reviewers` names only its author, write and warn with the same command.
 - A checker's queue skips the check it passed the task into while another checker may make it; with no other one (`--reviewers rev`
   on two checks) the task stays in its queue, marked "(you passed the previous check)" (`roles.waiting[].passed_by_you`), with the pass.

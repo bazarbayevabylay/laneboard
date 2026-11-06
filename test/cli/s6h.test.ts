@@ -257,7 +257,7 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
     expect((await json(s.root, ['finish', 'LB-1', '--result', 'accepted', '--as', 'orch'])).doc.data).toMatchObject({ status: 'done', accepted: true });
     // A closed task keeps its result: finish never reopens it, nor records another result.
     const late = await json(s.root, ['finish', 'LB-1', '--status', 'review', '--result', 'v3', '--no-commit', '--as', 'dev-1']);
-    expect(late.doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")']);
+    expect(late.doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
     expect(stored(s, 'LB-1').events.filter((e) => e.data.result === true).map((e) => e.data.text)).toEqual(['v1', 'v2: edge case fixed', 'accepted']);
   });
 

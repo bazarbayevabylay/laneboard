@@ -182,10 +182,10 @@ describe('review S3b MINOR: a repeat finish that links a new commit says so', ()
     const second = git(s.root, ['rev-parse', 'HEAD']);
     const again = await finish(s);
     expect(again.data).toMatchObject({ rev: 3, commit: second });
-    expect(again.warnings).toEqual([`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>"); commit ${second.slice(0, 12)} linked`]);
+    expect(again.warnings).toEqual([`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json); commit ${second.slice(0, 12)} linked`]);
     const third = await finish(s);
     expect(third.data.rev).toBe(3);
-    expect(third.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")']);
+    expect(third.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
   });
 });
 

@@ -113,7 +113,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     const before = activeText(s);
     const r = await cli(['finish', 'LB-1', '--result', 'ok again', '--as', 'orch', '--json'], { cwd: s.root });
     expect(r.code).toBe(0);
-    expect(JSON.parse(r.stdout)).toMatchObject({ data: { id: 'LB-1', status: 'done', assignee: 'dev-1' }, warnings: ['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")'] });
+    expect(JSON.parse(r.stdout)).toMatchObject({ data: { id: 'LB-1', status: 'done', assignee: 'dev-1' }, warnings: ['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)'] });
     expect(JSON.parse(r.stdout).data.accepted).toBeUndefined();
     expect(activeText(s)).toBe(before);
   });

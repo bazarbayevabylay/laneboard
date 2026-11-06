@@ -689,7 +689,7 @@ export function noCheckerLeft(config: ConfigT, task: TaskT): boolean {
 
 // The owner's command that adds a checker to config review.by, keeping the ones there (config --reviewers replaces the list).
 export function addCheckerCommand(config: ConfigT): string {
-  return `laneboard config --reviewers "${[...reviewers(config), '<another checker>'].join(',')}"`;
+  return `laneboard config --reviewers "${[...reviewers(config), '<another checker>'].join(',')}" --json`;
 }
 
 // Who checks `task` in a message: the names of review.by that are no authors of it, anybody but the author when review.by is not set.
@@ -1373,7 +1373,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         });
       }
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
-      const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>")`;
+      const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>" --json)`;
       const review = reviewStatuses(s.config);
       // The owner first: somebody else's task is ALREADY_CLAIMED (review S3 NIT), unless this is an acceptance or the task is closed.
       const holder = task.assignee;
