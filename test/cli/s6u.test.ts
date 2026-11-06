@@ -35,7 +35,7 @@ const WAITS_IN_QA = {
   code: 'INVALID_VALUE',
   message:
     'API-1 is handed in already and waits in qa for the check of rev, orch (code_review -> qa -> done): nothing to do; the author never moves it to another check or into done, and a note for the checkers is a comment',
-  fix: 'laneboard comment API-1 "<note for the check>" --as dev-2',
+  fix: 'laneboard comment API-1 "<note for the check>" --as dev-2 --json',
 };
 
 describe('S6u B-U1: no hand-in back into a check the task passed', () => {
@@ -118,7 +118,7 @@ describe('S6u B-U1: no hand-in back into a check the task passed', () => {
     expect(back.code).toBe(2);
     expect(back.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status qa --result r --no-commit --as dev-2 --json' });
     const checker = await run(s, 'rev', ['finish', 'API-1', '--result', 'x']);
-    expect(checker.doc.error.fix).toBe('laneboard comment API-1 "hand it in: laneboard finish API-1 --status qa --result <result>" --as rev');
+    expect(checker.doc.error.fix).toBe('laneboard comment API-1 "hand it in: laneboard finish API-1 --status qa --result <result>" --as rev --json');
     const handIn = await run(s, 'dev-2', ['finish', 'API-1', '--result', 'r', '--no-commit']);
     expect(handIn.doc.data).toMatchObject({ status: 'qa' });
     expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'done', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });

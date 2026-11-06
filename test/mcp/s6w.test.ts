@@ -1,14 +1,12 @@
 // S6w over MCP (UX run 4, U1-U3): the same invariants as the CLI, through the tools. I1: task_update, task_claim, task_create never put a
 // task into a check. I2: a checker's task_finish names the next status (task_prime roles.waiting[].next_status), so a stale read never
-// passes the next check. I3: the fix of a checker refusal only reads the task (laneboard get), run as printed it changes nothing.
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+// passes the next check. I3: the fix of a checker refusal only reads the task (task_get, LB-60.1), run as printed it changes nothing.
 import { afterAll, describe, expect, it } from 'vitest';
 import { claimTask, configureStore, createTask, finishTask } from '../../src/core/index.ts';
 import { callTool } from '../../src/mcp/tools.ts';
-import { as, cleanupTemp, CLI_SOURCE, newStore, readStore, tempDir } from '../helpers.ts';
+import { as, cleanupTemp, newStore, readStore } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
+import { runFix } from './tool-calls.ts';
 
 afterAll(cleanupTemp);
 
@@ -38,18 +36,6 @@ function stored(s: TestStore, id: string): Record<string, any> {
   return readStore(s.dir, 'active').tasks.find((t) => t.id === id) as Record<string, any>;
 }
 
-// Run a fix as printed in a shell (rule 13), with `laneboard` on PATH running this source, in the store's folder; its exit code.
-function sh(s: TestStore, line: string): number {
-  const bin = tempDir();
-  fs.writeFileSync(path.join(bin, 'laneboard'), `#!/bin/sh\nexec "${process.execPath}" "${CLI_SOURCE}" "$@"\n`, { mode: 0o755 });
-  try {
-    execFileSync('sh', ['-c', line], { cwd: s.root, env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: tempDir() }, stdio: 'pipe' });
-    return 0;
-  } catch (err) {
-    return (err as { status?: number }).status ?? 1;
-  }
-}
-
 describe('S6w over MCP', () => {
   for (const l of [TWO, BETWEEN, ONE]) {
     it(`${l.name}: I1 task_update / task_claim of the holder and task_create into a check: INVALID_VALUE, the fix hands in with finish`, async () => {
@@ -59,7 +45,7 @@ describe('S6w over MCP', () => {
       for (const tool of ['task_update', 'task_claim']) {
         const r = await callTool(tool, { id: 'API-1', status: l.checks[0], actor: 'dev-1' }, env);
         expect(r.isError, tool).toBe(true);
-        expect(r.structuredContent, tool).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard finish API-1 --status ${l.checks[0]} --result "<what you did, how you checked it>" --as dev-1` });
+        expect(r.structuredContent, tool).toMatchObject({ code: 'INVALID_VALUE', fix: `task_finish {"id":"API-1","status":"${l.checks[0]}","result":"<what you did, how you checked it>","actor":"dev-1"}` });
       }
       const created = await callTool('task_create', { title: 'In a check', status: l.checks[0], actor: 'orch' }, env);
       expect(created.structuredContent).toMatchObject({ code: 'INVALID_VALUE' });
@@ -75,9 +61,9 @@ describe('S6w over MCP', () => {
       for (const args of [{ result: 'ok' }, { status: l.checks[0], result: 'qa failed: crash' }]) {
         const r = await callTool('task_finish', { id: 'API-1', ...args, actor: 'orch' }, env);
         expect(r.isError, JSON.stringify(args)).toBe(true);
-        expect(r.structuredContent, JSON.stringify(args)).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+        expect(r.structuredContent, JSON.stringify(args)).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_get {"id":"API-1"}' });
         expect(r.structuredContent).not.toHaveProperty('input');
-        expect(sh(s, (r.structuredContent as Record<string, string>).fix ?? '')).toBe(0);
+        expect(await runFix((r.structuredContent as Record<string, string>).fix ?? '', env)).toBe(0);
       }
       expect(stored(s, 'API-1')).toMatchObject({ status: l.checks[0], rev });
       const prime = await callTool('task_prime', { actor: 'orch' }, env);
@@ -95,7 +81,7 @@ describe('S6w over MCP', () => {
     expect(seen).toBe('qa');
     expect((await callTool('task_finish', { id: 'API-1', status: seen, result: 'review ok', actor: 'rev' }, env)).structuredContent).toMatchObject({ status: 'qa', passed: true });
     const stale = await callTool('task_finish', { id: 'API-1', status: seen, result: 'code review ok (orch)', actor: 'orch' }, env);
-    expect(stale.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect(stale.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_get {"id":"API-1"}' });
     expect(stored(s, 'API-1').status).toBe('qa');
   });
 
@@ -103,7 +89,7 @@ describe('S6w over MCP', () => {
     const s = await board(TWO, true);
     const env = { cwd: s.root, env: {} };
     const r = await callTool('task_update', { id: 'API-1', status: 'qa', actor: 'rev' }, env);
-    expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_get {"id":"API-1"}' });
     expect(String((r.structuredContent as Record<string, unknown>).message)).toContain('laneboard finish API-1 --status qa --result "<result of your check>" --as rev');
     expect(stored(s, 'API-1').status).toBe('code_review');
   });
@@ -126,9 +112,9 @@ describe('S6w review r2 over MCP', () => {
     for (const status of [undefined, 'dev']) {
       const r = await callTool('task_claim', { id: 'API-1', ...(status === undefined ? {} : { status }), actor: 'rev' }, env);
       expect(r.isError).toBe(true);
-      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_get {"id":"API-1"}' });
       expect(String((r.structuredContent as Record<string, unknown>).message)).toContain('laneboard finish API-1 --status qa --result "<result of your check>" --as rev');
-      expect(sh(s, `${(r.structuredContent as Record<string, string>).fix ?? ''} --as rev`)).toBe(0);
+      expect(await runFix((r.structuredContent as Record<string, string>).fix ?? '', env)).toBe(0);
     }
     expect(stored(s, 'API-1')).toMatchObject({ status: 'code_review', assignee: null, rev });
     const prime = (await callTool('task_prime', { actor: 'rev' }, env)).structuredContent as Record<string, any>;
@@ -189,7 +175,7 @@ describe('S6w review r3 over MCP: another session of the author\'s default name 
         const r = await callTool(tool, args, b);
         expect(r.isError, tool).toBe(true);
         const err = r.structuredContent as Record<string, string>;
-        expect(err, tool).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 "<note for the check>" --as ${BASE}:bbbb2222` });
+        expect(err, tool).toMatchObject({ code: 'INVALID_VALUE', fix: `task_comment {"id":"API-1","text":"<note for the check>","actor":"${BASE}:bbbb2222"}` });
         expect(err.message, tool).toContain('is handed in already');
       }
       expect(stored(s, 'API-1')).toMatchObject({ status: l.checks[0], assignee: `${BASE}:aaaa1111`, rev });

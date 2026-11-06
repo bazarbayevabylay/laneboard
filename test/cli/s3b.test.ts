@@ -275,7 +275,7 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'A', status: 'in_progress', assignee: 'm' });
     const r = await callTool('task_finish', { id: 'LB-1', result: 'done', status: 'review', no_commit: true, actor: 'm' }, { cwd: s.root, env: {} });
-    expect(r.structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'review', assignee: 'm', commit: null });
+    expect(r.structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'review', assignee: 'm', commit: null, handed_in: true });
   });
 });
 
@@ -440,7 +440,7 @@ describe('S6l: prime --hook shows the resume section in a new session, ALREADY_C
     for (const argv of [['claim', 'LB-1'], ['finish', 'LB-1', '--result', 'x']]) {
       const e = JSON.parse((await cli([...argv, '--json'], { cwd: s.root, env: SESSION_B })).stdout).error;
       expect(e.code).toBe('ALREADY_CLAIMED');
-      expect(e.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B}`);
+      expect(e.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B} --json`);
       const then = argv[0] === 'claim' ? '' : ', then finish it again';
       expect(e.message).toBe(`task LB-1 is held by ${NAME_A}, another session of your default name that wrote <1 min ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim LB-1 --resume${then}`);
     }

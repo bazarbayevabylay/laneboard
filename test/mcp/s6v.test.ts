@@ -34,7 +34,7 @@ describe('S6v B-U1 over MCP', () => {
     expect(r.isError).toBe(true);
     expect(r.structuredContent).toMatchObject({
       code: 'INVALID_VALUE',
-      fix: "laneboard comment API-1 --as rev -- 'back: missing test' && laneboard update API-1 --status dev --as rev",
+      fix: 'task_comment {"id":"API-1","actor":"rev","text":"back: missing test"}, then task_update {"id":"API-1","status":"dev","actor":"rev"}',
     });
     expect(stored(s, 'API-1').status).toBe('qa');
     expect((await callTool('task_comment', { id: 'API-1', text: 'back: missing test', actor: 'rev' }, env)).structuredContent).toMatchObject({ id: 'API-1', status: 'qa' });
@@ -45,7 +45,7 @@ describe('S6v B-U1 over MCP', () => {
   it('task_finish into the starting status: back to the start with the comment, never status done', async () => {
     const s = await inQa();
     const r = await callTool('task_finish', { id: 'API-1', status: 'backlog', result: 'not now', actor: 'orch' }, { cwd: s.root, env: {} });
-    expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard comment API-1 --as orch -- 'not now' && laneboard update API-1 --status backlog --as orch" });
+    expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_comment {"id":"API-1","actor":"orch","text":"not now"}, then task_update {"id":"API-1","status":"backlog","actor":"orch"}' });
     expect(stored(s, 'API-1').status).toBe('qa');
   });
 
@@ -60,7 +60,7 @@ describe('S6v B-U1 over MCP', () => {
     expect(r.isError).toBe(true);
     expect(r.structuredContent).toMatchObject({
       code: 'INVALID_VALUE',
-      fix: "laneboard comment API-1 --as rev -- '- fix lint' && laneboard update API-1 --status fixing --as rev",
+      fix: 'task_comment {"id":"API-1","actor":"rev","text":"- fix lint"}, then task_update {"id":"API-1","status":"fixing","actor":"rev"}',
     });
     expect(r.structuredContent).not.toHaveProperty('input');
     expect(stored(s, 'API-1').status).toBe('code_review');

@@ -5,11 +5,11 @@ exit 6
 
 --- stderr
 error STORE_NOT_FOUND: no .laneboard directory in <ROOT> or any parent
-  fix: find this project's board: laneboard boards --json, then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description "<whose project, what work>", then laneboard prime
+  fix: find this project's board: laneboard boards --json, then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description "<whose project, what work>" --json, then laneboard prime --json
 
 $ laneboard list --json
 exit 6
 --- stdout
-{"ok":false,"store":null,"prefix":null,"error":{"code":"STORE_NOT_FOUND","message":"no .laneboard directory in <ROOT> or any parent","fix":"find this project's board: laneboard boards --json, then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description \"<whose project, what work>\", then laneboard prime"}}
+{"ok":false,"store":null,"prefix":null,"error":{"code":"STORE_NOT_FOUND","message":"no .laneboard directory in <ROOT> or any parent","fix":"find this project's board: laneboard boards --json, then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description \"<whose project, what work>\" --json, then laneboard prime --json"}}
 --- stderr
 

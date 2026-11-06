@@ -123,7 +123,7 @@ describe('P2: create_by (config --creators)', () => {
     try {
       const r = await client.callTool({ name: 'task_create', arguments: { title: 'Extra', status: 'ready' } });
       expect(r.isError).toBe(true);
-      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<task you need, for orch to create>" --as dev-a --json' });
+      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_comment {"id":"API-1","text":"<task you need, for orch to create>","actor":"dev-a"}' });
       const prime = await client.callTool({ name: 'task_prime', arguments: {} });
       expect((prime.structuredContent as Record<string, any>).roles).toMatchObject({ checks: ['code_review', 'qa'], creators: ['orch'], can_create: false, work_status: 'dev' });
     } finally {

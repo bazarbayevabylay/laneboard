@@ -190,8 +190,8 @@ describe('S6z U2: the return command in a stale check\'s message carries a place
     expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'CR ok (rev)'])).code).toBe(0);
     const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'Code ok (orch)']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
-    expect(r.doc.error.message).toContain(`or return it for rework: laneboard comment API-1 --as orch -- ${PLACEHOLDER} && laneboard update API-1 --status dev --as orch`);
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1 --json' });
+    expect(r.doc.error.message).toContain(`or return it for rework: laneboard comment API-1 --as orch --json -- ${PLACEHOLDER} && laneboard update API-1 --status dev --as orch --json`);
     expect(r.doc.error.message).not.toContain('Code ok');
     expect(sh(s, r.doc.error.fix as string)).toBe(0);
   });
@@ -283,7 +283,7 @@ describe('S6z r1: the refusal of a stale check of a returned task says what reac
     expect((await run(s, 'rev', ['update', 'API-1', '--status', 'dev'])).code).toBe(0);
     const other = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'ok']);
     expect(other.code).not.toBe(0);
-    expect(other.doc.error.fix).toBe('laneboard get API-1');
+    expect(other.doc.error.fix).toBe('laneboard get API-1 --json');
     expect(other.doc.error.message).toContain(
       "when dev-1 hands it in again; under it dev-1's prime shows only what rev commented since the hand-in, never a note from you, so the fix only reads the task",
     );
@@ -292,7 +292,7 @@ describe('S6z r1: the refusal of a stale check of a returned task says what reac
     expect((await run(s, 'orch', ['comment', 'API-1', 'hand it in: please'])).code).toBe(0);
     expect(await primeText(s, 'dev-1')).toContain('    last comment by rev: > R1: totals');
     const own = await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'ok']);
-    expect(own.doc.error.fix).toBe('laneboard get API-1');
+    expect(own.doc.error.fix).toBe('laneboard get API-1 --json');
     expect(own.doc.error.message).toContain("when dev-1 hands it in again; a comment from you now would become the reason in dev-1's prime, so the fix only reads the task");
     expect(own.doc.error.message).not.toContain('bury');
     // And the returner's comment does become the reason.

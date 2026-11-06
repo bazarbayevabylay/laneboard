@@ -42,7 +42,8 @@ export interface OpResult<T> {
   reply?: WriteFacts;
   // The op wrote less than it was asked for (finish of a task already in that status that only linked a new commit).
   unchanged?: boolean;
-  // finish by the assignee handed the task in (a status that is not final); the CLI line says "handed in" (LB-11 c), not in the JSON reply.
+  // finish by the assignee handed the task in (a status that is not final): the CLI line says "handed in" (LB-11 c), the facades add
+  // handed_in: true to the short reply (CLI finish --json, MCP task_finish; LB-63.3).
   handed_in?: boolean;
 }
 

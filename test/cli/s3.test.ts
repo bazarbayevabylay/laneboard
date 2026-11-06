@@ -119,7 +119,7 @@ describe('laneboard finish', () => {
     const before = fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8');
     const r = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--as', 'dev-2', '--json'], { cwd: s.root })).stdout);
     // Rewritten in S4b (owner): the fix asks the holder to hand the task in with finish (a comment).
-    expect(r.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard comment LB-1 "hand it in: laneboard finish LB-1 --status <one of: in_progress, review> --result <result>" --as dev-2' });
+    expect(r.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard comment LB-1 "hand it in: laneboard finish LB-1 --status <one of: in_progress, review> --result <result>" --as dev-2 --json' });
     expect(r.error.message).not.toContain('--resume');
     expect(fs.readFileSync(path.join(s.dir, 'active.json'), 'utf8')).toBe(before);
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Mine before /clear', status: 'in_progress', assignee: NAME_A });
@@ -128,7 +128,7 @@ describe('laneboard finish', () => {
     // Rewritten in S6l (P5, reverses S3b): an earlier session of the default name that wrote less than 15 min ago may be a parallel
     // session at work: the fix stays the comment, the message names --resume for a closed one (the silent case: s6l.test.ts).
     expect(mine.error.message).toBe(`task LB-2 is held by ${NAME_A}, another session of your default name that wrote <1 min ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim LB-2 --resume, then finish it again`);
-    expect(mine.error.fix).toBe(`laneboard comment LB-2 "<note for ${NAME_A}>" --as ${NAME_B}`);
+    expect(mine.error.fix).toBe(`laneboard comment LB-2 "<note for ${NAME_A}>" --as ${NAME_B} --json`);
   });
 
   it('a task already in the final status: unchanged, with a warning that the result was not recorded (exit 0)', async () => {
@@ -148,7 +148,7 @@ describe('laneboard finish', () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'T', status: 'todo', assignee: 'dev-1' });
     const first = JSON.parse((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'todo', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
-    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: 'laneboard comment LB-1 --as dev-1 -- x && laneboard update LB-1 --status todo --as dev-1' });
+    expect(first.error).toMatchObject({ code: 'INVALID_VALUE', allowed: ['in_progress', 'review', 'done'], fix: 'laneboard comment LB-1 --as dev-1 --json -- x && laneboard update LB-1 --status todo --as dev-1 --json' });
     expect(first.error.message).toBe('"todo" is the starting status; finish sets one of in_progress, review, done (default done; back to the start: laneboard update LB-1 --status todo)');
     expect(stored(s, 'LB-1').rev).toBe(1);
     expect((await cli(['finish', 'LB-1', '--result', 'x', '--status', 'done', '--as', 'dev-1'], { cwd: s.root })).code).toBe(0);
@@ -167,14 +167,18 @@ describe('laneboard finish', () => {
     await createTask(as(s, 'a'), { title: 'A', status: 'in_progress', assignee: 'm' });
     await createTask(as(s, 'a'), { title: 'B', status: 'in_progress', assignee: 'm' });
     const env = { cwd: s.root, env: {} };
-    expect((await callTool('task_finish', { id: 'LB-1', result: 'done', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'done', assignee: 'm', commit: head });
+    // LB-60.3: a warning rides in structuredContent too: HEAD committed in an earlier second than the task was created gets "HEAD has
+    // not moved" (timing), its command as a tool call (LB-60.1).
+    const { warnings, ...done } = (await callTool('task_finish', { id: 'LB-1', result: 'done', actor: 'm' }, env)).structuredContent;
+    expect(done).toEqual({ id: 'LB-1', rev: 2, status: 'done', assignee: 'm', commit: head });
+    for (const w of (warnings ?? []) as string[]) expect(w).toContain('HEAD has not moved since you claimed LB-1; commit your work and run task_finish {"id":"LB-1"} again');
     expect((await callTool('task_finish', { id: 'LB-2', result: 'done', no_commit: true, actor: 'm' }, env)).structuredContent).toMatchObject({ commit: null });
     expect(stored(s, 'LB-2').links).toEqual([]);
     await createTask(as(s, 'a'), { title: 'C', status: 'todo', assignee: 'dev-1' });
     const taken = await callTool('task_finish', { id: 'LB-3', result: 'x', actor: 'm' }, env);
     expect(taken.isError).toBe(true);
     // Rewritten in S4b, again in LB-11: the hand-in statuses are listed, and update closes it as the orchestrator.
-    expect(taken.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment LB-3 "hand it in: laneboard finish LB-3 --status <one of: in_progress, review> --result <result>" --as m' });
+    expect(taken.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'task_comment {"id":"LB-3","text":"hand it in: laneboard finish LB-3 --status <one of: in_progress, review> --result <result>","actor":"m"}' });
     expect((await callTool('task_finish', { id: 'LB-3', result: 'x', expected_rev: 1, actor: 'dev-1' }, env)).structuredContent).toMatchObject({ code: 'USAGE' });
   });
 });
@@ -232,7 +236,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     expect(plain.error.code).toBe('ALREADY_CLAIMED');
     // Rewritten in S6l (P5, reverses S3b): the fix stays the comment (that session may be at work), the message names --resume.
     expect(plain.error.message).toContain('if that session is closed: laneboard claim LB-1 --resume');
-    expect(plain.error.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B}`);
+    expect(plain.error.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B} --json`);
     const r = JSON.parse((await cli(['claim', 'LB-1', '--resume', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
     expect(r.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A });
     // On a free task or an own one --resume is a plain claim.
@@ -254,7 +258,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
       expect(e.message).toContain(`--resume takes over only a task that another session of yours took under its default name ${BASE}:<other session>, and `);
     }
     const explicit = await err(['claim', 'LB-3', '--resume', '--as', 'dev-2'], SESSION_B);
-    expect(explicit).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment LB-3 "<note for ${NAME_A}>" --as dev-2` });
+    expect(explicit).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment LB-3 "<note for ${NAME_A}>" --as dev-2 --json` });
     expect(explicit.message).toContain('--resume takes over only a task of an earlier session of the session default name, and you write as dev-2');
     // Without a session id there is no earlier session either.
     const noSession = await err(['claim', 'LB-3', '--resume'], { LANEBOARD_DEFAULT_AGENT: BASE });
@@ -280,7 +284,17 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     await createTask(as(s, NAME_A, { actorSource: 'default' }), { title: 'Ann', status: 'in_progress', assignee: NAME_A });
     const r = await callTool('task_claim', { id: 'LB-1', resume: true }, { cwd: s.root, env: SESSION_B });
     expect(r.isError).toBeFalsy();
-    expect(r.structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A });
+    // LB-60.3: the warning of the resume of a session active <1 min ago is in structuredContent too, its command as a tool call (LB-60.1).
+    expect(r.structuredContent).toEqual({
+      id: 'LB-1',
+      rev: 2,
+      status: 'in_progress',
+      assignee: NAME_B,
+      resumed_from: NAME_A,
+      warnings: [
+        `LB-1 taken from a session active <1 min ago (${NAME_A}): if it is a parallel session at work, not your own closed one, tell it: task_comment {"id":"LB-1","text":"<note for ${NAME_A}>"}`,
+      ],
+    });
   });
 
   it("no resume section or command under a warning that the store looks like another project's", async () => {

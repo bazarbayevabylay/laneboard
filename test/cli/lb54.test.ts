@@ -137,7 +137,7 @@ describe('LB-54.4: a task taken back with --resume less than 15 min ago stays wi
     for (const argv of [['claim', 'WORD-1', '--resume'], ['claim', 'WORD-1']]) {
       const r = await json(s, argv, SESSION_3);
       expect(r.code, argv.join(' ')).toBe(4);
-      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: NAME_2 }, fix: `laneboard comment WORD-1 "<note for ${NAME_2}>" --as ${NAME_3}` });
+      expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: NAME_2 }, fix: `laneboard comment WORD-1 "<note for ${NAME_2}>" --as ${NAME_3} --json` });
       expect(r.doc.error.message, argv.join(' ')).toBe(
         `task WORD-1 was taken back with claim --resume by ${NAME_2}, another session of your default name, <1 min ago: a task resumed within 15 min stays with the session that took it, as another one may be a parallel session at work, so do not take it over; if that session is closed, the task can be resumed once its resume is 15 min old: laneboard claim WORD-1 --resume`,
       );

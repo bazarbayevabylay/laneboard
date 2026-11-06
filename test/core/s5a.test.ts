@@ -149,7 +149,7 @@ describe('§26 description append', () => {
     await createTask(as(s, 'a'), { title: 'T', status: 'todo', description: 'x'.repeat(99990) });
     const err = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-1', append_description: 'y'.repeat(9) }), 'INVALID_VALUE');
     expect(err.message).toBe('description would be 100001 characters, over 100000');
-    expect(err.fix).toBe('laneboard attach LB-1 <path of a file with the text>');
+    expect(err.fix).toBe('laneboard attach LB-1 <path of a file with the text> --json');
     expect(stored(s, 'LB-1').rev).toBe(1);
     expect((await updateTask(as(s, 'a'), { id: 'LB-1', append_description: 'y'.repeat(8) })).data.description).toHaveLength(100000);
   });

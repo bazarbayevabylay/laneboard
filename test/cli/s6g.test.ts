@@ -256,7 +256,7 @@ describe('config --field / --drop-field', () => {
   });
 
   it('an agent that meets an undeclared field is sent to the owner, never to config.json (MCP fix and import fix)', async () => {
-    expect(ERRORS.UNKNOWN_FIELD.fix).toBe('use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type>');
+    expect(ERRORS.UNKNOWN_FIELD.fix).toBe('use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type> --json');
     const { p, run } = await board();
     const src = path.join(p, 'tasks');
     fs.mkdirSync(src);

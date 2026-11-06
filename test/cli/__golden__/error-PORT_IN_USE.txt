@@ -1,6 +1,6 @@
 # error-PORT_IN_USE
 $ laneboard board --port 47420
-exit 5
+exit 4
 --- stdout
 
 --- stderr
@@ -8,7 +8,7 @@ error PORT_IN_USE: port 47420 on 127.0.0.1 is already in use (another laneboard 
   fix: laneboard board --port 0
 
 $ laneboard board --port 47420 --json
-exit 5
+exit 4
 --- stdout
 {"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"PORT_IN_USE","message":"port 47420 on 127.0.0.1 is already in use (another laneboard board or program)","fix":"laneboard board --json --port 0"}}
 --- stderr

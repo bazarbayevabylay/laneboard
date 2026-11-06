@@ -156,7 +156,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
         const text = task.description === '' ? p.append_description : `${task.description}\n\n${p.append_description}`;
         if (text.length > 100000) {
           throw new LaneboardError('INVALID_VALUE', `description would be ${text.length} characters, over 100000`, {
-            fix: `laneboard attach ${id} <path of a file with the text>`,
+            fix: `laneboard attach ${id} <path of a file with the text> --json`,
           });
         }
         diff.description = { chars: [task.description.length, text.length], appended: true };
@@ -254,7 +254,7 @@ function claimedBy(ctx: OpContext, id: string, holder: string, actor: string, re
   }
   return new LaneboardError('ALREADY_CLAIMED', `task ${id} is already claimed by ${holder}; ${why}`, {
     details: { assignee: holder },
-    fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}`,
+    fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor} --json`,
   });
 }
 
@@ -275,7 +275,7 @@ function earlierSessionClaimed(id: string, holder: string, actor: string, silent
   return new LaneboardError(
     'ALREADY_CLAIMED',
     `task ${id} is held by ${holder}, another session of your default name that wrote ${minutesText(silentMs)} ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim ${id} --resume${then}`,
-    { details, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+    { details, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor} --json` },
   );
 }
 
@@ -309,7 +309,7 @@ function resumedByLiveSession(id: string, holder: string, actor: string, resumed
     `task ${id} was taken back with claim --resume by ${holder}, another session of your default name, ${minutesText(resumedAgo)} ago: ` +
       `a task resumed within ${minutesText(EARLIER_SESSION_SILENT_MS)} stays with the session that took it, as another one may be a parallel session at work, so do not take it over; ` +
       `if that session is closed, the task can be resumed once its resume is ${minutesText(EARLIER_SESSION_SILENT_MS)} old: laneboard claim ${id} --resume`,
-    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor} --json` },
   );
 }
 
@@ -666,7 +666,7 @@ function alreadyHandedIn(config: ConfigT, task: TaskT, actor: string): Laneboard
   return new LaneboardError(
     'INVALID_VALUE',
     `${task.id} is handed in already and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): nothing to do; the author never moves it to another check or into ${final}, and a note for the checkers is a comment${noCheckerExit(config, task)}`,
-    { fix: `laneboard comment ${task.id} "<note for the check>" --as ${actor}` },
+    { fix: `laneboard comment ${task.id} "<note for the check>" --as ${actor} --json` },
   );
 }
 
@@ -761,7 +761,7 @@ function waitingClaimRefusal(config: ConfigT, task: TaskT, actor: string, sessio
   const message =
     `${task.id} is handed in and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): claim never takes a task that waits for a check ` +
     `(a checker passes it on with finish, no claim needed; the author never moves it), and a note for the checkers is a comment${noCheckerExit(config, task)}`;
-  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor}`;
+  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor} --json`;
   const holder = task.assignee;
   if (holder !== null && holder !== actor) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: holder }, fix });
   return new LaneboardError('INVALID_VALUE', message, { fix });
@@ -806,7 +806,7 @@ function checksLine(review: readonly string[], final: string): string {
 function handInToFirstCheck(config: ConfigT, task: TaskT, target: string, actor: string, via: 'finish' | 'update'): LaneboardError {
   const review = reviewStatuses(config);
   const first = handInStatus(review, task);
-  const fix = handInLine(config, task, first, actor);
+  const fix = handInLine(config, task, first, actor, true);
   const closed = finalStatuses(config.statuses).includes(task.status) ? ` (it is ${task.status}: reopen it into ${reworkStatus(config)} first)` : '';
   const message = `on this board ${target} is set by a check (${checksLine(review, finalStatuses(config.statuses)[0] ?? '')}): hand ${task.id} in to ${first} with finish${closed}, a checker passes it on and accepts it`;
   return via === 'finish'
@@ -816,9 +816,9 @@ function handInToFirstCheck(config: ConfigT, task: TaskT, target: string, actor:
 
 // The hand-in of `task` into the check `check` as one command line, run as printed (rule 13), by `actor` (no --as when undefined: who did
 // the work runs it). A task in a final status is reopened first into the work status (reworkStatus): finish never reopens a closed task
-// (ADR §20), so a bare finish there would change nothing (S6w r1).
-function handInLine(config: ConfigT, task: TaskT, check: string, actor: string | undefined): string {
-  const as = actor === undefined ? '' : ` --as ${actor}`;
+// (ADR §20), so a bare finish there would change nothing (S6w r1). `json`: each command with --json, as a fix (rule 3, LB-63.2).
+function handInLine(config: ConfigT, task: TaskT, check: string, actor: string | undefined, json = false): string {
+  const as = `${actor === undefined ? '' : ` --as ${actor}`}${json ? ' --json' : ''}`;
   const handIn = `laneboard finish ${task.id} --status ${check} --result "<what you did, how you checked it>"${as}`;
   if (!finalStatuses(config.statuses).includes(task.status)) return handIn;
   return `laneboard update ${task.id} --status ${reworkStatus(config)}${as} && ${handIn}`;
@@ -938,7 +938,7 @@ function returnedForRework(task: TaskT, r: ReworkReturn, actor: string): Laneboa
     'ALREADY_CLAIMED',
     `${task.id} was returned for rework by ${mover} at ${r.at} (${r.from} -> ${r.to}), ${why}; it is ${task.status} with ${holder} and not handed in, so there is nothing to check: ` +
       `it comes back to the checkers' queue (laneboard prime) when ${holder} hands it in again; ${note}, so the fix only reads the task`,
-    { details: { assignee: task.assignee }, fix: `laneboard get ${task.id}` },
+    { details: { assignee: task.assignee }, fix: `laneboard get ${task.id} --json` },
   );
 }
 
@@ -962,9 +962,10 @@ function noReasonWarning(task: TaskT, actor: string, back: ReworkReturn): string
 
 // The return for rework as one command line, run as printed (rule 13): the comment with the caller's text, then the move into `to`.
 // No `input` goes with it, so the CLI keeps it as is and never rebuilds the caller's finish with another status (B-U1 run 3). The text
-// goes after `--`, as the CLI asks for text that starts with "-" ("- missing test", "--broken"): it is never read as an option.
+// goes after `--`, as the CLI asks for text that starts with "-" ("- missing test", "--broken"): it is never read as an option; so --json
+// (rule 3, LB-63.2) goes before it.
 function reworkFix(id: string, text: string, to: string, actor: string): string {
-  return `laneboard comment ${id} --as ${actor} -- ${shellQuote(text)} && laneboard update ${id} --status ${to} --as ${actor}`;
+  return `laneboard comment ${id} --as ${actor} --json -- ${shellQuote(text)} && laneboard update ${id} --status ${to} --as ${actor} --json`;
 }
 
 // Does a checker's finish into `target` (not a later check, not the first final status) of a task in `current` mean a return for
@@ -1019,7 +1020,7 @@ function unclearCheck(config: ConfigT, task: TaskT, actor: string, why: string):
   return new LaneboardError(
     'INVALID_VALUE',
     `${task.id} is handed in and waits in ${task.status} (${checksLine(reviewStatuses(config), final)}); ${why}. Read it first (laneboard get ${task.id}), then either ${passWhat}: ${pass}; or return it for rework: ${back}`,
-    { fix: `laneboard get ${task.id}` },
+    { fix: `laneboard get ${task.id} --json` },
   );
 }
 
@@ -1043,7 +1044,7 @@ function checkEntryRefusal(config: ConfigT, task: TaskT, actor: string, to: stri
   const closed = reopen === '' ? '' : `${task.id} is ${task.status} (closed): reopen it, then `;
   if (task.assignee === null || task.assignee === actor || workedOn(task, actor, sessionBase)) {
     return new LaneboardError('INVALID_VALUE', `${message}; ${closed}hand ${task.id} in: ${reopen}laneboard finish ${task.id} --status ${first}`, {
-      fix: handInLine(config, task, first, actor),
+      fix: handInLine(config, task, first, actor, true),
     });
   }
   const back = reworkReturn(config, task);
@@ -1051,7 +1052,7 @@ function checkEntryRefusal(config: ConfigT, task: TaskT, actor: string, to: stri
   // ALREADY_CLAIMED, as a checker's finish of that task (notHandedInForCheck, LB-63.1): somebody else holds it and has not handed it in.
   return new LaneboardError('ALREADY_CLAIMED', `${message}; ${task.id} is held by ${task.assignee}: ask it to ${reopen === '' ? '' : 'reopen and '}hand the task in (${reopen}laneboard finish ${task.id} --status ${first})`, {
     details: { assignee: task.assignee },
-    fix: `laneboard comment ${task.id} "hand it in: ${reopen}laneboard finish ${task.id} --status ${first} --result <result>" --as ${actor}`,
+    fix: `laneboard comment ${task.id} "hand it in: ${reopen}laneboard finish ${task.id} --status ${first} --result <result>" --as ${actor} --json`,
   });
 }
 
@@ -1061,7 +1062,7 @@ function notChecker(id: string, holder: string | null, actor: string, by: readon
   return new LaneboardError(
     'ALREADY_CLAIMED',
     `on this board only ${by.join(', ')} pass ${id} on to the next check or close it (config review.by), and you write as ${actor}; do not take it over: comment or ask the orchestrator`,
-    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${owner}>" --as ${actor}` },
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${owner}>" --as ${actor} --json` },
   );
 }
 
@@ -1071,7 +1072,7 @@ function notHandedInForCheck(id: string, holder: string, current: string, actor:
   return new LaneboardError(
     'ALREADY_CLAIMED',
     `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; a check passes on or accepts only a handed-in task (laneboard finish ${id} --status ${first}); do not take it over: ask ${holder} to hand it in`,
-    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${first} --result <result>" --as ${actor}` },
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${first} --result <result>" --as ${actor} --json` },
   );
 }
 
@@ -1098,7 +1099,7 @@ function notFinalTarget(id: string, holder: string, current: string, actor: stri
   return new LaneboardError(
     'ALREADY_CLAIMED',
     `task ${id} is claimed by ${holder} and is ${current}; somebody else's finish only accepts a task its assignee handed in, into ${final}; do not take it over: comment or ask the orchestrator`,
-    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor} --json` },
   );
 }
 
@@ -1118,7 +1119,7 @@ function notHandedIn(id: string, holder: string, current: string, actor: string,
   return new LaneboardError(
     'ALREADY_CLAIMED',
     `task ${id} is claimed by ${holder} and is ${current}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status ${handIn}); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status ${final} --as ${actor}`,
-    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}` },
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor} --json` },
   );
 }
 
@@ -1205,15 +1206,15 @@ function sameCommit(a: string, b: string): boolean {
 // where another agent committed and finished is not this agent's work. A warning, not a refusal: one commit may hold the work of two
 // tasks. The fix links the commit of the agent's work, a placeholder (refused as is: --commit takes hex only), and only then drops this
 // link (worktreeWarning's way). Tasks the actor holds itself do not count: one commit for two of its own tasks is its choice.
-// undefined: no other task links it.
-function commitLinkedWarning(tasks: readonly TaskT[], id: string, commit: string, status: string, actor: string): string | undefined {
+// undefined: no other task links it; `named`: those tasks, for the worktree warning that replaces this one (finishTask).
+function commitLinkedWarning(tasks: readonly TaskT[], id: string, commit: string, status: string, actor: string): { text: string; named: string } | undefined {
   const others = tasks.filter((t) => t.id !== id && t.assignee !== actor && t.links.some((l) => l.kind === 'commit' && sameCommit(l.ref, commit)));
   if (others.length === 0) return undefined;
   const named = others.map((t) => (t.assignee === null ? t.id : `${t.id} of ${t.assignee}`)).join(', ');
-  return (
+  const text =
     `commit ${commit.slice(0, 12)} is already linked to ${named}: if it holds the work of both, nothing to do; if it is not your work (HEAD of a folder where another agent committed), ` +
-    `link the commit of yours instead: laneboard finish ${id} --status ${status} --commit <sha of your work> --result "<your result>" --as ${actor} --json && laneboard update ${id} --remove-link commit=${commit} --as ${actor} --json`
-  );
+    `link the commit of yours instead: laneboard finish ${id} --status ${status} --commit <sha of your work> --result "<your result>" --as ${actor} --json && laneboard update ${id} --remove-link commit=${commit} --as ${actor} --json`;
+  return { text, named };
 }
 
 // Warnings that the linked commit may not hold the agent's work (owner's decision, S3b): uncommitted changes (staged or not), or
@@ -1351,6 +1352,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   let checkedFrom: string | undefined;
   let linked = false;
   let workStart: string | undefined;
+  // The warning that the linked commit is linked to other names' tasks already (LB-55.1), until the worktree warning may replace it.
+  let shared: { text: string; named: string } | undefined;
   let taskId = '';
   const data = await transact(
     ctx.store,
@@ -1442,8 +1445,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         addEvent(task, s.config, s.now, actor, 'updated', { links: [task.links, links] }, actorSourceOf(ctx));
         task.links = links;
         linked = true;
-        const shared = commitLinkedWarning([...s.active.tasks, ...s.archive.tasks], id, newCommit, status, actor);
-        if (shared !== undefined) warnings.push(shared);
+        shared = commitLinkedWarning([...s.active.tasks, ...s.archive.tasks], id, newCommit, status, actor);
+        if (shared !== undefined) warnings.push(shared.text);
       }
       if (again) {
         // The status event of the first hand-in stays the newest one into this status, so the task stays handed in (handedIn).
@@ -1473,7 +1476,11 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   // An acceptance links no commit, so the checkout of who accepts says nothing about the work. With the worktree warning the "HEAD has
   // not moved since you claimed" one says the same thing worse (LB-55.3: run finish again here would link the same HEAD), so it is left out.
   if (!byOther) warnings.push(...checkoutWarnings(taskId, git, other === undefined ? workStart : undefined, p.commit !== undefined));
-  if (other !== undefined) warnings.push(other);
+  // One warning for one wrong commit (review A2 NIT): next to the worktree warning, whose command relinks the commit just as well and
+  // names the worktrees, the commit-linked one only adds the tasks that link it too.
+  const sharedAt = shared === undefined ? -1 : warnings.indexOf(shared.text);
+  if (other !== undefined && sharedAt !== -1) warnings.splice(sharedAt, 1);
+  if (other !== undefined) warnings.push(shared === undefined ? other : `${other}; commit ${commit?.slice(0, 12) ?? ''} is already linked to ${shared.named} too`);
   if (finished && byOther) {
     const from = checkedFrom === undefined ? {} : { from: checkedFrom };
     return { data, warnings, reply: passedOn ? { commit: null, passed: true, ...from } : { commit: null, accepted: true, ...from } };

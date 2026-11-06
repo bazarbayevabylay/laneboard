@@ -15,7 +15,7 @@ describe('LB-11: hand-in texts that a weak model runs literally', () => {
     expect(r.code).toBe(4);
     const { fix, message } = JSON.parse(r.stdout).error as { fix: string; message: string };
     // Rule 13: the fix is exactly one command, run as is.
-    expect(fix).toBe('laneboard comment LB-1 "hand it in: laneboard finish LB-1 --status <one of: in_progress, review> --result <result>" --as orch');
+    expect(fix).toBe('laneboard comment LB-1 "hand it in: laneboard finish LB-1 --status <one of: in_progress, review> --result <result>" --as orch --json');
     expect(message).toContain('(laneboard finish LB-1 --status <one of: in_progress, review>)');
     expect(message).toMatch(/close it as the orchestrator: laneboard update LB-1 --status done --as orch$/);
   });

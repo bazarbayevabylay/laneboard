@@ -19,7 +19,8 @@ const EXPECTED_EXIT: Record<ErrorCode, number> = {
   ATTACHMENT_EXISTS: 4,
   LOCK_TIMEOUT: 5,
   LOCK_LOST: 5,
-  PORT_IN_USE: 5,
+  // LB-63.5: a conflict (the port is held), not busy: the same command again finds it taken again.
+  PORT_IN_USE: 4,
   STORE_NOT_FOUND: 6,
   STORE_INVALID: 6,
   STORE_TOO_NEW: 6,
@@ -36,6 +37,13 @@ describe('error registry (C5)', () => {
     expect(spec.exit).toBe(EXPECTED_EXIT[code]);
     expect([400, 404, 409, 500, 503]).toContain(spec.http);
     expect(spec.fix.trim().length).toBeGreaterThan(10);
+  });
+
+  it('LB-63.2: every command an agent runs in a default fix carries --json (rule 3); laneboard board (a server for people) is none', () => {
+    const commands = ERROR_CODES.flatMap((code) => [...ERRORS[code].fix.matchAll(/laneboard (?:prime|create|claim|comment|finish|get|list|update|attach|archive|restore|events|boards|init|config|doctor|delete|redact)\b(?:"[^"]*"|[^;,)"])*/g)].map((m) => ({ code, command: m[0] })));
+    const agentCommands = commands.filter((c) => !c.command.includes('--help'));
+    expect(agentCommands.length).toBeGreaterThan(8);
+    for (const c of agentCommands) expect(c.command, c.code).toContain('--json');
   });
 
   it('lists every code exactly once', () => {

@@ -47,7 +47,7 @@ const NOT_HANDED_IN = (id: string, holder: string, status: string, actor = 'orch
   `task ${id} is claimed by ${holder} and is ${status}, not handed in with finish; somebody else's finish only accepts a task its assignee handed in (laneboard finish ${id} --status ${handIn}); do not take it over: ask ${holder} to hand it in, or close it as the orchestrator: laneboard update ${id} --status done --as ${actor}`;
 // Rewritten in LB-11: the hand-in statuses are the non-final finish statuses (a, not the current one), the fix is the one comment command (rule 13).
 const HAND_IN_FIX = (id: string, handIn = OPEN, actor = 'orch') =>
-  `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor}`;
+  `laneboard comment ${id} "hand it in: laneboard finish ${id} --status ${handIn} --result <result>" --as ${actor} --json`;
 // The refusal of somebody else's finish into a status that is not final.
 const NOT_FINAL = (id: string, holder: string, status: string) =>
   `task ${id} is claimed by ${holder} and is ${status}; somebody else's finish only accepts a task its assignee handed in, into done; do not take it over: comment or ask the orchestrator`;
@@ -196,7 +196,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     for (const status of ['review', 'in_progress']) {
       const err = await rejectsWith(finishTask(as(s, 'orch'), { id: 'LB-1', result: 'x', status, no_commit: true }), 'ALREADY_CLAIMED');
       expect(err.message).toBe(NOT_FINAL('LB-1', 'dev-1', 'review'));
-      expect(err.fix).toBe('laneboard comment LB-1 "<note for dev-1>" --as orch');
+      expect(err.fix).toBe('laneboard comment LB-1 "<note for dev-1>" --as orch --json');
     }
     expect(stored(s, 'LB-1').rev).toBe(rev);
   });
@@ -210,7 +210,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     expect(stored(s, 'LB-1').events.at(-1)).toMatchObject({ actor: 'orch', type: 'status', data: { from: 'review', to: 'done', accepted: true } });
     const no = await callTool('task_finish', { id: 'LB-2', result: 'x', no_commit: true, actor: 'orch' }, env);
     expect(no.isError).toBe(true);
-    expect(no.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-2', 'dev-1', 'in_progress'), fix: HAND_IN_FIX('LB-2') });
+    expect(no.structuredContent).toMatchObject({ code: 'ALREADY_CLAIMED', message: NOT_HANDED_IN('LB-2', 'dev-1', 'in_progress'), fix: `task_comment {"id":"LB-2","text":"hand it in: laneboard finish LB-2 --status ${OPEN} --result <result>","actor":"orch"}` });
   });
 
   it('claim keeps its ALREADY_CLAIMED text (only finish accepts)', async () => {

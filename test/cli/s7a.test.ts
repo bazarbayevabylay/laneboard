@@ -251,13 +251,14 @@ describe('S7a U6: the documented return for rework is confirmed, not warned', ()
       const s = await waiting(l.statuses, l.checks, l.work);
       const refused = await cli(['finish', 'API-1', '--status', l.work, '--result', 'tests missing', '--as', 'rev', '--json'], { cwd: s.root });
       const fix = JSON.parse(refused.stdout).error.fix as string;
-      expect(fix).toBe(`laneboard comment API-1 --as rev -- 'tests missing' && laneboard update API-1 --status ${l.work} --as rev`);
+      expect(fix).toBe(`laneboard comment API-1 --as rev --json -- 'tests missing' && laneboard update API-1 --status ${l.work} --as rev --json`);
       const r = sh(s, fix);
       expect(r.code).toBe(0);
       expect(r.stderr).toBe('');
-      expect(r.stdout).toContain(
-        `API-1 returned for rework to dev-1 (rev 5, ${l.work}, dev-1); reason: "tests missing"; dev-1 reworks it and hands it in again with finish, then it is back in the checkers' queue\n`,
-      );
+      // The fix carries --json on each command (LB-63.2): the update's envelope confirms the return, with no warning.
+      const update = JSON.parse(r.stdout.trim().split('\n').at(-1) ?? '{}') as { data: unknown; warnings: unknown };
+      expect(update.data).toEqual({ id: 'API-1', rev: 5, status: l.work, assignee: 'dev-1', returned: { to: 'dev-1', reason: 'tests missing' } });
+      expect(update.warnings).toEqual([]);
       expect(r.stdout).not.toContain('--as dev-1');
     });
 

@@ -166,7 +166,7 @@ describe('S6u r1 B-U1 over MCP: the author never moves a task waiting in qa back
       for (const tool of ['task_update', 'task_claim']) {
         const r = await mcp.call(tool, { id: 'API-1', status: 'code_review' });
         expect(r.isError, tool).toBe(true);
-        expect(r.structured, tool).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<note for the check>" --as dev-2' });
+        expect(r.structured, tool).toMatchObject({ code: 'INVALID_VALUE', fix: 'task_comment {"id":"API-1","text":"<note for the check>","actor":"dev-2"}' });
         expect(String(r.structured.message), tool).toContain('API-1 is handed in already and waits in qa');
       }
     } finally {
