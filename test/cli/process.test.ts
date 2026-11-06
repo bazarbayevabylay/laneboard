@@ -42,14 +42,11 @@ describe('laneboard process', () => {
 
   it('reads a description from stdin with --description-file -', async () => {
     const cwd = tempDir();
-    await spawnNode([CLI_SOURCE, 'init', '--description', 'test board', '--prefix', 'LB'], { cwd });
-    const { spawn } = await import('node:child_process');
-    const child = spawn(process.execPath, [CLI_SOURCE, 'create', 'piped', '--status', 'todo', '--description-file', '-', '--as', 'a', '--json', '--full'], { cwd });
-    let out = '';
-    child.stdout.on('data', (d: Buffer) => (out += d.toString()));
-    child.stdin.end('from stdin\n');
-    const code = await new Promise((resolve) => child.on('exit', resolve));
-    expect(code).toBe(0);
-    expect(JSON.parse(out).data.description).toBe('from stdin\n');
+    // Isolated like every spawn here (spawnNode: only PATH): an inherited LANEBOARD_DIR sent this create to the session's board (06.11).
+    const env = { HOME: tempDir() };
+    await spawnNode([CLI_SOURCE, 'init', '--description', 'test board', '--prefix', 'LB'], { cwd, env });
+    const r = await spawnNode([CLI_SOURCE, 'create', 'piped', '--status', 'todo', '--description-file', '-', '--as', 'a', '--json', '--full'], { cwd, env, stdin: 'from stdin\n' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ store: path.join(cwd, '.laneboard'), data: { title: 'piped', description: 'from stdin\n' } });
   });
 });

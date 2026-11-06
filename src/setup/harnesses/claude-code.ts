@@ -288,26 +288,33 @@ function stalePinWarnings(c: HarnessContext): string[] {
 }
 
 // A pin of an earlier setup in .claude/settings.json (committed) that this run moves to the local file: say so, the change to commit.
+// A --dry-run moves nothing, so it says what setup would do (review C2).
 function movedPinWarnings(c: HarnessContext): string[] {
   if (envFolder(c) === undefined) return [];
   const dir = movingPin(readText(path.join(c.cwd, SETTINGS)), c);
   if (dir === undefined) return [];
   const to = rootLocalFile(c) ?? LOCAL_SETTINGS;
+  if (c.dryRun) {
+    return [
+      `${SETTINGS} holds the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}, LANEBOARD_DEFAULT_AGENT), a machine path in a committed file; setup would move the env to ${to} (kept out of git) and leave the rest of ${SETTINGS} as it is: commit that change after setup`,
+    ];
+  }
   return [
     `${SETTINGS} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}, LANEBOARD_DEFAULT_AGENT), a machine path in a committed file; setup moved the env to ${to} (kept out of git) and left the rest of ${SETTINGS} as it was: commit that change`,
   ];
 }
 
 // A pin an earlier setup left in the repository root's local file that this run takes out (leftRootPin): say so, and how the folders
-// that relied on it get their pin back.
+// that relied on it get their pin back. A --dry-run takes nothing out, so it says what setup would do (review C2).
 function leftPinWarnings(c: HarnessContext): string[] {
   const file = rootLocalFile(c);
   if (file === undefined) return [];
   const text = readText(file);
   if (!leftRootPin(text, c)) return [];
   const dir = envString(text, ENV_DIR) ?? '';
+  const [held, took] = c.dryRun ? ['holds', 'would take it out'] : ['held', 'took it out'];
   return [
-    `${file} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code there pins it again`,
+    `${file} ${held} the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup ${took}. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code there pins it again`,
   ];
 }
 

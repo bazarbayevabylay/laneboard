@@ -481,11 +481,16 @@ function checkReview(config: ConfigT, statusesGiven: boolean, ordered: boolean):
   });
 }
 
-// Checkers that no session matches (LB-62.3): a name of the form <harness>@<user> without `:<session>` is the base of a session
-// default name (claude-code@<user>), and every session writes as <base>:<session>, so review.by never matches it.
+// The base of a session default name: only Claude Code sessions add `:<session>` to it (SESSION_HARNESS in agent-name.ts); codex@<user>
+// or alice@corp are written as they are.
+const SESSION_BASE_PREFIX = 'claude-code@';
+
+// Checkers that no session matches (LB-62.3): claude-code@<user> without `:<session>` is the base of a session default name, and every
+// Claude Code session writes as <base>:<session>, so review.by never matches it. Other names with `@` (codex@<user>, alice@corp) are
+// whole names and get no warning (review C2).
 function sessionBaseWarnings(by: readonly string[] | null | undefined): string[] {
   return (by ?? [])
-    .filter((name) => name.includes('@') && !name.includes(':'))
+    .filter((name) => name.startsWith(SESSION_BASE_PREFIX) && !name.includes(':'))
     .map((name) => `reviewer "${name}" looks like the base of a session default name: each session writes as ${name}:<session>, never as ${name}, so no session checks as it; a checker passes its own name (--as <name>) and --reviewers lists that name`);
 }
 

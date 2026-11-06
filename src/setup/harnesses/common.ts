@@ -66,6 +66,8 @@ export interface HarnessContext {
   // Absolute path of the store this project is pinned to.
   storeDir: string;
   env: Record<string, string | undefined>;
+  // A --dry-run: warnings say what setup would do (review C2, like planWarnings in setup/index.ts); absent means a real run.
+  dryRun?: boolean;
 }
 
 export interface HarnessFile {

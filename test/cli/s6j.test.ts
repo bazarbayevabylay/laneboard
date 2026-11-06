@@ -490,6 +490,33 @@ describe('LB-62 (0.4.1): config of the checks says what it keeps, in which order
     expect(plain.doc.warnings).toEqual([]);
   });
 
+  it('62.2 (review C2): a board written before 0.4.1 with the checks out of order still takes config --name and --reviewers', async () => {
+    const s = await reviewBoard();
+    // As an older laneboard could write it: qa before code_review.
+    const file = path.join(s.dir, 'config.json');
+    const config = JSON.parse(configText(s));
+    fs.writeFileSync(file, JSON.stringify({ ...config, review: { ...config.review, statuses: ['qa', 'code_review'] } }, null, 2));
+    const named = await run(s, 'orch', ['config', '--name', 'renamed']);
+    expect(named.code, JSON.stringify(named.doc)).toBe(0);
+    const reviewers = await run(s, 'orch', ['config', '--reviewers', 'rev,lead']);
+    expect(reviewers.code, JSON.stringify(reviewers.doc)).toBe(0);
+    const after = JSON.parse(configText(s));
+    expect(after.name).toBe('renamed');
+    expect(after.review).toMatchObject({ statuses: ['qa', 'code_review'], by: ['rev', 'lead'] });
+  });
+
+  it('62.3 (review C2): only claude-code@<user> without :<session> gets the warning; codex@ann and alice@corp are whole names', async () => {
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    const r = await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'codex@ann,alice@corp,claude-code@tester:abc123,claude-code@ann']);
+    expect(r.code).toBe(0);
+    expect(r.doc.warnings.filter((w: string) => w.startsWith('reviewer '))).toEqual([
+      'reviewer "claude-code@ann" looks like the base of a session default name: each session writes as claude-code@ann:<session>, never as claude-code@ann, so no session checks as it; a checker passes its own name (--as <name>) and --reviewers lists that name',
+    ]);
+    const others = await run(s, 'orch', ['config', '--reviewers', 'codex@ann,alice@corp']);
+    expect(others.code).toBe(0);
+    expect(others.doc.warnings).toEqual([]);
+  });
+
   it('62.4: --review-statuses none with --reviewers names is refused, the checkers are never dropped silently', async () => {
     const s = await newStore({ prefix: 'API', statuses: FLOW });
     await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'rev']);
