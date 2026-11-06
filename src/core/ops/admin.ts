@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { buildConfig, configPath, configSchemaFor, DEFAULT_PREFIX, derivePrefix, DEFAULT_STATUSES, loadConfig, middleStatuses, reviewProblem, serializeConfig, validateConfig } from '../config.ts';
 import { ERRORS, LaneboardError, READ_ONLY_BOARD_FIX } from '../errors.ts';
 import { shellQuote } from '../shell.ts';
+import { SESSION_HARNESS } from '../agent-name.ts';
 import { ensureDir, listOrphanTmp, removeOrphanTmp, writeFileAtomic } from '../fsio.ts';
 import { checkPrefixFree, prefixTaken, registryDir, takenPrefixes, updateRegistry, upsertEntry } from '../boards.ts';
 import { BoardDescription, BoardName, FIELD_KEY_RE, FIELD_TYPES, FILE_KINDS, PREFIX_RE, STATUS_RE, STORE_SCHEMA, STORE_VERSION } from '../schema.ts';
@@ -68,10 +69,10 @@ export interface InitOptions extends LockOptions {
 function storeExists(target: string, envCwd: string | undefined): LaneboardError {
   const own = envCwd === undefined ? undefined : path.join(path.resolve(envCwd), STORE_DIR_NAME);
   if (own === undefined || samePath(own, target)) {
-    return new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${shellQuote(target)}), or pass --dir <another empty directory>` });
+    return new LaneboardError('STORE_EXISTS', `a store already exists at ${target}`, { fix: `use it (laneboard list --dir ${shellQuote(target)} --json), or pass --dir <another empty directory>` });
   }
   return new LaneboardError('STORE_EXISTS', `LANEBOARD_DIR points to ${target}, which already holds a board (LANEBOARD_DIR may be set for a parent folder, e.g. by its .claude/settings.local.json)`, {
-    fix: `to create the board of ${path.dirname(own)}: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(own)} on every command, starting with laneboard prime`,
+    fix: `to create the board of ${path.dirname(own)}: laneboard init --dir ${shellQuote(own)} --name <name> --description "<whose project, what work>" --json, then pass --dir ${shellQuote(own)} on every command, starting with laneboard prime --json`,
   });
 }
 
@@ -146,14 +147,14 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   if (p.description === undefined) {
     throw new LaneboardError('USAGE', 'description is required', {
       input: { field: 'description', value: '', format: '"<one line: whose project and what work>"' },
-      fix: 'laneboard init --name <name> --description "<one line: whose project and what work>"',
+      fix: 'laneboard init --name <name> --description "<one line: whose project and what work>" --json',
     });
   }
   const description = checkBoardText(BoardDescription, p.description, 'description');
   const name = checkBoardText(BoardName, p.name ?? prefixSource(target), 'name');
   const derived = p.prefix === undefined ? derivePrefix(name) : undefined;
   if (p.prefix === undefined && derived === undefined) {
-    warnings.push(`no prefix could be derived from the name "${name}", so ids use ${DEFAULT_PREFIX}; pick one with laneboard init --prefix <PREFIX>`);
+    warnings.push(`no prefix could be derived from the name "${name}", so ids use ${DEFAULT_PREFIX}; pick one with laneboard init --prefix <PREFIX> --json`);
   }
   const prefix = checkPrefix(p.prefix ?? derived ?? DEFAULT_PREFIX);
   const statuses = checkStatuses(p.statuses ?? DEFAULT_STATUSES);
@@ -161,13 +162,13 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   if (opts.home !== undefined && samePath(target, registryDir(opts.home))) {
     throw new LaneboardError('STORE_EXISTS', `${target} is this machine's board registry (laneboard boards), so no board can be created there`, {
       // --dir, not a bare init in that folder: a bare init takes LANEBOARD_DIR, which may be this very folder (ADR-0001 §16).
-      fix: `create the board in the project's own folder: laneboard init --dir ${shellQuote(opts.home)}/<project>/.laneboard --name <name> --description "<whose project, what work>", then pass --dir ${shellQuote(opts.home)}/<project>/.laneboard on every command, starting with laneboard prime`,
+      fix: `create the board in the project's own folder: laneboard init --dir ${shellQuote(opts.home)}/<project>/.laneboard --name <name> --description "<whose project, what work>" --json, then pass --dir ${shellQuote(opts.home)}/<project>/.laneboard on every command, starting with laneboard prime --json`,
     });
   }
   const outer = enclosingStore(target);
   if (outer) {
     throw new LaneboardError('STORE_EXISTS', `${target} is inside the store ${outer}`, {
-      fix: `use that board (laneboard prime --dir ${shellQuote(outer)}), or create a board for another project in its own folder: laneboard init --dir <project folder>/.laneboard --name <name> --description "<whose project, what work>"`,
+      fix: `use that board (laneboard prime --dir ${shellQuote(outer)} --json), or create a board for another project in its own folder: laneboard init --dir <project folder>/.laneboard --name <name> --description "<whose project, what work>" --json`,
     });
   }
   const config = validateConfig(buildConfig(prefix, [...statuses], { name, description }), 'config.json');
@@ -188,7 +189,7 @@ export async function initStore(target: string, input: InitInputT, opts: InitOpt
   };
   if (opts.home === undefined) {
     await create();
-    warnings.push('HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards');
+    warnings.push('HOME is not set, so this board is not in the machine registry (laneboard boards --json) and its prefix was not checked against other boards');
     return { data: { store: target, config, registered: false }, warnings };
   }
   // The registry lock is held around the check and the create, so two inits cannot take the same prefix. A registry folder that
@@ -254,7 +255,7 @@ function checkNoTasks(storeDir: string, from: string, to: string): void {
   if (count === 0) return;
   throw new LaneboardError('INVALID_VALUE', `the prefix of a board with tasks never changes: this board has ${count} task(s) with ids like ${from}-1, so it cannot become ${to}`, {
     input: { field: 'prefix', value: to },
-    fix: `keep the prefix ${from}, or create a new board with the prefix you want: laneboard init --dir <project folder>/.laneboard --prefix ${to} --name <name> --description "<whose project, what work>"`,
+    fix: `keep the prefix ${from}, or create a new board with the prefix you want: laneboard init --dir <project folder>/.laneboard --prefix ${to} --name <name> --description "<whose project, what work>" --json`,
   });
 }
 
@@ -353,7 +354,7 @@ function checkDeclared(config: ConfigT, key: string): void {
   throw new LaneboardError('UNKNOWN_FIELD', `--drop-field ${key}: the field is not declared in config.fields (${declared})`, {
     allowed,
     input: { field: 'drop_field', value: key, ...(suggestion ? { suggestion } : { format: '<field from allowed>' }) },
-    fix: allowed.length ? `drop a field from \`allowed\`: laneboard config --drop-field <field from allowed>` : 'nothing to drop: laneboard config shows the declared fields',
+    fix: allowed.length ? `drop a field from \`allowed\`: laneboard config --drop-field <field from allowed> --json` : 'nothing to drop: laneboard config --json shows the declared fields',
   });
 }
 
@@ -413,7 +414,7 @@ function fieldInUse(storeDir: string, actor: string | undefined, uses: readonly 
   const typed = uses.filter((u) => u.change === 'type');
   const keep = typed.length ? ` (to keep a value, set it in the new type instead: laneboard update <ID> --field ${typed[0]?.field ?? '<key>'}=<${typed[0]?.type ?? 'value'}>)` : '';
   const as = `--as ${actor === undefined ? '<your-name>' : shellQuote(actor)}`;
-  const loops = uses.map((u) => `for id in ${u.tasks.join(' ')}; do laneboard update "$id" --unset-field ${u.field} --dir ${shellQuote(storeDir)} ${as}; done`);
+  const loops = uses.map((u) => `for id in ${u.tasks.join(' ')}; do laneboard update "$id" --unset-field ${u.field} --dir ${shellQuote(storeDir)} ${as} --json; done`);
   return new LaneboardError(
     'INVALID_VALUE',
     `cannot change fields that ${total} active task(s) hold: ${uses.map(fieldUseLine).join('; ')}; ` +
@@ -429,8 +430,8 @@ function fieldInUse(storeDir: string, actor: string | undefined, uses: readonly 
 function archivedFieldWarnings(uses: readonly FieldUse[]): string[] {
   return uses.map((u) =>
     u.change === 'drop'
-      ? `${u.tasks.length} archived task(s) keep a value of the removed field ${u.field} (${idList(u.tasks)}): restore brings it back, then laneboard update <ID> --unset-field ${u.field}`
-      : `${u.tasks.length} archived task(s) hold ${u.field} values that are not ${u.type ?? ''} (${idList(u.tasks)}): restore brings them back as they are, then laneboard update <ID> --field ${u.field}=<${u.type ?? 'value'}>`,
+      ? `${u.tasks.length} archived task(s) keep a value of the removed field ${u.field} (${idList(u.tasks)}): restore brings it back, then laneboard update <ID> --unset-field ${u.field} --json`
+      : `${u.tasks.length} archived task(s) hold ${u.field} values that are not ${u.type ?? ''} (${idList(u.tasks)}): restore brings them back as they are, then laneboard update <ID> --field ${u.field}=<${u.type ?? 'value'}> --json`,
   );
 }
 
@@ -440,7 +441,7 @@ function nextReview(current: ReviewConfigT | undefined, statuses: string[] | nul
   if (statuses === null && by !== null && by !== undefined) {
     throw new LaneboardError('INVALID_VALUE', '--review-statuses none turns the checks off, and --reviewers names checkers for them', {
       input: { field: 'reviewers', value: by.join(',') },
-      fix: 'laneboard config --review-statuses none',
+      fix: 'laneboard config --review-statuses none --json',
     });
   }
   if (statuses === null) return undefined;
@@ -449,7 +450,7 @@ function nextReview(current: ReviewConfigT | undefined, statuses: string[] | nul
     if (by === null || by === undefined) return undefined;
     throw new LaneboardError('INVALID_VALUE', 'reviewers check tasks in the checks of the board, and it has none', {
       input: { field: 'reviewers', value: by.join(',') },
-      fix: `laneboard config --review-statuses <status between the first and the final one> --reviewers ${by.join(',')}`,
+      fix: `laneboard config --review-statuses <status between the first and the final one> --reviewers ${by.join(',')} --json`,
     });
   }
   // `...base` keeps keys of a newer laneboard inside review (review r1): they are not read here, only written back.
@@ -477,13 +478,13 @@ function checkReview(config: ConfigT, statusesGiven: boolean, ordered: boolean):
   const statusesPart = statusesGiven ? ` --statuses ${config.statuses.join(',')}` : '';
   throw new LaneboardError('INVALID_VALUE', `${problem}; a check is a status between the first and the final one${middle.length ? ` (${middle.join(', ')})` : ''}`, {
     input: { field: 'review_statuses', value: given.join(',') },
-    fix: `laneboard config${statusesPart} --review-statuses ${kept.length ? kept.join(',') : 'none'}`,
+    fix: `laneboard config${statusesPart} --review-statuses ${kept.length ? kept.join(',') : 'none'} --json`,
   });
 }
 
-// The base of a session default name: only Claude Code sessions add `:<session>` to it (SESSION_HARNESS in agent-name.ts); codex@<user>
-// or alice@corp are written as they are.
-const SESSION_BASE_PREFIX = 'claude-code@';
+// The base of a session default name: only Claude Code sessions (SESSION_HARNESS) add `:<session>` to it; codex@<user> or alice@corp are
+// written as they are.
+const SESSION_BASE_PREFIX = `${SESSION_HARNESS}@`;
 
 // Checkers that no session matches (LB-62.3): claude-code@<user> without `:<session>` is the base of a session default name, and every
 // Claude Code session writes as <base>:<session>, so review.by never matches it. Other names with `@` (codex@<user>, alice@corp) are
@@ -558,7 +559,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
         // Archived tasks are read-only: they keep a dropped status and are read as an unknown one (§2), so they do not block.
         for (const status of removed) {
           const n = archived.filter((t) => t.status === status).length;
-          if (n) warnings.push(`${n} archived task(s) keep the removed status ${status}: they stay readable as an unknown status, and restore brings them back in it (then laneboard update <ID> --status <status>)`);
+          if (n) warnings.push(`${n} archived task(s) keep the removed status ${status}: they stay readable as an unknown status, and restore brings them back in it (then laneboard update <ID> --status <status> --json)`);
         }
       }
       if (fieldsChange) {
@@ -611,7 +612,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
   }
   if (ctx.home === undefined) {
     const data = await write();
-    warnings.push(`HOME is not set, so the machine registry (laneboard boards) was not updated${prefix !== undefined ? ' and the prefix was not checked against other boards' : ''}`);
+    warnings.push(`HOME is not set, so the machine registry (laneboard boards --json) was not updated${prefix !== undefined ? ' and the prefix was not checked against other boards' : ''}`);
     return { data, warnings: unique(warnings) };
   }
   // Like init, the registry lock is held around the prefix check and the write, so two boards cannot take one prefix. An unchanged
@@ -675,7 +676,7 @@ export interface DoctorResult {
 function loadFailureHint(err: unknown, restoreAsked: boolean): string {
   const own = err instanceof LaneboardError && err.fix !== ERRORS[err.code].fix ? err.fix : undefined;
   if (own) return `; fix: ${own}`;
-  return restoreAsked ? '' : '; to roll back: laneboard doctor --restore-backup';
+  return restoreAsked ? '' : '; to roll back: laneboard doctor --restore-backup --json';
 }
 
 // Check the store and optionally repair it: config, files, checksums, duplicates, next_id, tmp files, attachments, task values.

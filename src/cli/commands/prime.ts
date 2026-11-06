@@ -10,7 +10,7 @@ import type { CommandContext, CommandDef, CommandOutput } from './types.ts';
 // What an agent does when no store is found: find this project's board, else create it (agent rule 12). `--dir` on every command,
 // not `export`: each Bash call of an agent is a new shell, and the MCP server never sees an export.
 const NO_STORE_FIX =
-  'find this project\'s board: laneboard boards --json (pick it by description and path), then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description "<whose project, what work>", then laneboard prime';
+  'find this project\'s board: laneboard boards --json (pick it by description and path), then pass --dir <its path> on every command; none for this project: in its root laneboard init --name <name> --description "<whose project, what work>" --json, then laneboard prime --json';
 
 // SessionStart line where no board is found. The plugin hook runs in every project of the user, most of them without laneboard:
 // a neutral fact and how to start if the user wants it, never a task rule (owner's decision, S2d).

@@ -60,7 +60,7 @@ describe('§25 subtasks: parent', () => {
     expect(missing.message).toBe('parent LB-9: no such task');
     await archiveTasks(as(s, 'a'), { ids: ['LB-1'] });
     const archived = await rejectsWith(createTask(as(s, 'a'), { title: 'x', status: 'todo', parent: 'LB-1' }), 'TASK_ARCHIVED');
-    expect(archived.fix).toBe('laneboard restore LB-1');
+    expect(archived.fix).toBe('laneboard restore LB-1 --json');
     const inexact = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-2', parent: '1' }), 'INVALID_VALUE');
     expect(inexact.input).toEqual({ field: 'parent', value: '1', suggestion: 'LB-1' });
     // Nothing was written by the failed calls.
@@ -74,7 +74,7 @@ describe('§25 subtasks: parent', () => {
     expect(self.message).toBe('LB-1 cannot be the parent of LB-1: a task cannot be its own parent');
     const deep = await rejectsWith(updateTask(as(s, 'a'), { id: 'LB-1', parent: 'LB-3' }), 'INVALID_VALUE');
     expect(deep.message).toBe('LB-3 cannot be the parent of LB-1: LB-3 is under LB-1 (LB-1 > LB-2 > LB-3)');
-    expect(deep.fix).toBe('laneboard update LB-1 --parent <id of a task not under LB-1>');
+    expect(deep.fix).toBe('laneboard update LB-1 --parent <id of a task not under LB-1> --json');
     expect(deep.edit).toEqual({ drop: [{ name: 'parent' }], add: [{ name: 'parent', value: '<id of a task not under LB-1>' }] });
     // Not a cycle: a sibling, and the grandchild moved up to the top.
     await createTask(as(s, 'a'), { title: 'Other', status: 'todo' });

@@ -182,10 +182,10 @@ describe('paths in fixes', () => {
     const store = path.join(root, '.laneboard');
     await cli(['init', '--description', 'd', '--prefix', 'MP'], { cwd: root, env: {} });
     const exists = await doc(cli(['init', '--description', 'd', '--json'], { cwd: root, env: {} }));
-    expect(exists.error.fix).toBe(`use it (laneboard list --dir '${store}'), or pass --dir <another empty directory>`);
+    expect(exists.error.fix).toBe(`use it (laneboard list --dir '${store}' --json), or pass --dir <another empty directory>`);
     const inside = await doc(cli(['init', '--description', 'd', '--json'], { cwd: store, env: {} }));
     expect(inside.error.fix).toBe(
-      `use that board (laneboard prime --dir '${store}'), or create a board for another project in its own folder: laneboard init --dir <project folder>/.laneboard --name <name> --description "<whose project, what work>"`,
+      `use that board (laneboard prime --dir '${store}' --json), or create a board for another project in its own folder: laneboard init --dir <project folder>/.laneboard --name <name> --description "<whose project, what work>" --json`,
     );
   });
 
@@ -198,7 +198,7 @@ describe('paths in fixes', () => {
     const r = await doc(cli(['list', '--json'], { cwd: root, env: {} }));
     expect(r.error).toMatchObject({
       code: 'STORE_INVALID',
-      fix: `restore ${path.join(store, 'config.json')} (from git or a copy); or move '${store}' aside and create a new board: laneboard init --dir '${store}' --name <name> --description "<whose project, what work>"`,
+      fix: `restore ${path.join(store, 'config.json')} (from git or a copy); or move '${store}' aside and create a new board: laneboard init --dir '${store}' --name <name> --description "<whose project, what work>" --json`,
     });
   });
 

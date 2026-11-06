@@ -45,11 +45,30 @@ describe('repeated options (M3)', () => {
 
   it('the fix keeps one occurrence: runnable when the values agree, a named choice when they differ', async () => {
     const { run } = await seeded();
-    const same = await errorOf(run, ['comment', 'LB-1', 'x', '--as', 'a', '--as', 'a']);
-    expect(same.fix).toBe('laneboard comment LB-1 x --as a --json');
+    const same = await errorOf(run, ['update', 'LB-1', '--title', 'one', '--title', 'one', '--as', 'a']);
+    expect(same.fix).toBe('laneboard update LB-1 --title one --as a --json');
     expect((await run(shellArgv(same.fix))).code).toBe(0);
     const differ = await errorOf(run, ['update', 'LB-1', '--status', 'done', '--status', 'todo', '--as', 'a']);
     expect(differ.fix).toBe('laneboard update LB-1 --status <one of: done, todo> --as a --json');
+  });
+
+  // Agents add --json and --as to a fix that already carries them (rules 3 and 13): a repeat of --json, or of --as with the same
+  // value, is not an error; --as with different values and other repeated flags still are (cases above).
+  it('a repeated --json, and --as repeated with the same value, run the command', async () => {
+    const { run } = await seeded();
+    const twice = await run(['get', 'LB-1', '--json', '--json']);
+    expect(twice.code, twice.stdout).toBe(0);
+    expect(JSON.parse(twice.stdout).data.id).toBe('LB-1');
+    const fix = await run(['comment', 'LB-1', 'x', '--as', 'a', '--json', '--as', 'a', '--json']);
+    expect(fix.code, fix.stdout).toBe(0);
+    expect(JSON.parse(fix.stdout).ok).toBe(true);
+    const inline = await run(['comment', 'LB-1', 'y', '--as=a', '--as', 'a', '--json']);
+    expect(inline.code, inline.stdout).toBe(0);
+    const events = JSON.parse((await run(['events', '--task', 'LB-1', '--json'])).stdout).data.items;
+    expect(events.filter((e: { type: string }) => e.type === 'commented').map((e: { actor: string; data: { text: string } }) => [e.actor, e.data.text])).toEqual([
+      ['a', 'y'],
+      ['a', 'x'],
+    ]);
   });
 
   it('options that the spec makes repeatable still repeat', async () => {

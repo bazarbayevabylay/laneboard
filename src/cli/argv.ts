@@ -286,17 +286,20 @@ interface OptionToken {
   inlineValue?: boolean;
 }
 
-// Every option without `multiple` may appear once: `--status a --status b` is an error, not "last one wins".
+// Every option without `multiple` may appear once: `--status a --status b` is an error, not "last one wins". Two exceptions, because
+// agents add them to a fix that already carries them (rules 3 and 13): `--json` may repeat, and `--as` may repeat with the same value
+// (there is nothing to choose between). `--as a --as b` and a repeat of any other option stay an error.
 export function rejectRepeated(tokens: readonly OptionToken[], command: string, args: readonly string[], options: OptionSpec): void {
   const seen = new Map<string, OptionToken[]>();
   for (const t of tokens) {
-    if (t.kind !== 'option' || t.name === undefined || options[t.name]?.multiple) continue;
+    if (t.kind !== 'option' || t.name === undefined || options[t.name]?.multiple || t.name === 'json') continue;
     seen.set(t.name, [...(seen.get(t.name) ?? []), t]);
   }
   for (const [name, list] of seen) {
     const [first, ...repeats] = list;
     if (!first || repeats.length === 0) continue;
     const values = [...new Set(list.map((t) => t.value).filter((v): v is string => v !== undefined))];
+    if (name === 'as' && values.length === 1 && list.every((t) => t.value !== undefined)) continue;
     const drop = new Set(repeats.flatMap((t) => (t.value !== undefined && !t.inlineValue ? [t.index, t.index + 1] : [t.index])));
     const kept = args.filter((_, i) => !drop.has(i));
     const placeholders = new Set<number>();

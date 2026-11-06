@@ -114,7 +114,7 @@ describe('LB-57.3: in_progress leaves out the first status', () => {
     expect(text).not.toContain('You have no task in progress');
     expect((await run(s, 'dev-1', ['claim', 'LB-1', '--status', 'doing'])).code).toBe(0);
     expect((await run(s, 'dev-1', ['prime'])).doc.data.in_progress).toBe(1);
-    // The edit hook still counts the task in todo (LB-66): quiet.
+    // The edit hook counts every held task that is not final, in doing now as in todo before (LB-66): quiet.
     expect((await cli(['prime', '--edit-hook', '--as', 'dev-1'], { cwd: s.root })).stdout).toBe('');
   });
 });

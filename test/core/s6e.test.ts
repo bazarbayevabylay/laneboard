@@ -131,7 +131,7 @@ describe('A11 delete leaves a tombstone in archive.json', () => {
     const shas = storeShas(s);
     const restore = await rejectsWith(restoreTask(as(s, 'a'), { id: 'LB-1' }), 'INVALID_VALUE');
     expect(restore.message).toBe(`LB-1 was deleted at ${at} by owner`);
-    expect(restore.fix).toBe('nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get LB-1');
+    expect(restore.fix).toBe('nothing to do: the archive keeps only its title and who deleted it; to see it: laneboard get LB-1 --json');
     const again = await rejectsWith(deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' }), 'INVALID_VALUE');
     expect(again.message).toBe(`LB-1 was deleted at ${at} by owner`);
     // Other writes of an archived task stay refused as before.
@@ -321,7 +321,7 @@ describe('A12 redact', () => {
     const refused = await rejectsWith(redactTask(as(s, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE');
     expect(refused.message).toBe('the text also occurs where redact cannot replace it: labels[0], attachments[0].name; nothing was changed');
     expect(refused.fix).toBe(
-      'remove the label: laneboard update LB-1 --remove-label <label>; remove the attachment (its file goes too): laneboard attach LB-1 --remove <name>; then run laneboard redact LB-1 again (it also clears the events of the removal) (laneboard get LB-1 shows them)',
+      'remove the label: laneboard update LB-1 --remove-label <label> --json; remove the attachment (its file goes too): laneboard attach LB-1 --remove <name> --json; then run laneboard redact LB-1 --json again (it also clears the events of the removal) (laneboard get LB-1 --json shows them)',
     );
     expect(JSON.stringify({ m: refused.message, f: refused.fix, i: refused.input })).not.toContain(secret);
     expect(storeShas(s)).toEqual(shas);
@@ -330,7 +330,7 @@ describe('A12 redact', () => {
     const t = await newStore();
     await createTask(as(t, 'a'), { title: 'x', status: 'todo', labels: [secret] });
     await archiveTasks(as(t, 'a'), { ids: ['LB-1'] });
-    expect((await rejectsWith(redactTask(as(t, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE')).fix).toMatch(/^restore it first: laneboard restore LB-1; remove the label/);
+    expect((await rejectsWith(redactTask(as(t, 'owner'), { id: 'LB-1', text: secret }), 'INVALID_VALUE')).fix).toMatch(/^restore it first: laneboard restore LB-1 --json; remove the label/);
     // Following the fix: remove both, redact again; nothing of the secret stays in the store files, backups or attachments.
     await updateTask(as(s, 'a'), { id: 'LB-1', remove_labels: [secret] });
     await attachFile(as(s, 'a'), { id: 'LB-1', remove: `${secret}.txt` });
@@ -422,7 +422,7 @@ describe('A12 redact', () => {
     for (const [text, why] of cases) {
       const err = await rejectsWith(redactTask(as(s, 'owner'), { id: 'PROJX-1', text }), 'INVALID_VALUE');
       expect(err.message, text).toBe(`the text to redact ${why}; nothing was changed`);
-      expect(err.fix).toBe('pass the whole secret (at least 4 characters), exactly as it was pasted: laneboard redact PROJX-1 --text-file <path>');
+      expect(err.fix).toBe('pass the whole secret (at least 4 characters), exactly as it was pasted: laneboard redact PROJX-1 --text-file <path> --json');
     }
     expect(storeShas(s)).toEqual(shas);
     // Four characters are enough.
@@ -610,7 +610,7 @@ describe('archive of an open task with an assignee (LB-64.4)', () => {
     await createTask(as(s, 'a'), { title: 'done, held', status: 'done', assignee: 'other' });
     const held = await archiveTasks(as(s, 'owner'), { ids: ['LB-1'] });
     expect(held.data.archived).toEqual([{ id: 'LB-1', rev: 2 }]);
-    expect(held.warnings).toEqual(['LB-1 is in_progress (not a final status) and assigned to other: archived anyway; to bring it back: laneboard restore LB-1']);
+    expect(held.warnings).toEqual(['LB-1 is in_progress (not a final status) and assigned to other: archived anyway; to bring it back: laneboard restore LB-1 --json']);
     expect((await archiveTasks(as(s, 'owner'), { ids: ['LB-2', 'LB-3'] })).warnings).toEqual([]);
   });
 

@@ -186,7 +186,7 @@ describe('prime', () => {
     expect(plain.stdout).toContain(agentRules());
     expect(plain.stdout).toContain('laneboard store: STORE_NOT_FOUND');
     expect(plain.stdout).toContain('find this project\'s board: laneboard boards --json (pick it by description and path), then pass --dir <its path> on every command');
-    expect(plain.stdout).toContain('"<whose project, what work>", then laneboard prime');
+    expect(plain.stdout).toContain('"<whose project, what work>" --json, then laneboard prime --json');
     expect(plain.stdout).not.toContain('export LANEBOARD_DIR');
     expect(plain.stdout).toContain('laneboard init --name <name> --description "<whose project, what work>"');
     // A bare init (no name, no description) is never suggested.

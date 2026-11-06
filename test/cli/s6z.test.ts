@@ -88,7 +88,7 @@ describe('S6z U1: the reason of a return for rework comes only from the returner
       expect(r.code).toBe(0);
       const warned = noReasonWarnings(r.doc);
       expect(warned).toEqual([
-        `API-1 went back for rework with no reason from you: dev-1's prime says it was returned with no reason; add the reason (shown to dev-1 until the next hand-in): laneboard comment API-1 --as orch -- ${PLACEHOLDER}`,
+        `API-1 went back for rework with no reason from you: dev-1's prime says it was returned with no reason; add the reason (shown to dev-1 until the next hand-in): laneboard comment API-1 --as orch --json -- ${PLACEHOLDER}`,
       ]);
       const text = await primeText(s, 'dev-1');
       expect(text).not.toContain('R1');

@@ -133,7 +133,7 @@ describe('A19 init: a stale LANEBOARD_DIR next to the board of cwd (the project 
     const init = await json(proj, ['init', '--name', 'movec', '--description', 'twin'], stale);
     expect(init.code).toBe(6);
     expect(init.doc.error).toMatchObject({ code: 'STORE_EXISTS', message: `LANEBOARD_DIR points to ${gone}, which is not a directory, and ${proj} already has a board: MOVE (${own})` });
-    expect(init.doc.error.fix).toContain(`laneboard setup claude-code in ${proj}`);
+    expect(init.doc.error.fix).toContain(`laneboard setup claude-code --json in ${proj}`);
     expect(fs.existsSync(path.dirname(gone))).toBe(false);
     const list = await json(proj, ['list'], stale);
     expect(list.doc.error).toMatchObject({ code: 'STORE_NOT_FOUND', message: `LANEBOARD_DIR points to ${gone}, which is not a directory; this folder's board is MOVE (${own})` });

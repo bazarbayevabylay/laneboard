@@ -257,7 +257,7 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
     expect((await json(s.root, ['finish', 'LB-1', '--result', 'accepted', '--as', 'orch'])).doc.data).toMatchObject({ status: 'done', accepted: true });
     // A closed task keeps its result: finish never reopens it, nor records another result.
     const late = await json(s.root, ['finish', 'LB-1', '--status', 'review', '--result', 'v3', '--no-commit', '--as', 'dev-1']);
-    expect(late.doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>")']);
+    expect(late.doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
     expect(stored(s, 'LB-1').events.filter((e) => e.data.result === true).map((e) => e.data.text)).toEqual(['v1', 'v2: edge case fixed', 'accepted']);
   });
 
@@ -381,7 +381,7 @@ describe('review S6h r2: the main checkout, a fix that never guesses, the shared
     expect(off.code, JSON.stringify(off.doc)).toBe(0);
     expect(off.doc.data.files).toContainEqual({ path: exclude, scope: 'project', result: 'kept' });
     expect(off.doc.warnings).toContain(
-      `kept the laneboard block in ${exclude}: setup in another checkout of this repository still uses it (${r.main}); laneboard setup <harness> --remove there removes it`,
+      `kept the laneboard block in ${exclude}: setup in another checkout of this repository still uses it (${r.main}); laneboard setup <harness> --remove --json there removes it`,
     );
     expect(blocks()).toBe(1);
     // The main checkout's backups stay out of git.

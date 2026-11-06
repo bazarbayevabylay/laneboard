@@ -395,7 +395,7 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
 function resumeWarnings(tasks: readonly TaskT[], task: TaskT, holder: string, sessionBase: string | undefined, actor: string, now: string, finals: readonly string[], warnings: string[]): void {
   const silent = silentFor(tasks, holder, now);
   if (silent < EARLIER_SESSION_SILENT_MS) {
-    warnings.push(`${task.id} taken from a session active ${minutesText(silent)} ago (${holder}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment ${task.id} "<note for ${holder}>"`);
+    warnings.push(`${task.id} taken from a session active ${minutesText(silent)} ago (${holder}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment ${task.id} "<note for ${holder}>" --json`);
   }
   const parent = task.parent === undefined ? undefined : tasks.find((t) => t.id === task.parent);
   if (parent !== undefined && parent.assignee === holder && !finals.includes(parent.status) && heldByEarlierSession(parent, sessionBase, actor)) {
@@ -689,7 +689,7 @@ export function noCheckerLeft(config: ConfigT, task: TaskT): boolean {
 
 // The owner's command that adds a checker to config review.by, keeping the ones there (config --reviewers replaces the list).
 export function addCheckerCommand(config: ConfigT): string {
-  return `laneboard config --reviewers "${[...reviewers(config), '<another checker>'].join(',')}"`;
+  return `laneboard config --reviewers "${[...reviewers(config), '<another checker>'].join(',')}" --json`;
 }
 
 // Who checks `task` in a message: the names of review.by that are no authors of it, anybody but the author when review.by is not set.
@@ -743,7 +743,7 @@ function checkerHoldsWarning(config: ConfigT, task: TaskT, actor: string, warnin
   const next = nextAfterCheck(config, task.status);
   warnings.push(
     `${task.id} waits in ${task.status} for a check, and ${who} now: a holder is an author of the work and never checks it (giving it to another name later does not change that); ${exit}. ` +
-      `A check needs no claim or assignment: a checker runs laneboard finish ${task.id} --status ${next} --result "<result of your check>"`,
+      `A check needs no claim or assignment: a checker runs laneboard finish ${task.id} --status ${next} --result "<result of your check>" --json`,
   );
 }
 
@@ -957,7 +957,7 @@ function returnByThisWrite(config: ConfigT, task: TaskT, actor: string, now: str
 function noReasonWarning(task: TaskT, actor: string, back: ReworkReturn): string | undefined {
   if (back.reason !== undefined) return undefined;
   const holder = task.assignee ?? 'its next holder';
-  return `${task.id} went back for rework with no reason from you: ${holder}'s prime says it was returned with no reason; add the reason (shown to ${holder} until the next hand-in): laneboard comment ${task.id} --as ${actor} -- '<why it goes back>'`;
+  return `${task.id} went back for rework with no reason from you: ${holder}'s prime says it was returned with no reason; add the reason (shown to ${holder} until the next hand-in): laneboard comment ${task.id} --as ${actor} --json -- '<why it goes back>'`;
 }
 
 // The return for rework as one command line, run as printed (rule 13): the comment with the caller's text, then the move into `to`.
@@ -1086,11 +1086,11 @@ function handInLostWarning(config: ConfigT, task: TaskT, to: string, holder: str
   const next = nextAfterCheck(config, task.status);
   const instead = `a check passes it on or accepts it with finish --status ${next}, not by a move`;
   if (finalStatuses(config.statuses).includes(to)) {
-    return `${task.id} was handed in; closed by this move it has no result of a check and no acceptance mark (${instead}): record the result with laneboard comment ${task.id} "<result of your check>"`;
+    return `${task.id} was handed in; closed by this move it has no result of a check and no acceptance mark (${instead}): record the result with laneboard comment ${task.id} "<result of your check>" --json`;
   }
   const first = reviewStatuses(config)[0] ?? final;
   const as = holder === null ? '' : ` --as ${holder}`;
-  return `${task.id} was handed in; after this move it is not (${instead}), so no checker sees it until it is handed in again: laneboard finish ${task.id} --status ${first} --result "<what you did, how you checked it>"${as}`;
+  return `${task.id} was handed in; after this move it is not (${instead}), so no checker sees it until it is handed in again: laneboard finish ${task.id} --status ${first} --result "<what you did, how you checked it>"${as} --json`;
 }
 
 // ALREADY_CLAIMED of a finish by somebody else into a status that is not final: acceptance only closes a task.
@@ -1222,7 +1222,7 @@ function commitLinkedWarning(tasks: readonly TaskT[], id: string, commit: string
 // not be asked (S3c: finish still works, unknown parts give no other warning). `named`: the caller named the commit (commit), so
 // the folder's changes say nothing about it.
 function checkoutWarnings(id: string, git: CheckoutState, workStart: string | undefined, named: boolean): string[] {
-  const again = `commit your work and run laneboard finish ${id} again to link the new commit (work without a commit: --no-commit)`;
+  const again = `commit your work and run laneboard finish ${id} --json again to link the new commit (work without a commit: --no-commit)`;
   const out: string[] = [];
   if (git.problem !== undefined) {
     const skipped = git.head === undefined ? 'no commit linked' : `not checked whether the linked commit ${git.head.slice(0, 12)} holds your work`;
@@ -1287,7 +1287,7 @@ function checkerFinish(
   }
   // The repeat of the actor's own pass into this status (a lost reply: the same --status again) changes nothing.
   if (passedBy(task) === actor && p.status === task.status) {
-    warnings.push(`no changes: ${id} is already ${task.status}, where you passed it on (finish repeated); to pass it on yourself again: laneboard finish ${id} --status ${next} --result "<result of your check>"; ${notRecorded}`);
+    warnings.push(`no changes: ${id} is already ${task.status}, where you passed it on (finish repeated); to pass it on yourself again: laneboard finish ${id} --status ${next} --result "<result of your check>" --json; ${notRecorded}`);
     return { done: false, passed: false };
   }
   // A work status (neither a check nor final, before or after the current one) or an earlier check is an explicit return for rework
@@ -1373,7 +1373,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         });
       }
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
-      const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>")`;
+      const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>" --json)`;
       const review = reviewStatuses(s.config);
       // The owner first: somebody else's task is ALREADY_CLAIMED (review S3 NIT), unless this is an acceptance or the task is closed.
       const holder = task.assignee;

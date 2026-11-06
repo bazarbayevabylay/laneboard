@@ -179,6 +179,6 @@ function createPastChecks(config: ConfigT, refusal: ReviewRefusalT, status: stri
   return new LaneboardError('INVALID_VALUE', `${reviewRefusalText(config, refusal, status)}; create the task in ${work}, then hand it in: laneboard finish <ID> --result "<result>"`, {
     allowed: [work],
     input: { field: 'status', value: status, suggestion: work },
-    fix: `create it with status ${work}, then hand it in with laneboard finish <ID> --result "<result>"`,
+    fix: `create it with status ${work}, then hand it in with laneboard finish <ID> --result "<result>" --json`,
   });
 }

@@ -144,7 +144,7 @@ describe('S6w review r2 over MCP', () => {
     const env = { cwd: s.root, env: {} };
     await callTool('task_update', { id: 'API-1', assignee: 'rev', actor: 'orch' }, env);
     const prime = (await callTool('task_prime', { actor: 'orch' }, env)).structuredContent as Record<string, any>;
-    expect(prime.roles.no_checker).toEqual({ ids: ['API-1'], fix: 'laneboard config --reviewers "rev,<another checker>"' });
+    expect(prime.roles.no_checker).toEqual({ ids: ['API-1'], fix: 'laneboard config --reviewers "rev,<another checker>" --json' });
   });
 });
 

@@ -306,7 +306,8 @@ function asOption(d: PrimeData): string {
 }
 
 // The claim command prime prints: `--status` of the working status, so a task taken from the first status does not stay there
-// (A-U3: a plain claim of one's own task changes nothing); `dir` is passed on as --dir.
+// (A-U3: a plain claim keeps the status of a free task; only a task one holds or takes back with --resume leaves the first status,
+// LB-57.4); `dir` is passed on as --dir.
 function claimCommand(d: PrimeData, dir: string): string {
   const work = workStatus(d);
   return `laneboard claim <ID>${work === undefined ? '' : ` --status ${shellQuote(work)}`}${asOption(d)}${dir} --json`;

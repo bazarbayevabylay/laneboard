@@ -15,7 +15,7 @@ function belowRootWarning(c: HarnessContext): string[] {
   const root = gitRoot(c.cwd);
   if (root === undefined || root === c.cwd) return [];
   return [
-    `the AGENTS.md block of setup codex goes to ${c.cwd}, below the root of its git repository ${root}: Codex reads AGENTS.md from the repository root down to the folder it starts in, so a Codex started at the root never sees this block; start Codex in ${c.cwd}, or run laneboard setup codex in ${root} for the whole repository`,
+    `the AGENTS.md block of setup codex goes to ${c.cwd}, below the root of its git repository ${root}: Codex reads AGENTS.md from the repository root down to the folder it starts in, so a Codex started at the root never sees this block; start Codex in ${c.cwd}, or run laneboard setup codex --json in ${root} for the whole repository`,
   ];
 }
 

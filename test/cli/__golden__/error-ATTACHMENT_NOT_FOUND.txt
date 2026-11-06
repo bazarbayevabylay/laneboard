@@ -6,11 +6,11 @@ exit 3
 --- stderr
 error ATTACHMENT_NOT_FOUND: LB-1 has no attachment "nope.txt"
   allowed: notes.txt
-  fix: see attachment names: laneboard get LB-1
+  fix: see attachment names: laneboard get LB-1 --json
 
 $ laneboard attach LB-1 --remove nope.txt --as a --json
 exit 3
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"ATTACHMENT_NOT_FOUND","message":"LB-1 has no attachment \"nope.txt\"","fix":"see attachment names: laneboard get LB-1","allowed":["notes.txt"]}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"ATTACHMENT_NOT_FOUND","message":"LB-1 has no attachment \"nope.txt\"","fix":"see attachment names: laneboard get LB-1 --json","allowed":["notes.txt"]}}
 --- stderr
 

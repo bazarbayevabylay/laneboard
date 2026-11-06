@@ -184,7 +184,7 @@ describe('setup details', () => {
     const plain = JSON.parse((await inSub.run(['setup', 'gemini', '--json'])).stdout);
     expect(plain.data.store).toBe(path.join(sub, '.laneboard'));
     expect(plain.warnings).toContain(
-      `no laneboard store at ${path.join(sub, '.laneboard')} yet: in ${sub} run laneboard init --name <name> --description "<whose project, what work>", then laneboard prime; or run setup again with --dir <the project's .laneboard>`,
+      `no laneboard store at ${path.join(sub, '.laneboard')} yet: in ${sub} run laneboard init --name <name> --description "<whose project, what work>" --json, then laneboard prime --json; or run setup again with --dir <the project's .laneboard>`,
     );
     expect(fs.readFileSync(path.join(sub, 'GEMINI.md'), 'utf8')).toContain(`LANEBOARD_DIR=${path.join(sub, '.laneboard')} laneboard`);
     const parent = path.join(s.cwd, '.laneboard');
@@ -519,7 +519,7 @@ describe('setup backups and exact edits', () => {
     await ok(s, ['setup', 'cursor']);
     const r = JSON.parse((await s.run(['setup', 'cursor', '--remove', '--json'])).stdout);
     expect(r.data.files.find((f: { path: string }) => f.path === 'AGENTS.md')?.result).toBe('kept');
-    expect(r.warnings).toContain('kept the laneboard block in AGENTS.md: codex still uses it (laneboard setup codex --remove removes it)');
+    expect(r.warnings).toContain('kept the laneboard block in AGENTS.md: codex still uses it (laneboard setup codex --remove --json removes it)');
     expect(fs.readFileSync(path.join(s.cwd, 'AGENTS.md'), 'utf8')).toContain('laneboard:start');
     const last = await ok(s, ['setup', 'codex', '--remove']);
     expect(last.files.find((f) => f.path === 'AGENTS.md')?.result).toBe('restored');
@@ -630,7 +630,7 @@ describe('Claude Code store pin and default name (S2c)', () => {
     const before = snapshot(s);
     const refused = await s.run(['setup', 'claude-code', '--json']);
     expect(refused.code).toBe(6);
-    expect(JSON.parse(refused.stdout).error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `laneboard setup claude-code --dir ${theirs}`, details: { value: theirs } });
+    expect(JSON.parse(refused.stdout).error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `laneboard setup claude-code --dir ${theirs} --json`, details: { value: theirs } });
     expect(snapshot(s)).toEqual(before);
     // Run as the fix says: the pin is theirs, so the file gets a backup and its value stays.
     const r = await ok(s, ['setup', 'claude-code', '--dir', theirs]);
@@ -646,7 +646,7 @@ describe('Claude Code store pin and default name (S2c)', () => {
     const s = sandbox();
     plant(s, { 'p:.claude/settings.json': '{ "env": { "LANEBOARD_DIR": "../other/.laneboard" } }\n' });
     const r = JSON.parse((await s.run(['setup', 'claude-code', '--json'])).stdout);
-    expect(r.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: 'laneboard setup claude-code --dir ../other/.laneboard' });
+    expect(r.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: 'laneboard setup claude-code --dir ../other/.laneboard --json' });
   });
 
   it('settings.local.json at the root of a git repository (kept out of git by .git/info/exclude); settings.json in a folder inside another repository', async () => {
@@ -686,7 +686,7 @@ describe('Claude Code store pin and default name (S2c)', () => {
     // A board of its own in a folder of the same repository is made by --dir (a bare init there is refused).
     expect((await cli(['init', '--dir', path.join(nested, '.laneboard'), '--description', 'agent b'], { cwd: nested, env })).code).toBe(0);
     const refused = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
-    expect(refused.error.fix).toBe(`cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code`);
+    expect(refused.error.fix).toBe(`cd ${root} && laneboard setup claude-code --json && cd ${nested} && laneboard setup claude-code --json`);
     // Run as the fix says: the root sees agent-b's board in the registry, so its env leaves the local file for its settings.json.
     const again = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout);
     expect(again.ok).toBe(true);
@@ -712,7 +712,7 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect((await cli(['setup', 'claude-code'], { cwd: root, env })).code).toBe(0);
     expect((await cli(['init', '--dir', path.join(nested, '.laneboard'), '--description', 'agent b'], { cwd: nested, env: { HOME: tempDir() } })).code).toBe(0);
     const refused = JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: nested, env })).stdout);
-    expect(refused.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${root} && laneboard setup claude-code && cd ${nested} && laneboard setup claude-code` });
+    expect(refused.error).toMatchObject({ code: 'SETUP_CONFLICT', fix: `cd ${root} && laneboard setup claude-code --json && cd ${nested} && laneboard setup claude-code --json` });
     // The refusal registered agent-b's board, so the fix's root setup moves the root's env out of the local file.
     expect(readRegistry(home).map((e) => e.path)).toContain(path.join(nested, '.laneboard'));
     expect(fs.existsSync(path.join(nested, '.claude'))).toBe(false);
@@ -829,7 +829,7 @@ describe('LB-59 (0.4.1): a dry run says what it would do; setup codex below the 
     expect(inPkg.ok).toBe(true);
     expect(fs.existsSync(path.join(pkg, 'AGENTS.md'))).toBe(true);
     expect(inPkg.warnings).toContain(
-      `the AGENTS.md block of setup codex goes to ${pkg}, below the root of its git repository ${root}: Codex reads AGENTS.md from the repository root down to the folder it starts in, so a Codex started at the root never sees this block; start Codex in ${pkg}, or run laneboard setup codex in ${root} for the whole repository`,
+      `the AGENTS.md block of setup codex goes to ${pkg}, below the root of its git repository ${root}: Codex reads AGENTS.md from the repository root down to the folder it starts in, so a Codex started at the root never sees this block; start Codex in ${pkg}, or run laneboard setup codex --json in ${root} for the whole repository`,
     );
     const atRoot = JSON.parse((await cli(['setup', 'codex', '--json'], { cwd: root, env })).stdout);
     expect(atRoot.warnings.filter((w: string) => w.includes('below the root'))).toEqual([]);

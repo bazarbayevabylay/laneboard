@@ -5,81 +5,116 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 
 ## Unreleased
 
-### C
+The 0.4.1 patch: fixes from dogfooding 0.4.0 (LB-54..LB-66; ADR §56).
 
-- `init` prints the declared fields (`priority` by default) and how to add or drop one (LB-58.1).
+### Compatibility
+
+- `PORT_IN_USE` exits 4 (conflict, http 409), not 5 (busy, http 503): a script that retried on 5 stops at once, the port stays taken (LB-63.5).
+- On a board with checks `update --status <final>` closes only a task that waits in the last check; any other task is refused
+  (`ALREADY_CLAIMED`, `INVALID_VALUE`). A board without checks closes by update as before.
+- On a board with checks `update --status <work status>` and `update --assignee <self>` of another name's task that waits for a check are
+  refused for a name that may not check it and did not work on it (`ALREADY_CLAIMED`, `INVALID_VALUE` when unassigned) (LB-63.6).
+- `update --status <check>` of a task returned for rework or not handed in is `ALREADY_CLAIMED`, as `finish` (was `INVALID_VALUE`, LB-63.1).
+- `claim` without `--status` of your own task, or one you take back with `--resume`, moves it from the first status into the work status
+  (was "no changes"); `claim --resume` of a task an earlier session closed, or one another session took back less than 15 min ago, is
+  `ALREADY_CLAIMED` (LB-54.1, LB-54.2, LB-54.4, LB-57.4).
+- `import checklist` with a `--status` / `--done-status` not in the config is UNKNOWN_STATUS also when every item was imported before
+  (was exit 0, LB-64.3); `config --review-statuses` out of the order of the statuses, and `--review-statuses none --reviewers <names>`,
+  are refused (LB-62.2, LB-62.4).
+- `in_progress` of `prime --json` and `task_prime` no longer counts tasks in the first status (LB-57.3).
+- Fix and warning texts changed: every command in them carries `--json`; over MCP they name tool calls, and `structuredContent`
+  carries `warnings`. Scripts that match these texts exactly need an update (LB-60.1, LB-60.3, LB-63.2).
+- A repeated `--json`, and `--as` repeated with the same value, now run the command (was `USAGE`, exit 2); `--as` with different
+  values and a repeat of any other option are still `USAGE` (ADR §5).
+
+### Added
+
 - `init --json` names the setup command in `data.setup` next to `data.next` (LB-58.2).
-- `setup --dry-run` says `would create` / `would update`, never `created` (LB-59.1).
-- `setup --dry-run` warns `would write <file>.laneboard.bak`, never `wrote` (LB-59.2).
-- `setup codex` below the root of a git repository warns that a Codex started at the root never sees that AGENTS.md (LB-59.3).
-- `config --review-statuses` with a typo keeps the meant status in the fix, never drops it (LB-62.1).
-- `config --review-statuses` in another order than the statuses is refused with the right order as the fix (LB-62.2).
-- `config --reviewers <harness>@<user>` warns: sessions write as `<base>:<session>`, so that name never checks (LB-62.3).
-- `config --review-statuses none --reviewers <names>` is refused instead of dropping the names (LB-62.4).
-- `schema/config.json` allows the keys config@2 keeps from a newer laneboard (top level, `review`); config@1 stays closed (LB-62.7).
-- README: `?board=` of every HTTP route but `/api/boards`, and the `assignee`, `label`, `text` filters of `/api/tasks` (LB-65.1).
-
-### C2
-
-- `config --reviewers` warns only for `claude-code@<user>` without `:<session>`; `codex@<user>` or `alice@corp` get no warning (LB-62.3).
-- `setup claude-code --dry-run` over a pin of an earlier setup in `.claude/settings.json` says `would move the env`, never `moved` (LB-59.2).
-
-### D2
-
+- The `finish --json` reply of a hand-in (a status that is not final) says `handed_in: true`; over MCP `task_finish` too (LB-63.3).
+- prime of a checker shows under a task handed in again why it was returned before; `roles.waiting[].last_return` (LB-61.5).
 - `import --dry-run` shows the status each new task gets and `parent_source` for a subtask of a parent that is new too (`created[].status`, LB-64.1).
-- `import checklist` with a `--status` / `--done-status` not in the config stops with UNKNOWN_STATUS even when every item was imported before (was exit 0, LB-64.3); `import markdown|json` still skips a file imported before as it is, whatever its status now.
-- `archive <id>` of a task that is not finished and has an assignee warns who holds it (LB-64.4).
-- `archive` drops a `deleted` mark left on an active task by a 0.3.1 restore, so the task does not become a tombstone (LB-64.5).
-- `attach` checks the stored copy in 64 KiB chunks instead of reading it whole (LB-65.6).
+- MCP `structuredContent` carries `warnings` too, when there are any (LB-60.3).
 
-### B
+### Changed
+
+- LB-63.2: every laneboard command in the fix of an error or in a warning carries `--json` (rule 3): the default fixes of the error
+  codes and the fixes and warnings of `create`, `claim`, `comment`, `finish`, `update`, `get`, `attach`, `archive`, `restore`, `redact`,
+  `boards`, `init`, `config`, `doctor`, `setup` and `import`. A test reads the fix and warning texts in `src/`, with the names and calls
+  they are built from in the same or an imported file, and fails on a command there without `--json`. Error messages, help, doctor reports and human output keep plain commands.
+- A repeated `--json`, and `--as` repeated with the same value, run the command: agents add both to a fix that already carries them.
+- LB-60.1: over MCP the `fix` of an error and the warnings name tool calls, not CLI commands: `task_comment {"id":"LB-1","text":"<note>","actor":"dev-2"}`,
+  two commands joined by `, then`. A command no tool runs (`boards`, `init`, `config`, `doctor`, `--board`, `--dir`, `--file`) stays as it is.
+- LB-60.2: over MCP a link or `fields` parameter in the CLI form (`"commit=abc"`, `"priority=2"`, a link that is no `{kind, ref}` object)
+  gets a fix that names the form (`add_links: [{"kind": "commit", "ref": "<sha>"}]`); a link of the right form with a wrong value (`ref`
+  empty or over 2000 characters, an unknown `kind`) keeps the fix of that value. The MCP preamble maps `--add-link` and `--field`.
+- LB-60.4: `task_prime` without a name (agent `null`) warns to pass `actor`.
+- MCP: a store found in a parent directory that looks like another project's warns with the client's fix (a board of its own, then
+  start the client for it), not with the CLI's `--dir` on every command and `laneboard prime`.
+- MCP tool descriptions: `task_update` names the refusals on a board with checks (`ALREADY_CLAIMED` for another name's task), `task_claim`
+  the first status and the closed task, `task_finish` `handed_in`, `task_prime` `tasks` vs `in_progress` and `roles.waiting[].last_return`.
+- Check bypass: on a board with checks `update --status <final>` closes only a task that waits in the last check (A17 warning as before);
+  a task in work or returned for rework is `ALREADY_CLAIMED` (unassigned: `INVALID_VALUE` with the hand-in), a task waiting in an earlier
+  check `INVALID_VALUE` with a read as the fix. A board without checks closes by update as before.
+- LB-63.6: on a board with checks `update --assignee <self>` and `update --status <work status>` of a task waiting for a check, by a name
+  that may not check it (and did not work on it), are refused like `claim` (`ALREADY_CLAIMED`, `INVALID_VALUE` when unassigned), so it
+  never takes the task in two steps, in either order; its checkers and its author still move it.
+- LB-63.1: a check of a task returned for rework, or of one its holder did not hand in, is `ALREADY_CLAIMED` by `update --status <check>`
+  as by `finish` (was `INVALID_VALUE`).
+- LB-54.1: `claim --resume` (and a plain `claim`) no longer takes a task an earlier session of the same default name closed:
+  `ALREADY_CLAIMED`, "nothing to resume", the fix is a new task; no fix names `--resume` for it.
+- LB-54.2, LB-57.4: `claim` without `--status` of a task you hold or take back with `--resume` moves it from the first status into the
+  work status (the one before the checks, else the second status unless final) instead of "no changes"; a plain claim of a free task
+  keeps its status.
+- LB-54.3: `claim --resume` of a free task warns that it was a plain claim, not a task of an earlier session.
+- LB-54.4: a task another session took back with `--resume` less than 15 min ago stays with it: a second `--resume` (or claim) is
+  `ALREADY_CLAIMED` with the comment fix until that resume is 15 min old; after that `--resume` works as before (exit 0, with the warning
+  while that session still writes), so the next `/clear` of a long task is not refused.
+- LB-54.5: `comment` by a name that lost the task (taken over with `--resume`, given to another name or unassigned by someone else) warns
+  "no longer yours".
+- LB-55.1: `finish` warns "commit <sha> is already linked to <ID>" when the commit it links is linked to a task (active or archived)
+  another name holds, with the command that links the commit of your work instead.
+- LB-63.4: an id with the prefix of another board that board does not hold either is TASK_NOT_FOUND "not on this board, nor on board X",
+  with a search there as the fix (was "X-9 is on board X").
+- LB-63.5: `PORT_IN_USE` exits 4 (conflict, http 409), not 5 "busy, retry once": the same port stays taken.
+- Rule 7 names checkers with "With checks,"; prime leaves that sentence out on a board without checks (LB-57.1).
+- `in_progress` of `prime --json` and `task_prime` no longer counts tasks in the first status; prime lists them as before (LB-57.3).
+- `init` prints the declared fields (`priority` by default) and how to add or drop one (LB-58.1).
+- `setup codex` below the root of a git repository warns that a Codex started at the root never sees that AGENTS.md (LB-59.3).
+- `config --review-statuses` in another order than the statuses is refused with the right order as the fix (LB-62.2).
+- `config --reviewers claude-code@<user>` without `:<session>` warns: sessions write as `<base>:<session>`, so that name never checks;
+  `codex@<user>` or `alice@corp` get no warning (LB-62.3).
+- `config --review-statuses none --reviewers <names>` is refused instead of dropping the names (LB-62.4).
+- `import checklist` with a `--status` / `--done-status` not in the config stops with UNKNOWN_STATUS even when every item was imported
+  before (was exit 0, LB-64.3); `import markdown|json` still skips a file imported before as it is, whatever its status now.
+- `archive <id>` of a task that is not finished and has an assignee warns who holds it (LB-64.4).
+- `GIT_PROJECT_MARKERS` and `ReworkReturn` are no longer exported (LB-65.9).
+
+### Fixed
 
 - `prime --edit-hook` under the session default name no longer stays quiet for a task of an earlier session of the same name that
   wrote nothing for 15 min (closed by /clear or a restart); any other task in work still keeps it quiet (LB-56.1).
 - `prime --edit-hook --help` says when the reminder is printed: no task of that name under `--as`/LANEBOARD_AGENT, no task of anybody
   under the session default name (LB-66).
-- Rule 7 names checkers with "With checks,"; prime leaves that sentence out on a board without checks (LB-57.1).
-- `in_progress` of `prime --json` and `task_prime` no longer counts tasks in the first status; prime lists them as before (LB-57.3).
+- `claim --help` says that, without `--status`, one's own task or one taken back with `--resume` leaves the first status for the work
+  status, and that a closed task is not resumed (LB-54.1, LB-57.4).
 - `create --assignee <name>` by a creator on a board with create_by gives no "not to you" warning (LB-61.1).
 - prime of a creator on a board with create_by says tasks for other agents take their `--assignee` instead of "Create one now" (LB-61.2).
-- prime of a checker shows under a task handed in again why it was returned before; `roles.waiting[].last_return` (LB-61.5).
-- The fixes of the create_by refusal end with `--json` (LB-63.2, create).
-
-### A1
-
-- LB-54.1: `claim --resume` (and a plain `claim`) no longer takes a task an earlier session of the same default name closed: `ALREADY_CLAIMED`, "nothing to resume", the fix is a new task; no fix names `--resume` for it.
-- LB-54.2: `claim --resume` without `--status` of a task in the first status moves it into the work status (LB-57.4 rule).
-- LB-54.3: `claim --resume` of a free task warns that it was a plain claim, not a task of an earlier session.
-- LB-54.4: a task another session took back with `--resume` less than 15 min ago stays with it: a second `--resume` (or claim) is `ALREADY_CLAIMED` with the comment fix until that resume is 15 min old; after that `--resume` works as before (exit 0, with the warning while that session still writes), so the next `/clear` of a long task is not refused.
-- LB-54.5: `comment` by a name that lost the task (taken over with `--resume`, given to another name or unassigned by someone else) warns "no longer yours".
-- LB-57.4: `claim` without `--status` of a task you already hold moves it from the first status into the work status (the one before the checks, else the second status unless final) instead of "no changes"; a plain claim of a free task keeps its status.
-- LB-63.6: on a board with checks, `update --assignee <self>` of a task waiting for a check by a name that may not check it (and did not work on it) is refused like `claim` (`ALREADY_CLAIMED`, or `INVALID_VALUE` when unassigned).
-
-### A2
-
-- Check bypass: on a board with checks `update --status <final>` closes only a task that waits in the last check (A17 warning as before); a task in work or returned for rework is `ALREADY_CLAIMED` (unassigned: `INVALID_VALUE` with the hand-in), a task waiting in an earlier check `INVALID_VALUE` with a read as the fix. A board without checks closes by update as before.
-- LB-63.6: `update --status <work status>` of a task waiting for a check by a name that may not check it (and did not work on it) is refused (`ALREADY_CLAIMED`, `INVALID_VALUE` when unassigned), so it never takes the task in two steps, in either order; its checkers and its author still move it.
-- LB-63.1: a check of a task returned for rework, or of one its holder did not hand in, is `ALREADY_CLAIMED` by `update --status <check>` as by `finish` (was `INVALID_VALUE`).
-- LB-63.2 (part): the fixes of the refusals and warnings above (and of `update --assignee` of a waiting task) carry `--json`; the older fixes of update.ts keep their text for now.
-- LB-63.3: the `finish --json` reply of a hand-in (a status that is not final) says `handed_in: true`.
-- LB-55.1: `finish` warns "commit <sha> is already linked to <ID>" when the commit it links is linked to a task (active or archived) another name holds, with the command that links the commit of your work instead.
-- LB-55.2: the worktree warning of `finish` in the main checkout with several worktrees names one command: the finish with the sha of your worktree, then `&&` the removal of the wrong link (run as printed it changes nothing).
+- LB-55.2: the worktree warning of `finish` in the main checkout with several worktrees names one command: the finish with the sha of
+  your worktree, then `&&` the removal of the wrong link (run as printed it changes nothing).
 - LB-55.3: with that worktree warning `finish` no longer also warns "HEAD has not moved since you claimed".
-- LB-65.9: `GIT_PROJECT_MARKERS` and `ReworkReturn` are no longer exported.
-
-### D1
-
-- LB-60.1: over MCP the `fix` of an error and the warnings name tool calls, not CLI commands: `task_comment {"id":"LB-1","text":"<note>","actor":"dev-2"}`, two commands joined by `, then`. A command no tool runs (`boards`, `init`, `config`, `doctor`, `--board`, `--dir`, `--file`) stays as it is.
-- LB-60.2: a link or `fields` parameter in the CLI form (`"commit=abc"`, `"priority=2"`) gets a fix that names the form (`add_links: [{"kind": "commit", "ref": "<sha>"}]`); the MCP preamble maps `--add-link` and `--field`.
-- LB-60.3: MCP `structuredContent` carries `warnings` too, when there are any.
-- LB-60.4: `task_prime` without a name (agent `null`) warns to pass `actor`.
+- `finish` in a main checkout with several worktrees, its commit linked to another name's task already: one warning (the worktree one,
+  naming those tasks), not two with almost the same command.
 - LB-60.5: STORE_NOT_FOUND over MCP names a relative `--dir` or `LANEBOARD_DIR` of the server resolved against its folder.
-- LB-63.2: the default fixes of the error codes and the remaining fixes of update and claim, comment, finish refusals carry `--json` (rule 3).
-- LB-63.3 over MCP: `task_finish` of a hand-in says `handed_in: true`, as `finish --json`.
-- LB-63.4: an id with the prefix of another board that board does not hold either is TASK_NOT_FOUND "not on this board, nor on board X", with a search there as the fix (was "X-9 is on board X").
-- LB-63.5: `PORT_IN_USE` exits 4 (conflict, http 409), not 5 "busy, retry once": the same port stays taken.
-- `finish` in a main checkout with several worktrees, its commit linked to another name's task already: one warning (the worktree one, naming those tasks), not two with almost the same command.
-- MCP tool descriptions: `task_update` names the refusals on a board with checks (`ALREADY_CLAIMED` for another name's task), `task_claim` the first status and the closed task, `task_finish` `handed_in`, `task_prime` `tasks` vs `in_progress` and `roles.waiting[].last_return`.
+- `setup --dry-run` says `would create` / `would update`, never `created` (LB-59.1).
+- `setup --dry-run` warns `would write <file>.laneboard.bak`, never `wrote` (LB-59.2).
+- `setup claude-code --dry-run` over a pin of an earlier setup in `.claude/settings.json` says `would move the env`, never `moved` (LB-59.2).
+- `setup claude-code --dry-run` over a pin an earlier setup left in the repository root's `.claude/settings.local.json` says
+  `would take it out`, never `took it out` (LB-59.2).
+- `config --review-statuses` with a typo keeps the meant status in the fix, never drops it (LB-62.1).
+- `schema/config.json` allows the keys config@2 keeps from a newer laneboard (top level, `review`); config@1 stays closed (LB-62.7).
+- `archive` drops a `deleted` mark left on an active task by a 0.3.1 restore, so the task does not become a tombstone (LB-64.5).
+- `attach` checks the stored copy in 64 KiB chunks instead of reading it whole (LB-65.6).
+- README: `?board=` of every HTTP route but `/api/boards`, and the `assignee`, `label`, `text` filters of `/api/tasks` (LB-65.1).
 
 ## 0.4.0
 

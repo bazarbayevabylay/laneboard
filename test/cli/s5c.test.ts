@@ -131,7 +131,7 @@ describe('review S5b MINOR 2: only a passing errno code says "run it again"', ()
       const err = unreadableStoreFile('/p/.laneboard/active.json', 'active.json', { code });
       expect(err.code).toBe('STORE_INVALID');
       expect(err.message).toBe(`active.json cannot be read (${code ?? 'UNKNOWN'}): /p/.laneboard/active.json`);
-      expect(err.fix).toBe('restore /p/.laneboard/active.json as a readable file (from git or a copy), then check the store: laneboard doctor');
+      expect(err.fix).toBe('restore /p/.laneboard/active.json as a readable file (from git or a copy), then check the store: laneboard doctor --json');
       expect(err.edit).toBeUndefined();
     }
   });

@@ -417,7 +417,7 @@ describe('S6w review r1', () => {
       const warning = back.doc.warnings[0] as string;
       expect(warning).not.toMatch(/laneboard finish API-1 --result/);
       const handIn = /handed in again: (laneboard finish .+)$/.exec(warning)?.[1] ?? '';
-      expect(handIn).toBe(`laneboard finish API-1 --status ${l.checks[0]} --result "<what you did, how you checked it>" --as dev-1`);
+      expect(handIn).toBe(`laneboard finish API-1 --status ${l.checks[0]} --result "<what you did, how you checked it>" --as dev-1 --json`);
       expect(sh(s, handIn)).toBe(0);
       expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], handed_in: true });
       // A close by update skips no check (slice A2, the check bypass): with two checks rev passes it on to the last one first.
@@ -428,7 +428,7 @@ describe('S6w review r1', () => {
       const note = closed.doc.warnings.find((w: string) => w.includes('was handed in')) as string;
       expect(note).toContain(`a check passes it on or accepts it with finish --status ${l.final}, not by a move`);
       const comment = /record the result with (laneboard comment .+)$/.exec(note)?.[1] ?? '';
-      expect(comment).toBe('laneboard comment API-1 "<result of your check>"');
+      expect(comment).toBe('laneboard comment API-1 "<result of your check>" --json');
       expect(sh(s, `${comment} --as orch`)).toBe(0);
       expect((await task(s, 'API-1')).events.at(-1)).toMatchObject({ type: 'commented', actor: 'orch' });
     });
@@ -549,7 +549,7 @@ describe('S6w review r2: nobody claims a task that waits for a check; no free ta
     expect((await run(s, 'orch', ['update', 'API-1', '--assignee', 'rev'])).code).toBe(0);
     return s;
   };
-  const ADD = 'laneboard config --reviewers "rev,<another checker>"';
+  const ADD = 'laneboard config --reviewers "rev,<another checker>" --json';
 
   it('(c) no checker left: the refusals, prime of every name and doctor name the owner\'s config --reviewers; run with a name, it passes', async () => {
     const s = await soleChecker();
@@ -751,7 +751,7 @@ describe('S6w review r3: the author in any session of its default name; the free
     expect(handIn.doc.warnings.join('\n')).not.toContain('no checker may check');
     const cfg = await run(s, 'orch', ['config', '--reviewers', 'dev-1']);
     expect(cfg.code).toBe(0);
-    const stuck = `tasks waiting in a check that no checker may check (every name in config review.by worked on them): API-1 (code_review); the owner adds a checker: laneboard config --reviewers "dev-1,<another checker>"`;
+    const stuck = `tasks waiting in a check that no checker may check (every name in config review.by worked on them): API-1 (code_review); the owner adds a checker: laneboard config --reviewers "dev-1,<another checker>" --json`;
     expect(cfg.doc.warnings).toContain(stuck);
     // A hand-in while review.by is only its author: written, with the same warning; the named command, run with a name, clears it.
     expect((await run(s, 'orch', ['create', 'Second', '--status', 'backlog'])).code).toBe(0);

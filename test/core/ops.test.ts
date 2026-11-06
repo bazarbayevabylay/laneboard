@@ -153,7 +153,7 @@ describe('update', () => {
     const s = await newStore();
     await createTask(as(s), { title: 'a', status: 'done' });
     await archiveTasks(as(s), { ids: ['LB-1'] });
-    expect((await rejectsWith(updateTask(as(s), { id: 'LB-1', title: 'b' }), 'TASK_ARCHIVED')).fix).toBe('laneboard restore LB-1');
+    expect((await rejectsWith(updateTask(as(s), { id: 'LB-1', title: 'b' }), 'TASK_ARCHIVED')).fix).toBe('laneboard restore LB-1 --json');
     await rejectsWith(claimTask(as(s), { id: 'LB-1' }), 'TASK_ARCHIVED');
     await rejectsWith(commentTask(as(s), { id: 'LB-1', text: 'x' }), 'TASK_ARCHIVED');
     await rejectsWith(attachFile(as(s), { id: 'LB-1', path: sourceFile('a.txt', 'a') }), 'TASK_ARCHIVED');

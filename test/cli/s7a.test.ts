@@ -275,7 +275,7 @@ describe('S7a U6: the documented return for rework is confirmed, not warned', ()
     const s = await waiting(LAYOUTS[0]?.statuses ?? [], ['code_review', 'qa'], 'in_progress');
     const r = JSON.parse((await cli(['update', 'API-1', '--status', 'in_progress', '--as', 'orch', '--json'], { cwd: s.root })).stdout);
     expect(r.warnings).toEqual([
-      "API-1 went back for rework with no reason from you: dev-1's prime says it was returned with no reason; add the reason (shown to dev-1 until the next hand-in): laneboard comment API-1 --as orch -- '<why it goes back>'",
+      "API-1 went back for rework with no reason from you: dev-1's prime says it was returned with no reason; add the reason (shown to dev-1 until the next hand-in): laneboard comment API-1 --as orch --json -- '<why it goes back>'",
     ]);
     expect(r.data.returned).toEqual({ to: 'dev-1', reason: null });
     const human = await cli(['update', 'API-1', '--status', 'todo', '--as', 'orch'], { cwd: s.root });
@@ -310,7 +310,7 @@ describe('S7a U6: the documented return for rework is confirmed, not warned', ()
     const own = JSON.parse((await cli(['update', 'API-1', '--status', 'in_progress', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(own.data.returned).toBeUndefined();
     expect(own.warnings).toEqual([
-      'API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-1',
+      'API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-1 --json',
     ]);
     const t = await waiting(LAYOUTS[0]?.statuses ?? [], ['code_review', 'qa'], 'in_progress');
     // A close by update skips no check (slice A2, the check bypass): rev passes it on to qa, the last check, first.
