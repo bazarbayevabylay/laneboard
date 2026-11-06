@@ -64,6 +64,11 @@ function cutoff(updatedBefore: string, now: Date): string {
   return new Date(now.getTime() - Number(m[1]) * DAY_MS).toISOString();
 }
 
+// Warning for an archived task that is not finished and has an assignee: the work may still be going on.
+function openTaskWarning(task: TaskT): string {
+  return `${task.id} is ${task.status} (not a final status) and assigned to ${task.assignee}: archived anyway; to bring it back: laneboard restore ${task.id}`;
+}
+
 // Archive tasks by id (atomically, all or none) or in bulk by status and age; archive.json is written first (W6).
 export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promise<OpResult<ArchiveResult>> {
   const p = parseInput(ArchiveInput, input);
@@ -115,9 +120,14 @@ export async function archiveTasks(ctx: OpContext, input: ArchiveInputT): Promis
         const before = cutoff(p.updated_before ?? '', new Date(s.now));
         tasks = s.active.tasks.filter((t) => t.status === p.status && t.updated_at < before);
       }
+      // A task still open and held by someone, archived by id: archived as asked, with a word that names who holds it (LB-64.4).
+      const finals = finalStatuses(s.config.statuses);
+      if (p.ids) for (const task of tasks) if (task.assignee !== null && !finals.includes(task.status)) warnings.push(openTaskWarning(task));
       for (const task of tasks) {
         touch(task, s.now, actor);
         task.archived_at = s.now;
+        // A deleted mark left on an active task (restored by 0.3.1, which keeps unknown keys) would turn it into a tombstone here (LB-64.5).
+        delete (task as { deleted?: unknown }).deleted;
         addEvent(task, s.config, s.now, actor, 'archived', {}, actorSourceOf(ctx));
         move(s.active, s.archive, task);
       }

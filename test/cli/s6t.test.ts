@@ -74,7 +74,7 @@ describe('list and get show a tombstone: deleted {at, by}', () => {
     expect((await cli(['get', 'LB-2'], { cwd: s.root })).stdout).not.toContain('deleted:');
   });
 
-  it('an active task with the mark (restored by 0.3.1) is live: no deleted in list/get/--json; archived again by 0.4.0 it is a tombstone', async () => {
+  it('an active task with the mark (restored by 0.3.1) is live: no deleted in list/get/--json; archived again it drops the mark and restores (LB-64.5)', async () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'one', status: 'todo' });
     await deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' });
@@ -105,13 +105,14 @@ describe('list and get show a tombstone: deleted {at, by}', () => {
     expect(getText).not.toContain('deleted:');
     expect(getText).not.toContain('are gone');
 
-    // Archived again (0.4.0 archive keeps the mark): a tombstone as before S6t, shown as deleted, and restore refuses it.
+    // Archived again (LB-64.5): archive drops the mark of the live task, so it is an ordinary archived task that restore brings back.
     expect((await cli(['archive', 'LB-1', '--as', 'a'], { cwd: s.root })).code).toBe(0);
     const again = JSON.parse((await cli(['get', 'LB-1', '--json'], { cwd: s.root })).stdout).data;
-    expect(again).toMatchObject({ archived: true, deleted: { at: expect.stringMatching(ISO), by: 'owner' } });
+    expect(again).toMatchObject({ archived: true, description: 'revived and filled' });
+    expect(again).not.toHaveProperty('deleted');
     const restore = await cli(['restore', 'LB-1', '--as', 'a', '--json'], { cwd: s.root });
-    expect(restore.code).toBe(2);
-    expect(JSON.parse(restore.stdout).error).toMatchObject({ code: 'INVALID_VALUE', message: expect.stringContaining('LB-1 was deleted at') });
+    expect(restore.code).toBe(0);
+    expect(JSON.parse((await cli(['get', 'LB-1', '--json'], { cwd: s.root })).stdout).data).toMatchObject({ archived: false, description: 'revived and filled' });
   });
 });
 

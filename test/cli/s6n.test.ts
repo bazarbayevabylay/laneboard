@@ -175,6 +175,34 @@ describe('import checklist (P6)', () => {
     expect(task.description).toBe(long.replace(/\s+/g, ' '));
   });
 
+  // LB-64.1: a dry run shows what each item becomes: its status, and the source of a parent that is new too.
+  it('a dry run shows the status of each item and parent_source for a subtask of a new parent', async () => {
+    const b = await board('- [ ] alpha\n  - [ ] child\n- [x] beta\n');
+    const dry = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--dry-run']);
+    expect(dry.code).toBe(0);
+    expect(dry.data.created).toEqual([
+      { id: null, source: 'TODO.md#alpha', title: 'alpha', status: 'todo' },
+      { id: null, source: 'TODO.md#child', title: 'child', status: 'todo', parent: null, parent_source: 'TODO.md#alpha' },
+      { id: null, source: 'TODO.md#beta', title: 'beta', status: 'done' },
+    ]);
+    const real = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--as', 'c']);
+    expect(real.data.created.map((c: { status: string }) => c.status)).toEqual(['todo', 'todo', 'done']);
+  });
+
+  // LB-64.3: an unknown --status is refused when every item was imported before, as on a fresh file; nothing is written.
+  it('a re-run with an unknown --status (or --done-status) -> UNKNOWN_STATUS, not exit 0', async () => {
+    const b = await board('- [ ] alpha\n- [x] beta\n');
+    expect((await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--as', 'c'])).code).toBe(0);
+    const before = readStore(b.dir, 'active');
+    const open = await b.json(['import', 'checklist', 'TODO.md', '--status', 'nope', '--as', 'c']);
+    expect(open.code).not.toBe(0);
+    expect(open.error).toMatchObject({ code: 'UNKNOWN_STATUS', allowed: ['todo', 'in_progress', 'review', 'done'] });
+    expect(open.error.fix).toContain('--status (open items)');
+    const done = await b.json(['import', 'checklist', 'TODO.md', '--status', 'todo', '--done-status', 'closed', '--dry-run']);
+    expect(done.error).toMatchObject({ code: 'UNKNOWN_STATUS', details: { unknown_statuses: [{ value: 'closed', files: ['TODO.md#beta'] }] } });
+    expect(readStore(b.dir, 'active')).toEqual(before);
+  });
+
   it('usage: --status is required, key options are markdown/json only, checklist options are checklist only, an unknown status names --status', async () => {
     const b = await board();
     expect((await b.json(['import', 'checklist', 'TODO.md'])).error).toMatchObject({ code: 'USAGE', fix: 'laneboard import checklist TODO.md --json --status <status>' });

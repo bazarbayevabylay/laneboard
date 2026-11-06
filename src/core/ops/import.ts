@@ -46,9 +46,9 @@ export type ImportInputT = z.infer<typeof ImportInput>;
 
 export interface ImportResult {
   dry_run: boolean;
-  // New tasks (id is null in a dry run: ids are given only when written).
-  // parent: the parent's id for a subtask (null in a dry run when the parent is new too).
-  created: Array<{ id: string | null; source: string; title: string; parent?: string | null }>;
+  // New tasks (id is null in a dry run: ids are given only when written) with the status they get.
+  // parent: the parent's id for a subtask (null in a dry run when the parent is new too; parent_source then names it).
+  created: Array<{ id: string | null; source: string; title: string; status: string; parent?: string | null; parent_source?: string }>;
   // Sources imported before: the task that holds the link.
   skipped: Array<{ id: string; source: string }>;
 }
@@ -180,8 +180,11 @@ function plan(
     }
     seen.add(t.source);
     const before = known.get(t.source);
-    if (before !== undefined) skipped.push({ id: before.id, source: t.source });
-    else fresh.push(t);
+    if (before !== undefined) {
+      skipped.push({ id: before.id, source: t.source });
+      // An unknown status is a mistake of the command even when nothing is new (LB-64.3): the same error as on a fresh file.
+      if (!config.statuses.includes(t.status)) note(problems.statuses, t.status, t.source);
+    } else fresh.push(t);
   }
   for (const t of fresh) checkTask(config, t, problems);
   if (actor !== undefined) for (const t of fresh) checkChecks(config, t, actor, problems);
@@ -227,7 +230,11 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
     // Who may create tasks (P2) is asked in a dry run too, when the name is known.
     if (ctx.actor !== undefined) checkCreator(view.config, view.active, ctx.actor);
     const { fresh, skipped, parents } = plan(view.config, view.active, view.archive, p.tasks, ctx.actor);
-    const created = fresh.map((t) => ({ id: null, source: t.source, title: t.title, ...(parents.has(t.source) ? { parent: parents.get(t.source) ?? null } : {}) }));
+    // A subtask of a new parent has no parent id yet: parent_source names that parent (LB-64.1).
+    const created = fresh.map((t) => {
+      const parent = parents.has(t.source) ? (parents.get(t.source) ?? null) : undefined;
+      return { id: null, source: t.source, title: t.title, status: t.status, ...(parent !== undefined ? { parent } : {}), ...(parent === null && t.parent_source !== undefined ? { parent_source: t.parent_source } : {}) };
+    });
     return { data: { dry_run: true, created, skipped }, warnings };
   }
   const actor = requireActor(ctx.actor);
@@ -255,7 +262,7 @@ export async function importTasks(ctx: OpContext, input: ImportInputT): Promise<
         const id = idOf.get(t.source) ?? '';
         const parent = parents.has(t.source) ? (parents.get(t.source) ?? idOf.get(t.parent_source ?? '')) : undefined;
         s.active.tasks.push(buildTask(s.config, t, id, parent, s.now, actor, actorSourceOf(ctx)));
-        created.push({ id, source: t.source, title: t.title, ...(parent !== undefined ? { parent } : {}) });
+        created.push({ id, source: t.source, title: t.title, status: t.status, ...(parent !== undefined ? { parent } : {}) });
       }
       return { dry_run: false, created, skipped };
     },

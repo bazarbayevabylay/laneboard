@@ -169,6 +169,19 @@ describe('A1 an attachment is recorded only over its exact bytes', () => {
     expect(view.data.attachments[0]).toMatchObject({ size: bytes.length, sha256: shaOf(stored) });
     expect(shaOf(stored)).toBe(crypto.createHash('sha256').update(bytes).digest('hex'));
   });
+
+  // LB-65.6: the read-back hashes the stored copy in chunks, never reading the whole file into memory a second time.
+  it('the read-back of the stored copy does not read it whole (readFileSync)', async () => {
+    const s = await storeWithTwoTasks();
+    const { file, bytes } = sourceFile();
+    const stored = path.join(s.dir, 'attachments', 'LB-1', 'report.bin');
+    const whole = vi.spyOn(fs, 'readFileSync');
+    const view = await attachFile(as(s), { id: 'LB-1', path: file });
+    const readWhole = whole.mock.calls.filter(([f]) => f === stored);
+    vi.restoreAllMocks();
+    expect(readWhole).toEqual([]);
+    expect(view.data.attachments[0]).toMatchObject({ size: bytes.length, sha256: shaOf(stored) });
+  });
 });
 
 describe('A27 file modes follow the umask', () => {

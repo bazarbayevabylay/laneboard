@@ -129,12 +129,26 @@ function sha256Of(bytes: Buffer): string {
 }
 
 // Read the stored attachment back: its size and sha256 must equal the metadata about to be recorded, else remove it and fail.
+// The copy is read in 64 KiB chunks, so a large attachment is not held in memory a second time (LB-65.6).
 function verifyStored(file: string, size: number, sha256: string): void {
-  const stored = fs.readFileSync(file);
-  if (stored.length === size && sha256Of(stored) === sha256) return;
+  const hash = crypto.createHash('sha256');
+  let length = 0;
+  const fd = fs.openSync(file, 'r');
+  try {
+    const chunk = Buffer.alloc(64 * 1024);
+    for (;;) {
+      const n = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (n === 0) break;
+      length += n;
+      hash.update(chunk.subarray(0, n));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (length === size && hash.digest('hex') === sha256) return;
   // A broken copy must not stay behind under a name the metadata will never describe.
   removeFile(file);
-  const reason = stored.length === size ? 'sha256 differs' : `${stored.length} of ${size} bytes`;
+  const reason = length === size ? 'sha256 differs' : `${length} of ${size} bytes`;
   throw new LaneboardError('INTERNAL', `${file} was stored broken (${reason}) and was removed; the task is unchanged`, { fix: NOT_WRITTEN_FIX });
 }
 
