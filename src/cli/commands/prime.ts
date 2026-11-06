@@ -64,14 +64,23 @@ function foreignStoreNote(store: string, prefix: string, cwd: string, foreign: F
   );
 }
 
-// `prime --edit-hook`: a note, or nothing at all (a task is in progress, no store, any error); it never fails a tool call.
-async function editHook(op: () => OpContext, agent: string | undefined, cwd: string, home: string | undefined): Promise<CommandOutput> {
+// Whom the edit hook asks about: a name of its own (--as, LANEBOARD_AGENT) its own tasks; the session default name anybody's, except the
+// tasks of its earlier sessions that went silent (LB-56.1: `session_actor`, SummaryResult.held).
+interface EditHookName {
+  agent: string | undefined;
+  sessionActor: string | undefined;
+  sessionBase: string | undefined;
+}
+
+// `prime --edit-hook`: a note, or nothing at all (a task is held, no store, any error); it never fails a tool call.
+async function editHook(op: () => OpContext, name: EditHookName, cwd: string, home: string | undefined): Promise<CommandOutput> {
   const quiet: CommandOutput = { data: null, warnings: [], human: '', silent: true };
+  const agent = name.agent;
   try {
     const ctx = op();
-    const r = await taskSummary(ctx, { assignee: agent });
+    const r = await taskSummary(ctx, agent !== undefined ? { assignee: agent } : { session_base: name.sessionBase, session_actor: name.sessionActor });
     // A board this machine never registered (a cloned repository's) gets no reminder to track work there.
-    if (r.data.in_progress > 0 || r.data.registered === false) return quiet;
+    if (r.data.held > 0 || r.data.registered === false) return quiet;
     // Never nudge towards another project's store: name the situation instead of asking for a task there.
     const foreign = foreignStore(ctx.store, cwd, home);
     if (foreign !== undefined) return { data: null, warnings: [], human: foreignStoreNote(ctx.store.dir, r.data.prefix, cwd, foreign), storeWarningInText: true };
@@ -123,7 +132,9 @@ export const prime: CommandDef = {
     'Print the agent rules, the board (store, prefix, name, description), statuses, fields and your tasks (--as / LANEBOARD_AGENT / the session default name), or the ways to start one: ' +
       'claim a task from the request, resume your own task of an earlier session, after /clear or a restart (claim --resume), take a free task, create one. ' +
     '--hook: plain text for a SessionStart hook, never fails; the resume way in a new session, not on "resume" or "compact" (the source in the hook input on stdin). ' +
-    '--edit-hook: Claude Code PostToolUse reminder when you have no task in progress, else nothing. ' +
+    '--edit-hook: Claude Code PostToolUse reminder after an edit, only while no task is held (assigned, not final), else nothing: under --as or LANEBOARD_AGENT, no task of that name; ' +
+      'under the session default name, no task of anybody on the board (an agent may write under its own --as), not counting tasks of your earlier sessions silent for 15 min; ' +
+      'LANEBOARD_AGENT (only if no subagent runs under you: they inherit it) makes it a reminder of that name\'s tasks. ' +
     '--all-boards (orchestrators): then every board of this machine with its tasks not in the final status, waiting on the owner, handed in and stale first.',
   options: { hook: { type: 'boolean' }, 'edit-hook': { type: 'boolean' }, 'all-boards': { type: 'boolean' } },
   args: { min: 0, max: 0 },
@@ -142,9 +153,12 @@ export const prime: CommandDef = {
     const agent = named.actor;
     const agentSource: ActorSource | null = named.actorSource ?? null;
     // A default name says little in the hook: an agent that passed its own --as owns its task under that name, so the reminder
-    // looks at anybody's work in progress then (a session without a task is not reminded while another one has one).
-    if (edit) return editHook(c.op, agentSource === 'default' ? undefined : agent, c.io.cwd, c.io.env.HOME || undefined);
-    const rules = agentRules();
+    // looks at anybody's held task then (a session without a task is not reminded while another one has one, LB-66), except a task of
+    // an earlier session of the same default name that went silent: closed by /clear or a restart, it no longer counts (LB-56.1).
+    if (edit) {
+      const name = agentSource === 'default' ? { agent: undefined, sessionActor: agent, sessionBase: named.sessionBase } : { agent, sessionActor: undefined, sessionBase: undefined };
+      return editHook(c.op, name, c.io.cwd, c.io.env.HOME || undefined);
+    }
     // The SessionStart hook offers the tasks of earlier sessions in every new session: after /clear, and at startup too, since a solo
     // agent's restart is a new session with a new id (P5, S6l; S3b offered them after /clear only). Not on "resume" or "compact": the
     // session id stays, so its own tasks are its own, and the rest is a parallel session's. A parallel live session's task stays in
@@ -178,6 +192,7 @@ export const prime: CommandDef = {
     // unset HOME, and that file can add a hook of its own anyway.
     const registered = summary !== undefined ? summary.registered : hook && ctx !== undefined ? inRegistry(ctx.home, ctx.store.dir, warnings) : null;
     const unregistered = hook && ctx !== undefined && registered === false;
+    const rules = agentRules();
     const data: PrimeData = {
       rules,
       agent: agent ?? null,

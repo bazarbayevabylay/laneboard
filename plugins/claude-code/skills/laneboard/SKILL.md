@@ -10,7 +10,7 @@ laneboard agent rules (task board & CLI for AI coding agents):
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name; add `--as <name>` only for a name of your own.
 5. `--expected-rev` is optional: only for edits on top of what you read (`--description` replaces the whole text; `--field`), pass the rev from your last read or write. Status, comment, claim, finish, `--append-description`: without it, and no `get` for it.
 6. REV_CONFLICT: re-apply your change on `error.details.task` (keep others' edits, merge the description) with its rev. Never retry blindly.
-7. ALREADY_CLAIMED: do not take over; run its `fix` (`--resume`: only your own task from before /clear or a restart). A checker's `finish` accepts a task handed in with `finish` or passes it to the next check (prime lists them), never its own work.
+7. ALREADY_CLAIMED: do not take over; run its `fix` (`--resume`: only your own task from before /clear or a restart). With checks, a checker's `finish` accepts a task handed in with `finish` or passes it to the next check, never its own work.
 8. Statuses (in order; the last one is final) and typed fields come from config; `laneboard prime` lists them. On UNKNOWN_* copy a value from `allowed`.
 9. Notes: `laneboard comment <ID> "<text>"` (`get` shows type `commented`). Files: `laneboard attach <ID> <path>`. Links: `--add-link branch=<name>` / `pr=<url>` / `commit=<sha>` (finish links HEAD).
 10. Finished tasks: `laneboard archive <ID>`. Old ones: `laneboard list --scope all --text <q>`.

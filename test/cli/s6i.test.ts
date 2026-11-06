@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { BOARD_DATA_NOTE, OVERVIEW_MAX_CHARS, overviewText, PRIME_MAX_CHARS, primeText, shortRules } from '../../src/cli/format.ts';
+import { BOARD_DATA_NOTE, boardRules, OVERVIEW_MAX_CHARS, overviewText, PRIME_MAX_CHARS, primeText, shortRules } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import { archiveTasks, createTask, finishTask, importTasks, listEvents, listTasks, registerStore, STALE_AFTER_MS, updateTask } from '../../src/core/index.ts';
 import type { ListItem, OverviewBoard, OverviewCard } from '../../src/core/index.ts';
@@ -232,7 +232,8 @@ describe('A7: the data line of prime is never squeezed out; the budget counts es
 
   it('the same data line with the full rules and with their short forms (the last squeeze step keeps it too)', () => {
     const roomy = primeText(primeData(85, 0, () => 'x', 'Shop backend'));
-    expect(roomy.startsWith(`${ceilingRules()}\n\n${BOARD_DATA_NOTE}\nStore: `)).toBe(true);
+    // A board without checks: rule 7 without its checker sentence (LB-57.1).
+    expect(roomy.startsWith(`${boardRules(ceilingRules(), false)}\n\n${BOARD_DATA_NOTE}\nStore: `)).toBe(true);
     const tight = primeText(primeData(250, 12, (i) => `Free task ${i} with a title of ordinary length`, 'd'.repeat(200)), fixedStorePath(250));
     expect(tight.startsWith(`${shortRules(ceilingRules())}\n\n${BOARD_DATA_NOTE}\nStore: --dir `)).toBe(true);
   });

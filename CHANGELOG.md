@@ -27,6 +27,19 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - `archive` drops a `deleted` mark left on an active task by a 0.3.1 restore, so the task does not become a tombstone (LB-64.5).
 - `attach` checks the stored copy in 64 KiB chunks instead of reading it whole (LB-65.6).
 
+### B
+
+- `prime --edit-hook` under the session default name no longer stays quiet for a task of an earlier session of the same name that
+  wrote nothing for 15 min (closed by /clear or a restart); any other task in work still keeps it quiet (LB-56.1).
+- `prime --edit-hook --help` says when the reminder is printed: no task of that name under `--as`/LANEBOARD_AGENT, no task of anybody
+  under the session default name (LB-66).
+- Rule 7 names checkers with "With checks,"; prime leaves that sentence out on a board without checks (LB-57.1).
+- `in_progress` of `prime --json` and `task_prime` no longer counts tasks in the first status; prime lists them as before (LB-57.3).
+- `create --assignee <name>` by a creator on a board with create_by gives no "not to you" warning (LB-61.1).
+- prime of a creator on a board with create_by says tasks for other agents take their `--assignee` instead of "Create one now" (LB-61.2).
+- prime of a checker shows under a task handed in again why it was returned before; `roles.waiting[].last_return` (LB-61.5).
+- The fixes of the create_by refusal end with `--json` (LB-63.2, create).
+
 ## 0.4.0
 
 The audit release: data safety, setup safety, orchestrator workflows, any MCP client, monorepos, and English docs.

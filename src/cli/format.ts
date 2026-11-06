@@ -241,7 +241,7 @@ export interface PrimeData {
   open_statuses: string[];
   fields: Record<string, FieldInfo>;
   tasks: ListItem[];
-  // The agent's tasks not in the final status (without a name: anybody's assigned ones, used by the edit hook).
+  // The agent's tasks neither in the first status nor in the final one (LB-57.3; without a name: anybody's assigned ones).
   in_progress: number;
   // Free work: active tasks without an assignee, not in the final status, not waiting for a check (at most 10, by priority), and how many there are.
   unassigned: ListItem[];
@@ -407,7 +407,11 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
     creators === null || d.roles?.can_create !== false
       ? undefined
       : `Only ${fit(creators.join(', '), NAMES_MAX)} create tasks on this board: ${d.agent_source === 'explicit' ? '' : 'not one of them? '}ask whoever started you for a task id (never create it under another name), then: ${claim}`;
+  // A creator on a board with create_by (LB-61.2): most tasks it creates are other agents' work, so its own one is for its own changes.
+  const creator = d.agent !== null && creators !== null && creators.includes(d.agent);
+  const forOthers = "for another agent's work create its task with --assignee <its name>";
   if (!choices.resume && !choices.free && !choices.check) {
+    if (creator) return [`You have no task of your own in progress. You create tasks here: ${forOthers}; before a file change of your own, create yours:`, create, `Given a task id instead: ${claim}`].join('\n');
     if (ask !== undefined) return [d.agent === null ? 'You have no task in progress (your name is not set).' : 'You have no task in progress.', ask, ...(d.agent === null ? [keepName] : [])].join('\n');
     if (d.agent === null) return ['You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:', create, keepName].join('\n');
     return ['You have no task in progress. Create one now:', create, `Given a task id instead: ${claim}`].join('\n');
@@ -420,7 +424,7 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
     ways.push(`Otherwise: ${ask}`);
     return [noTaskIntro(d), ...ways.map((w, i) => `${i + 1}. ${w}`), ...(d.agent === null ? [keepName] : [])].join('\n');
   }
-  ways.push('Otherwise create one:');
+  ways.push(creator ? `Otherwise, before a file change of your own, create one (${forOthers}):` : 'Otherwise create one:');
   return [noTaskIntro(d), ...ways.map((w, i) => `${i + 1}. ${w}`), create, ...(d.agent === null ? [keepName] : [])].join('\n');
 }
 
@@ -458,6 +462,15 @@ const SQUEEZES: readonly Squeeze[] = [
 
 // Characters of a task title in prime once long titles give way (the id is what the commands need).
 const SHORT_TITLE = 60;
+
+// The sentence of rule 7 about checkers (agent-rules.md): from its words to the end of the line.
+const CHECKS_SENTENCE = / With checks, [^\n]*/;
+
+// The rules prime prints for its board (LB-57.1): on a board without checks rule 7 ends before its sentence about checkers, which the
+// skill, the MCP instructions and the `rules` of prime --json keep (the same text for every board). Unchanged without that sentence.
+export function boardRules(rules: string, checks: boolean): string {
+  return checks ? rules : rules.replace(CHECKS_SENTENCE, '');
+}
 
 // The rules with their short forms (agent-rules.md, below the rules) in place of the full lines.
 export function shortRules(rules: string): string {
@@ -513,7 +526,10 @@ function openStatusOptions(d: PrimeData): { options: string; note: string } {
 
 // primeText with one squeeze step; `fits`: every required part is there and the whole stays under PRIME_MAX_CHARS.
 function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, squeeze: Squeeze): { text: string; fits: boolean } {
-  const head = `${squeeze.shortRules ? shortRules(d.rules) : d.rules}\n`;
+  const rules = `${squeeze.shortRules ? shortRules(d.rules) : d.rules}\n`;
+  // Read a board without checks: rule 7 without its checker sentence (LB-57.1). The room is counted with the whole rules, so each
+  // board type gets the same squeeze step (the same tasks listed); the freed characters only leave room for more task lines.
+  const head = d.prefix !== null && (d.roles?.checks.length ?? 0) === 0 ? boardRules(rules, false) : rules;
   const named = storeDir === undefined ? '' : shellQuote(storeDir);
   const dir = storeDir === undefined || squeeze.dirOnce ? '' : ` --dir ${named}`;
   // dirOnce: the path is printed once, as the whole `--dir <path>` option in the Store line (review S4: not a second time here).
@@ -527,7 +543,8 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const resumeTotal = Math.max(d.resumable_total ?? 0, d.resumable.length);
   const resumeMore = (n: number): string => `\n... ${n} more (${resumeTotal} in all): laneboard list --sessions-of ${shellQuote(d.session_base ?? '<base>')}${dir} --json`;
   const listed = d.agent !== null && d.tasks.length > 0;
-  const noTask = d.agent === null || d.in_progress === 0;
+  // The agent's own listed tasks, the first status included (in_progress leaves that one out, LB-57.3).
+  const noTask = d.agent === null || d.tasks.length === 0;
   // Under a warning that the store looks like another project's, no claim command for it (as noTaskText).
   const resume = noTask && d.store_warning === null && d.session_base !== null && d.resumable.length > 0;
   const free = d.store_warning === null && d.unassigned_total > 0;
@@ -565,8 +582,17 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const nextOf = new Map((d.roles?.waiting ?? []).map((w) => [w.id, w.next_status]));
   // The only checker that passed the previous check makes this one too (S6w r2): the line says so.
   const mine = new Set((d.roles?.waiting ?? []).filter((w) => w.passed_by_you).map((w) => w.id));
+  // A task handed in again after a return for rework (LB-61.5): what the round before was returned for, so the check looks at it.
+  const returnOf = new Map((d.roles?.waiting ?? []).map((w) => [w.id, w.last_return]));
+  const returnLine = (t: ListItem): string => {
+    const r = returnOf.get(t.id);
+    if (r === undefined || r === null) return '';
+    return r.comment === null
+      ? `\n    returned before by ${r.by} at ${r.at} with no reason`
+      : `\n    returned before by ${r.by}: ${fit(commentLine(r.comment), titleMax)}`;
+  };
   const waitLine = (t: ListItem): string =>
-    `${line(t)}${mine.has(t.id) ? '  (you passed the previous check)' : ''}\n    pass: ${passCommand(d, t.id, nextOf.get(t.id) ?? '<next status>', dir)}`;
+    `${line(t)}${mine.has(t.id) ? '  (you passed the previous check)' : ''}${returnLine(t)}\n    pass: ${passCommand(d, t.id, nextOf.get(t.id) ?? '<next status>', dir)}`;
   // The note goes before the command, so the copied command line stays valid in a shell (LB-11 b).
   const waitMore = (n: number): string => `\n... ${n} more (rows with handed_in): laneboard list${d.roles?.checks.map((st) => ` --status ${shellQuote(st)}`).join('') ?? ''}${dir} --json`;
   const roles = rolesLine(d);
@@ -587,7 +613,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const waiting = d.roles?.waiting ?? [];
   const waitKeep = waits ? waitHead.length + sectionMin(waiting, d.roles?.waiting_total ?? 0, waitMore, 1, waitLine) : 0;
   // Five newlines join the six blocks below (a sixth one before the roles line, when there is one).
-  const others = head.length + BOARD_DATA_NOTE.length + storeHead.length + warning.length + closing.length + 5 + (roles ? roles.length + 1 : 0) + ownKeep + waitKeep + resumeKeep + freeKeep;
+  const others = rules.length + BOARD_DATA_NOTE.length + storeHead.length + warning.length + closing.length + 5 + (roles ? roles.length + 1 : 0) + ownKeep + waitKeep + resumeKeep + freeKeep;
   if (squeeze.cutLines && others + status.length + fields.length > PRIME_MAX_CHARS) {
     // The board goes first here (cutBoard is on); the field line gets at most a third of the room, the status line the rest.
     const left = Math.max(0, PRIME_MAX_CHARS - others - 1);
