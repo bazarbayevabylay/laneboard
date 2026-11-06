@@ -151,6 +151,23 @@ describe('a package of a monorepo pinned to the repository board', () => {
     expect(fs.existsSync(m.rootLocal)).toBe(false);
   });
 
+  it('review C2: --dry-run over an old pin in settings.json says it would move the env and moves nothing', async () => {
+    const m = await monorepo();
+    expect((await json(m.web, ['setup', 'claude-code'], m.env)).code).toBe(0);
+    fs.rmSync(m.rootLocal);
+    const withPin = { env: { LANEBOARD_DIR: m.store, LANEBOARD_DEFAULT_AGENT: 'claude-code@someone' }, hooks: read(m.webSettings).hooks };
+    fs.writeFileSync(m.webSettings, `${JSON.stringify(withPin, null, 2)}\n`);
+    const before = fs.readFileSync(m.webSettings, 'utf8');
+    const r = await json(m.web, ['setup', 'claude-code', '--dry-run'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(r.doc.warnings).toContain(
+      `.claude/settings.json holds the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}, LANEBOARD_DEFAULT_AGENT), a machine path in a committed file; setup would move the env to ${m.rootLocal} (kept out of git) and leave the rest of .claude/settings.json as it is: commit that change after setup`,
+    );
+    expect(r.doc.warnings.join('\n')).not.toContain('setup moved');
+    expect(fs.readFileSync(m.webSettings, 'utf8')).toBe(before);
+    expect(fs.existsSync(m.rootLocal)).toBe(false);
+  });
+
   it('--remove takes an old pin out of the package settings.json too (an install of 0.3.x never re-run)', async () => {
     const m = await monorepo();
     expect((await json(m.web, ['setup', 'claude-code'], m.env)).code).toBe(0);

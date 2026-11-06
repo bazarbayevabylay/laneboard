@@ -261,7 +261,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
     edit: { env: 'HOME=<your home directory>' },
   });
   const cwd = path.resolve(input.cwd);
-  const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir) };
+  const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir), dryRun: input.dryRun };
   const roots = [cwd, home];
   const users = new Map<string, string[]>();
   const projects = new Map<string, string[]>();

@@ -288,11 +288,17 @@ function stalePinWarnings(c: HarnessContext): string[] {
 }
 
 // A pin of an earlier setup in .claude/settings.json (committed) that this run moves to the local file: say so, the change to commit.
+// A --dry-run moves nothing, so it says what setup would do (review C2).
 function movedPinWarnings(c: HarnessContext): string[] {
   if (envFolder(c) === undefined) return [];
   const dir = movingPin(readText(path.join(c.cwd, SETTINGS)), c);
   if (dir === undefined) return [];
   const to = rootLocalFile(c) ?? LOCAL_SETTINGS;
+  if (c.dryRun) {
+    return [
+      `${SETTINGS} holds the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}, LANEBOARD_DEFAULT_AGENT), a machine path in a committed file; setup would move the env to ${to} (kept out of git) and leave the rest of ${SETTINGS} as it is: commit that change after setup`,
+    ];
+  }
   return [
     `${SETTINGS} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}, LANEBOARD_DEFAULT_AGENT), a machine path in a committed file; setup moved the env to ${to} (kept out of git) and left the rest of ${SETTINGS} as it was: commit that change`,
   ];

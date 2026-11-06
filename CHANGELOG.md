@@ -19,6 +19,11 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - `schema/config.json` allows the keys config@2 keeps from a newer laneboard (top level, `review`); config@1 stays closed (LB-62.7).
 - README: `?board=` of every HTTP route but `/api/boards`, and the `assignee`, `label`, `text` filters of `/api/tasks` (LB-65.1).
 
+### C2
+
+- `config --reviewers` warns only for `claude-code@<user>` without `:<session>`; `codex@<user>` or `alice@corp` get no warning (LB-62.3).
+- `setup claude-code --dry-run` over a pin of an earlier setup in `.claude/settings.json` says `would move the env`, never `moved` (LB-59.2).
+
 ### D2
 
 - `import --dry-run` shows the status each new task gets and `parent_source` for a subtask of a parent that is new too (`created[].status`, LB-64.1).
