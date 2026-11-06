@@ -417,7 +417,7 @@ describe('S6w review r1', () => {
       const warning = back.doc.warnings[0] as string;
       expect(warning).not.toMatch(/laneboard finish API-1 --result/);
       const handIn = /handed in again: (laneboard finish .+)$/.exec(warning)?.[1] ?? '';
-      expect(handIn).toBe(`laneboard finish API-1 --status ${l.checks[0]} --result "<what you did, how you checked it>" --as dev-1`);
+      expect(handIn).toBe(`laneboard finish API-1 --status ${l.checks[0]} --result "<what you did, how you checked it>" --as dev-1 --json`);
       expect(sh(s, handIn)).toBe(0);
       expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], handed_in: true });
       // A close by update skips no check (slice A2, the check bypass): with two checks rev passes it on to the last one first.
@@ -428,7 +428,7 @@ describe('S6w review r1', () => {
       const note = closed.doc.warnings.find((w: string) => w.includes('was handed in')) as string;
       expect(note).toContain(`a check passes it on or accepts it with finish --status ${l.final}, not by a move`);
       const comment = /record the result with (laneboard comment .+)$/.exec(note)?.[1] ?? '';
-      expect(comment).toBe('laneboard comment API-1 "<result of your check>"');
+      expect(comment).toBe('laneboard comment API-1 "<result of your check>" --json');
       expect(sh(s, `${comment} --as orch`)).toBe(0);
       expect((await task(s, 'API-1')).events.at(-1)).toMatchObject({ type: 'commented', actor: 'orch' });
     });

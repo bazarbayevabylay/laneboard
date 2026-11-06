@@ -160,7 +160,7 @@ export function normalizeId(raw: string, prefix: string, field = 'id'): string {
   else if (ID_RE.test(raw.toUpperCase())) suggestion = raw.toUpperCase();
   throw new LaneboardError('INVALID_VALUE', `"${raw}" is not a task id; ids are exact, like ${suggestion ?? `${prefix}-12`}`, {
     input: suggestion ? { field, value: raw, suggestion } : { field, value: raw },
-    fix: suggestion ? `use ${suggestion}` : `use an exact id like ${prefix}-12 (see laneboard list)`,
+    fix: suggestion ? `use ${suggestion}` : `use an exact id like ${prefix}-12 (see laneboard list --json)`,
   });
 }
 
@@ -480,7 +480,7 @@ export function checkParent(files: { active: StoreFileT; archive: StoreFileT }, 
   const id = normalizeId(raw, prefix, 'parent');
   const found = locate(files, id);
   if (!found) throw new LaneboardError('TASK_NOT_FOUND', `parent ${id}: no such task`, { input: { field: 'parent', value: id } });
-  if (found.archived) throw new LaneboardError('TASK_ARCHIVED', `parent ${id} is archived and read-only`, { fix: `laneboard restore ${id}` });
+  if (found.archived) throw new LaneboardError('TASK_ARCHIVED', `parent ${id} is archived and read-only`, { fix: `laneboard restore ${id} --json` });
   if (childId === undefined) return id;
   // Walk up from the new parent: reaching the child means the parent is the child itself or under it.
   const chain = [id];
@@ -496,7 +496,7 @@ export function checkParent(files: { active: StoreFileT; archive: StoreFileT }, 
   const instead = `<id of a task not under ${childId}>`;
   throw new LaneboardError('INVALID_VALUE', `${id} cannot be the parent of ${childId}: ${why}`, {
     input: { field: 'parent', value: id },
-    fix: `laneboard update ${childId} --parent ${instead}`,
+    fix: `laneboard update ${childId} --parent ${instead} --json`,
     edit: { drop: [{ name: 'parent' }], add: [{ name: 'parent', value: instead }] },
   });
 }
@@ -544,7 +544,7 @@ export function requireActiveTask(files: { active: StoreFileT; archive: StoreFil
   const found = locate(files, id);
   if (!found) throw missing(id);
   if (found.archived) {
-    throw new LaneboardError('TASK_ARCHIVED', `task ${id} is archived and read-only`, { fix: `laneboard restore ${id}` });
+    throw new LaneboardError('TASK_ARCHIVED', `task ${id} is archived and read-only`, { fix: `laneboard restore ${id} --json` });
   }
   return found.task;
 }

@@ -381,7 +381,7 @@ describe('review S6h r2: the main checkout, a fix that never guesses, the shared
     expect(off.code, JSON.stringify(off.doc)).toBe(0);
     expect(off.doc.data.files).toContainEqual({ path: exclude, scope: 'project', result: 'kept' });
     expect(off.doc.warnings).toContain(
-      `kept the laneboard block in ${exclude}: setup in another checkout of this repository still uses it (${r.main}); laneboard setup <harness> --remove there removes it`,
+      `kept the laneboard block in ${exclude}: setup in another checkout of this repository still uses it (${r.main}); laneboard setup <harness> --remove --json there removes it`,
     );
     expect(blocks()).toBe(1);
     // The main checkout's backups stay out of git.

@@ -52,10 +52,10 @@ export function readRegistry(home: string): BoardEntry[] {
   try {
     json = JSON.parse(raw);
   } catch (err) {
-    throw new LaneboardError('STORE_INVALID', `${file} is not valid JSON: ${(err as Error).message}`, { fix: `fix the JSON in ${file}, or delete it (laneboard setup <harness> or laneboard config --name <name> in each project adds its board again)` });
+    throw new LaneboardError('STORE_INVALID', `${file} is not valid JSON: ${(err as Error).message}`, { fix: `fix the JSON in ${file}, or delete it (laneboard setup <harness> --json or laneboard config --name <name> --json in each project adds its board again)` });
   }
   const parsed = Registry.safeParse(json);
-  if (!parsed.success) throw new LaneboardError('STORE_INVALID', `${file} is not a laneboard board registry`, { fix: `fix ${file}, or delete it (laneboard setup <harness> or laneboard config --name <name> in each project adds its board again)` });
+  if (!parsed.success) throw new LaneboardError('STORE_INVALID', `${file} is not a laneboard board registry`, { fix: `fix ${file}, or delete it (laneboard setup <harness> --json or laneboard config --name <name> --json in each project adds its board again)` });
   return parsed.data.boards;
 }
 
@@ -95,8 +95,8 @@ export interface RegistryOptions extends LockOptions {
 // The warning of a board left out of an unwritable registry (`code`: why the folder `dir` cannot be written).
 function unregisteredWarning(dir: string, code: string): string {
   return (
-    `this board is not in the machine registry (${dir} cannot be written: ${code}), so laneboard boards does not list it and its prefix was checked only against the boards listed there; ` +
-    'once that folder is writable, laneboard config --name <name> in the project adds it'
+    `this board is not in the machine registry (${dir} cannot be written: ${code}), so laneboard boards --json does not list it and its prefix was checked only against the boards listed there; ` +
+    'once that folder is writable, laneboard config --name <name> --json in the project adds it'
   );
 }
 
@@ -221,7 +221,7 @@ export function prefixInUse(dir: string, prefix: string, owner: string, taken: R
     const free = freePrefix(prefix, taken);
     return new LaneboardError('INVALID_VALUE', `${head}; give it a free prefix`, {
       details,
-      fix: `laneboard config --prefix ${free} --dir ${shellQuote(dir)}`,
+      fix: `laneboard config --prefix ${free} --dir ${shellQuote(dir)} --json`,
       edit: { add: [{ name: 'prefix', value: free }] },
     });
   }
@@ -231,9 +231,9 @@ export function prefixInUse(dir: string, prefix: string, owner: string, taken: R
     'INVALID_VALUE',
     `${head}; it has ${count} task(s) with ids like ${prefix}-1, so its prefix cannot change. ` +
       `If this folder is a copy of that project, a harness set up here writes to the copy: undo that setup in this folder (the fix), ` +
-      `and work on that board from its project (laneboard setup ${h} in ${project}); ` +
-      `else move ${shellQuote(dir)} aside and create this project's own board (laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>")`,
-    { details, fix: `laneboard setup ${h} --remove --dir ${shellQuote(dir)}` },
+      `and work on that board from its project (laneboard setup ${h} --json in ${project}); ` +
+      `else move ${shellQuote(dir)} aside and create this project's own board (laneboard init --dir ${shellQuote(dir)} --name <name> --description "<whose project, what work>" --json)`,
+    { details, fix: `laneboard setup ${h} --remove --dir ${shellQuote(dir)} --json` },
   );
 }
 
@@ -253,9 +253,9 @@ export function checkPrefixFree(entries: readonly BoardEntry[], dir: string, pre
   return holders.map((b) => {
     const head = `prefix ${prefix} is also used by the board at ${b.path}, registered later (a copied project folder?); its ids look like this board's and its changes are refused`;
     const n = taskCount(b.path);
-    if (n === 0) return `${head} until it gets a free prefix: laneboard config --prefix ${freePrefix(prefix, takenPrefixes(entries, b.path))} --dir ${shellQuote(b.path)}`;
+    if (n === 0) return `${head} until it gets a free prefix: laneboard config --prefix ${freePrefix(prefix, takenPrefixes(entries, b.path))} --dir ${shellQuote(b.path)} --json`;
     const why = n === undefined ? 'its files cannot be read, so it may hold tasks' : `it has ${n} task(s), so its prefix cannot change`;
-    return `${head}; ${why}: move ${shellQuote(b.path)} aside, or undo the harness setup there (laneboard setup <harness> --remove in ${shellQuote(path.dirname(b.path))})`;
+    return `${head}; ${why}: move ${shellQuote(b.path)} aside, or undo the harness setup there (laneboard setup <harness> --remove --json in ${shellQuote(path.dirname(b.path))})`;
   });
 }
 
@@ -406,14 +406,14 @@ export async function forgetBoard(home: string, value: string, cwd: string, opts
   const notFound = (entries: readonly BoardEntry[]): LaneboardError =>
     new LaneboardError('STORE_NOT_FOUND', `--forget ${value}: no board with this prefix, name or path in ${registryFile(home)}`, {
       allowed: [...new Set(entries.map((e) => e.prefix))],
-      fix: 'laneboard boards lists the boards on this machine; pass the prefix or the path of one shown as missing',
+      fix: 'laneboard boards --json lists the boards on this machine; pass the prefix or the path of one shown as missing',
     });
   // Nothing registered: fail before the registry folder is made for the lock.
   if (readRegistry(home).length === 0) throw notFound([]);
   // A registry folder that cannot be written (read-only HOME, a sandbox): the entry cannot be dropped, said plainly, not INTERNAL.
   const unwritable = (): never => {
     throw new LaneboardError('STORE_READ_ONLY', `--forget ${value}: the machine registry ${registryDir(home)} cannot be written, so nothing was forgotten`, {
-      fix: `make ${shellQuote(registryDir(home))} writable, then run laneboard boards --forget ${shellQuote(value)} again`,
+      fix: `make ${shellQuote(registryDir(home))} writable, then run laneboard boards --forget ${shellQuote(value)} --json again`,
     });
   };
   return updateRegistry(home, { ...opts, onUnwritable: unwritable }, (entries) => {
@@ -426,7 +426,7 @@ export async function forgetBoard(home: string, value: string, cwd: string, opts
       throw new LaneboardError('INVALID_VALUE', `--forget ${value}: the board at ${first.path} still holds a store; forget drops only entries whose path holds none (a moved or deleted board)`, {
         details: { path: first.path, prefix: first.prefix },
         // Never a fix that moves or deletes the store: an agent may run a fix blindly (ADR-0001 rule 13), and this board holds tasks.
-        fix: 'nothing to do: a live board stays listed; laneboard boards shows the entries marked missing, the only ones --forget drops',
+        fix: 'nothing to do: a live board stays listed; laneboard boards --json shows the entries marked missing, the only ones --forget drops',
       });
     }
     const forgotten = gone.map((e) => ({ path: e.path, prefix: e.prefix, name: e.name }));
@@ -448,7 +448,7 @@ export function resolveBoard(home: string | undefined, value: string, cwd: strin
     for (const candidate of [dir, path.join(dir, STORE_DIR_NAME)]) {
       if (isLiveBoard(candidate)) return { dir: candidate, found: 'board', readOnly: true };
     }
-    throw new LaneboardError('STORE_NOT_FOUND', `--board ${value}: no laneboard store at ${dir}`, { fix: 'laneboard boards lists the boards on this machine; pass one of their prefixes to --board' });
+    throw new LaneboardError('STORE_NOT_FOUND', `--board ${value}: no laneboard store at ${dir}`, { fix: 'laneboard boards --json lists the boards on this machine; pass one of their prefixes to --board' });
   }
   if (!home) throw new LaneboardError('STORE_NOT_FOUND', `--board ${value}: HOME is not set, so the board registry cannot be read`, { fix: 'pass the board path instead: --board <path to the project or its .laneboard>' });
   const live = readRegistry(home)
@@ -463,5 +463,5 @@ export function resolveBoard(home: string | undefined, value: string, cwd: strin
   if (hits.length > 1) {
     throw new LaneboardError('INVALID_VALUE', `--board ${value} matches ${hits.length} boards`, { allowed: hits.map((b) => b.prefix), fix: 'pass the prefix of one of them (`allowed`), or its path' });
   }
-  throw new LaneboardError('STORE_NOT_FOUND', `--board ${value}: no board with this prefix or name in ${registryFile(home)}`, { allowed, fix: 'laneboard boards lists the boards on this machine; pass a prefix from `allowed`' });
+  throw new LaneboardError('STORE_NOT_FOUND', `--board ${value}: no board with this prefix or name in ${registryFile(home)}`, { allowed, fix: 'laneboard boards --json lists the boards on this machine; pass a prefix from `allowed`' });
 }

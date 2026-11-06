@@ -227,7 +227,7 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
     expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev'])).doc.error).toEqual(waiting('dev-a', 'code_review', 'rev, orch'));
     const moved = await run(s, 'dev-a', ['update', 'API-1', '--status', 'dev']);
     expect(moved.code).toBe(0);
-    expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a']);
+    expect(moved.doc.warnings).toEqual(['API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a --json']);
   });
 
   it('a task handed in to a status outside the checks goes through every check: rev passes it to code_review, not into done', async () => {
@@ -416,11 +416,11 @@ describe('P1 criteria (9)-(10): config@1 stays until a key is on; an old board t
       if (value !== 'qa,qa') expect(r.doc.error.message, value).toContain(problem);
     }
     const noChecks = await run(s, 'orch', ['config', '--reviewers', 'rev']);
-    expect(noChecks.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses <status between the first and the final one> --reviewers rev' });
+    expect(noChecks.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses <status between the first and the final one> --reviewers rev --json' });
     expect(JSON.parse(configText(s)).schema).toBe(CONFIG_SCHEMA);
     await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa']);
     const drop = await run(s, 'orch', ['config', '--statuses', 'backlog,ready,dev,code_review,done']);
-    expect(drop.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --statuses backlog,ready,dev,code_review,done --review-statuses code_review' });
+    expect(drop.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --statuses backlog,ready,dev,code_review,done --review-statuses code_review --json' });
     expect((await run(s, 'orch', ['config', '--reviewers', 'bad name'])).doc.error.code).toBe('INVALID_VALUE');
   });
 });
@@ -468,7 +468,7 @@ describe('LB-62 (0.4.1): config of the checks says what it keeps, in which order
   it('62.1: a typo in --review-statuses is refused with its status in the fix, never dropped', async () => {
     const s = await newStore({ prefix: 'API', statuses: FLOW });
     const r = await run(s, 'orch', ['config', '--review-statuses', 'code_reviw,qa']);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses code_review,qa' });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses code_review,qa --json' });
     expect(r.doc.error.message).toContain('review status "code_reviw" is not a status of this board');
   });
 
@@ -477,7 +477,7 @@ describe('LB-62 (0.4.1): config of the checks says what it keeps, in which order
     const before = configText(s);
     const r = await run(s, 'orch', ['config', '--review-statuses', 'qa,code_review']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses code_review,qa' });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses code_review,qa --json' });
     expect(r.doc.error.message).toContain('the checks qa, code_review are not in the order of the statuses');
     expect(configText(s)).toBe(before);
     const fixed = await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa']);
@@ -527,7 +527,7 @@ describe('LB-62 (0.4.1): config of the checks says what it keeps, in which order
     await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'rev']);
     const before = configText(s);
     const r = await run(s, 'orch', ['config', '--review-statuses', 'none', '--reviewers', 'rev']);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses none' });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses none --json' });
     expect(configText(s)).toBe(before);
     expect((await run(s, 'orch', ['config', '--review-statuses', 'none', '--reviewers', 'none'])).code).toBe(0);
   });

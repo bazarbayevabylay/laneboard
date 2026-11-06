@@ -123,7 +123,7 @@ describe('config --statuses', () => {
     const r = await doc(run(['config', '--statuses', 'todo,in_progress,done', '--json']));
     expect(r).toMatchObject({ code: 0, data: { changed: true } });
     expect(r.warnings).toEqual([
-      '1 archived task(s) keep the removed status review: they stay readable as an unknown status, and restore brings them back in it (then laneboard update <ID> --status <status>)',
+      '1 archived task(s) keep the removed status review: they stay readable as an unknown status, and restore brings them back in it (then laneboard update <ID> --status <status> --json)',
     ]);
     expect((await doc(run(['get', 'WEB-2', '--json']))).data).toMatchObject({ status: 'review', archived: true });
     expect(loadConfig(store).statuses).toEqual(['todo', 'in_progress', 'done']);
@@ -233,25 +233,25 @@ describe('prefix checked at every registration (review S5c MINOR)', () => {
     expect(r.code).toBe(0);
     const owner = path.join(web, '.laneboard');
     const store = path.join(copy, '.laneboard');
-    const fix = `laneboard setup gemini --remove --dir ${store}`;
+    const fix = `laneboard setup gemini --remove --dir ${store} --json`;
     expect(r.warnings).toContain(
-      `the board was not added to the machine registry (laneboard boards): prefix WEB of the board at ${store} is already used by the board at ${owner}, registered earlier; ` +
+      `the board was not added to the machine registry (laneboard boards --json): prefix WEB of the board at ${store} is already used by the board at ${owner}, registered earlier; ` +
         'two boards with one prefix have look-alike ids, so this board is not registered; it has 1 task(s) with ids like WEB-1, so its prefix cannot change. ' +
         'If this folder is a copy of that project, a harness set up here writes to the copy: undo that setup in this folder (the fix), ' +
-        `and work on that board from its project (laneboard setup gemini in ${web}); else move ${store} aside and create this project's own board ` +
-        `(laneboard init --dir ${store} --name <name> --description "<whose project, what work>"); fix: ${fix}`,
+        `and work on that board from its project (laneboard setup gemini --json in ${web}); else move ${store} aside and create this project's own board ` +
+        `(laneboard init --dir ${store} --name <name> --description "<whose project, what work>" --json); fix: ${fix}`,
     );
     expect(registered(m.home)).toEqual(['WEB']);
     expect(fs.existsSync(path.join(copy, 'GEMINI.md'))).toBe(true);
     // The fix runs in the copy and takes its harness files away; setup in the original project pins the original board.
-    const undone = await doc(m.run(copy, shellArgv(fix).concat('--json')));
+    const undone = await doc(m.run(copy, shellArgv(fix)));
     expect(undone).toMatchObject({ code: 0, data: { mode: 'remove' } });
     expect(fs.existsSync(path.join(copy, 'GEMINI.md'))).toBe(false);
     expect(fs.existsSync(path.join(copy, '.gemini', 'settings.json'))).toBe(false);
     expect(await doc(m.run(web, ['setup', 'gemini', '--json']))).toMatchObject({ code: 0, warnings: [] });
     // The same through config: refused, the config of the copy is unchanged; without a harness at hand the fix has a placeholder.
     const c = await doc(m.run(copy, ['config', '--description', 'copy', '--json']));
-    expect(c.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard setup <harness> --remove --dir ${store}` });
+    expect(c.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard setup <harness> --remove --dir ${store} --json` });
     expect(loadConfig(store).description).toBe('web shop');
   });
 
@@ -273,7 +273,7 @@ describe('prefix checked at every registration (review S5c MINOR)', () => {
     expect(registered(m.home)).toEqual(['WEB', 'WEB']);
     const warning =
       `prefix WEB is also used by the board at ${copy}, registered later (a copied project folder?); its ids look like this board's and its changes are refused; ` +
-      `it has 1 task(s), so its prefix cannot change: move ${copy} aside, or undo the harness setup there (laneboard setup <harness> --remove in ${copyProject})`;
+      `it has 1 task(s), so its prefix cannot change: move ${copy} aside, or undo the harness setup there (laneboard setup <harness> --remove --json in ${copyProject})`;
     // The original (registered first under its path) changes its name and description; the warning names the copy.
     const r = await doc(m.run(web, ['config', '--description', 'web shop v2', '--name', 'shop', '--json']));
     expect(r).toMatchObject({ code: 0, data: { name: 'shop', description: 'web shop v2', changed: true }, warnings: [warning] });
@@ -310,9 +310,9 @@ describe('prefix checked at every registration (review S5c MINOR)', () => {
     fs.writeFileSync(file, JSON.stringify(reg, null, 2));
     const r = await doc(m.run(web, ['config', '--description', 'web shop v2', '--json']));
     expect(r.code).toBe(0);
-    const fix = `laneboard config --prefix WEB2 --dir ${copy}`;
+    const fix = `laneboard config --prefix WEB2 --dir ${copy} --json`;
     expect(r.warnings).toEqual([`prefix WEB is also used by the board at ${copy}, registered later (a copied project folder?); its ids look like this board's and its changes are refused until it gets a free prefix: ${fix}`]);
-    expect(await doc(cli(shellArgv(fix).concat('--json'), { cwd: tempDir(), env: { HOME: m.home } }))).toMatchObject({ code: 0, data: { prefix: 'WEB2' } });
+    expect(await doc(cli(shellArgv(fix), { cwd: tempDir(), env: { HOME: m.home } }))).toMatchObject({ code: 0, data: { prefix: 'WEB2' } });
     expect(registered(m.home)).toEqual(['WEB', 'WEB2']);
     expect((await doc(m.run(web, ['config', '--description', 'web shop v3', '--json']))).warnings).toEqual([]);
   });

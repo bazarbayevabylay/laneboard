@@ -16,7 +16,7 @@ export const boards: CommandDef = {
   async run(c) {
     const home = c.io.env.HOME;
     if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so the board registry (~/.laneboard/boards.json) cannot be found', {
-        fix: 'export HOME=<your home directory> and run laneboard boards again',
+        fix: 'export HOME=<your home directory> and run laneboard boards --json again',
         edit: { env: 'HOME=<your home directory>' },
       });
     const forget = str(c.values, 'forget');

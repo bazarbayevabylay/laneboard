@@ -10,6 +10,13 @@ import { cleanupTemp, CLI_SOURCE, GUARD_DROPPED_ENV, LEAKED_BOARD, REPO, spawnNo
 
 afterAll(cleanupTemp);
 
+// Does `text` import test/helpers.ts so that it runs in the worker: a value import or `import '../helpers.ts'`. `import type … from` is
+// erased by the compiler and runs nothing (review C2); `import { type X } from` stays, as `import {} from`, under verbatimModuleSyntax.
+function runsGuard(text: string): boolean {
+  const imports = text.matchAll(/^import\s+(?:([^;'"]*?)\s+from\s+)?'(?:\.\.?\/)+helpers\.ts'/gm);
+  return [...imports].some(([, clause]) => clause === undefined || !/^type\s/.test(clause));
+}
+
 // Every *.ts file below test/ (vitest suites and their helpers).
 function testFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -48,9 +55,19 @@ describe('test isolation guard', () => {
       .filter((file) => !file.endsWith(`${path.sep}helpers.ts`))
       .filter((file) => {
         const text = fs.readFileSync(file, 'utf8');
-        return starts.test(text) && !/from '(\.\.?\/)+helpers\.ts'/.test(text);
+        return starts.test(text) && !runsGuard(text);
       })
       .map((file) => path.relative(REPO, file));
     expect(unguarded).toEqual([]);
+  });
+
+  it('only an import that runs test/helpers.ts counts: import type does not (review C2)', () => {
+    expect(runsGuard("import { cli } from '../helpers.ts';")).toBe(true);
+    expect(runsGuard("import {\n  cli,\n  newStore,\n} from '../../helpers.ts';")).toBe(true);
+    expect(runsGuard("import '../helpers.ts';")).toBe(true);
+    expect(runsGuard("import { type TestStore } from './helpers.ts';")).toBe(true);
+    expect(runsGuard("import type { TestStore } from '../helpers.ts';")).toBe(false);
+    expect(runsGuard("import type { TestStore } from '../helpers.ts';\nimport { x } from '../other.ts';")).toBe(false);
+    expect(runsGuard("import type { TestStore } from '../helpers.ts';\nimport { cli } from '../helpers.ts';")).toBe(true);
   });
 });

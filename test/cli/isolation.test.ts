@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { derivePrefix } from '../../src/core/index.ts';
-import { callTool } from '../../src/mcp/tools.ts';
+import { callTool, projectBoardFix } from '../../src/mcp/tools.ts';
 import { cleanupTemp, cli, readStore, tempDir } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -53,7 +53,7 @@ describe('prefix from the folder name', () => {
   it('a name without latin letters falls back to LB and says how to pick one', async () => {
     const r = JSON.parse((await cli(['init', '--description', 'test board', '--json'], { cwd: folder('проект'), env: { HOME: tempDir() } })).stdout);
     expect(r.prefix).toBe('LB');
-    expect(r.warnings).toEqual(['no prefix could be derived from the name "проект", so ids use LB; pick one with laneboard init --prefix <PREFIX>']);
+    expect(r.warnings).toEqual(['no prefix could be derived from the name "проект", so ids use LB; pick one with laneboard init --prefix <PREFIX> --json']);
   });
 });
 
@@ -89,8 +89,8 @@ describe('nested agent folders', () => {
     const warning =
       `using store ${store} (prefix PARENT) found in a parent directory, but ${third} looks like a separate project (it has CLAUDE.md); ` +
       'unless this folder is part of that project, find its own board with laneboard boards --json and pass --dir <its path> on every command, ' +
-      `or create one: laneboard init --dir ${path.join(third, '.laneboard')} --name <name> --description "<whose project, what work>", ` +
-      `then pass --dir ${path.join(third, '.laneboard')} on every command, starting with laneboard prime`;
+      `or create one: laneboard init --dir ${path.join(third, '.laneboard')} --name <name> --description "<whose project, what work>" --json, ` +
+      `then pass --dir ${path.join(third, '.laneboard')} on every command, starting with laneboard prime --json`;
     const json = JSON.parse((await cli(['create', 'stray', '--status', 'todo', '--as', 'dev', '--json'], { cwd: third })).stdout);
     expect(json).toMatchObject({ ok: true, store, prefix: 'PARENT', data: { id: 'PARENT-1' } });
     expect(json.warnings).toEqual([warning]);
@@ -108,8 +108,16 @@ describe('nested agent folders', () => {
     const hook = await cli(['prime', '--hook'], { cwd: third, env: { LANEBOARD_AGENT: 'dev' } });
     expect(hook.stdout).toContain(`warning: ${warning}`);
     expect(hook.stdout).not.toMatch(/Create one now|Given a task id|laneboard create "<short title/);
+    // MCP: no tool takes --dir and prime is task_prime, so the fix is the client's (review D1): a board of its own, then the client
+    // started for it.
+    const mcpWarning =
+      `using store ${store} (prefix PARENT) found in a parent directory, but ${third} looks like a separate project (it has CLAUDE.md); ` +
+      'unless this folder is part of that project, find its own board with laneboard boards --json in a terminal, ' +
+      `or create one: laneboard init --dir ${path.join(third, '.laneboard')} --name <name> --description "<whose project, what work>" --json; ` +
+      `then ${projectBoardFix(undefined, '<its board>')}`;
     const mcp = await callTool('task_list', {}, { cwd: third, env: {} });
-    expect(mcp.content[1]?.text).toBe(JSON.stringify({ store, prefix: 'PARENT', warnings: [warning] }));
+    expect(mcp.content[1]?.text).toBe(JSON.stringify({ store, prefix: 'PARENT', warnings: [mcpWarning] }));
+    expect(mcpWarning).not.toMatch(/--dir <its path>|on every command|laneboard prime/);
   });
 
   it('a plain subfolder of the same project (no project marker in between) uses the store without a warning', async () => {
@@ -156,14 +164,14 @@ describe('nested agent folders', () => {
     const env = { LANEBOARD_DIR: store };
     const warning: string = JSON.parse((await cli(['list', '--json'], { cwd: third, env })).stdout).warnings[0];
     expect(warning).toContain(
-      `or create one: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`,
+      `or create one: laneboard init --dir ${own} --name <name> --description "<whose project, what work>" --json, then pass --dir ${own} on every command, starting with laneboard prime --json`,
     );
     // Rule 12's bare init takes LANEBOARD_DIR, the parent's store: STORE_EXISTS names that and offers this folder's board only.
     const bare = JSON.parse((await cli(['init', '--name', 'third', '--description', 'b work', '--json'], { cwd: third, env })).stdout);
     expect(bare.error).toMatchObject({
       code: 'STORE_EXISTS',
       message: `LANEBOARD_DIR points to ${store}, which already holds a board (LANEBOARD_DIR may be set for a parent folder, e.g. by its .claude/settings.local.json)`,
-      fix: `to create the board of ${third}: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`,
+      fix: `to create the board of ${third}: laneboard init --dir ${own} --name <name> --description "<whose project, what work>" --json, then pass --dir ${own} on every command, starting with laneboard prime --json`,
     });
     // In the pinned project itself the same init is a plain STORE_EXISTS (offering ./.laneboard again would loop).
     expect(JSON.parse((await cli(['init', '--description', 'again', '--json'], { cwd: parent, env })).stdout).error.message).toBe(`a store already exists at ${store}`);

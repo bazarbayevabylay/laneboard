@@ -281,9 +281,9 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
 
 describe('finish warns when the linked commit may not hold the work (owner, S3b)', () => {
   const dirtyWarning = (sha: string) =>
-    `the working tree has uncommitted changes to tracked files, so the linked commit ${sha.slice(0, 12)} may not hold your work; commit your work and run laneboard finish LB-1 again to link the new commit (work without a commit: --no-commit)`;
+    `the working tree has uncommitted changes to tracked files, so the linked commit ${sha.slice(0, 12)} may not hold your work; commit your work and run laneboard finish LB-1 --json again to link the new commit (work without a commit: --no-commit)`;
   const staleWarning = (sha: string) =>
-    `the linked commit ${sha.slice(0, 12)} is from before your work: HEAD has not moved since you claimed LB-1; commit your work and run laneboard finish LB-1 again to link the new commit (work without a commit: --no-commit)`;
+    `the linked commit ${sha.slice(0, 12)} is from before your work: HEAD has not moved since you claimed LB-1; commit your work and run laneboard finish LB-1 --json again to link the new commit (work without a commit: --no-commit)`;
 
   it('a commit after the claim and a clean tree: no warning', async () => {
     const s = await newStore();

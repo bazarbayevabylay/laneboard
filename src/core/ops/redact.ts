@@ -103,7 +103,7 @@ function remainingPlaces(value: unknown, secret: string, at: string, out: string
 
 // Refuse a text that would rewrite what the board itself uses: too short, a part of [redacted], the id, the prefix, a status or an actor.
 function refuseBoardWord(secret: string, id: string, config: ConfigT, task: TaskT, actor: string): void {
-  const fix = `pass the whole secret (at least ${REDACT_MIN_CHARS} characters), exactly as it was pasted: laneboard redact ${id} --text-file <path>`;
+  const fix = `pass the whole secret (at least ${REDACT_MIN_CHARS} characters), exactly as it was pasted: laneboard redact ${id} --text-file <path> --json`;
   const refuse = (why: string): never => {
     throw new LaneboardError('INVALID_VALUE', `the text to redact ${why}; nothing was changed`, { input: { field: 'text', value: '' }, fix });
   };
@@ -125,15 +125,15 @@ function refuseRemaining(task: TaskT, secret: string, archived: boolean): void {
   const steps: string[] = [];
   const labels = places.some((p) => p.startsWith('labels['));
   const attachments = places.some((p) => p.startsWith('attachments['));
-  if ((labels || attachments) && archived) steps.push(`restore it first: laneboard restore ${task.id}`);
-  if (labels) steps.push(`remove the label: laneboard update ${task.id} --remove-label <label>`);
-  if (attachments) steps.push(`remove the attachment (its file goes too): laneboard attach ${task.id} --remove <name>`);
+  if ((labels || attachments) && archived) steps.push(`restore it first: laneboard restore ${task.id} --json`);
+  if (labels) steps.push(`remove the label: laneboard update ${task.id} --remove-label <label> --json`);
+  if (attachments) steps.push(`remove the attachment (its file goes too): laneboard attach ${task.id} --remove <name> --json`);
   if (!labels && !attachments) steps.push('the text is part of an id, status, actor name, date or key, which redact never changes: pass only the exact secret');
-  else steps.push(`then run laneboard redact ${task.id} again (it also clears the events of the removal)`);
+  else steps.push(`then run laneboard redact ${task.id} --json again (it also clears the events of the removal)`);
   const shown = places.length > 10 ? [...places.slice(0, 10), `${places.length - 10} more`] : places;
   throw new LaneboardError('INVALID_VALUE', `the text also occurs where redact cannot replace it: ${shown.join(', ')}; nothing was changed`, {
     input: { field: 'text', value: '' },
-    fix: `${steps.join('; ')} (laneboard get ${task.id} shows them)`,
+    fix: `${steps.join('; ')} (laneboard get ${task.id} --json shows them)`,
   });
 }
 
@@ -179,7 +179,7 @@ export async function redactTask(ctx: OpContext, input: RedactInputT): Promise<O
   const p = parseInput(RedactInput, input);
   // A blank text would replace spaces and line breaks everywhere; the message never repeats the text.
   if (p.text.trim() === '') {
-    throw new LaneboardError('INVALID_VALUE', 'the text to redact is blank', { input: { field: 'text', value: '' }, fix: 'pass a file that holds the exact text to remove: laneboard redact <id> --text-file <path>' });
+    throw new LaneboardError('INVALID_VALUE', 'the text to redact is blank', { input: { field: 'text', value: '' }, fix: 'pass a file that holds the exact text to remove: laneboard redact <id> --text-file <path> --json' });
   }
   const warnings: string[] = [];
   const files = ['active', 'archive'] as const;

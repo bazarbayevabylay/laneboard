@@ -152,7 +152,7 @@ describe('board registry', () => {
     expect(Date.now() - started).toBeLessThan(5000);
     expect(r.error).toMatchObject({ code: 'STORE_EXISTS', message: `${path.join(m.home, '.laneboard')} is this machine's board registry (laneboard boards), so no board can be created there` });
     const own = path.join(m.home, '<project>', '.laneboard');
-    expect(r.error.fix).toBe(`create the board in the project's own folder: laneboard init --dir ${own} --name <name> --description "<whose project, what work>", then pass --dir ${own} on every command, starting with laneboard prime`);
+    expect(r.error.fix).toBe(`create the board in the project's own folder: laneboard init --dir ${own} --name <name> --description "<whose project, what work>" --json, then pass --dir ${own} on every command, starting with laneboard prime --json`);
     expect(fs.existsSync(path.join(m.home, '.laneboard'))).toBe(false);
   });
 
@@ -163,7 +163,7 @@ describe('board registry', () => {
     expect(r.error.code).toBe('STORE_EXISTS');
     // The fix with its placeholders filled in, run as given (same cwd, same LANEBOARD_DIR).
     const filled = (r.error.fix as string).replace(/^create the board in the project's own folder: /, '').replace(/, then pass .*$/, '').split('<project>').join('shop');
-    expect(filled).toBe(`laneboard init --dir ${path.join(m.home, 'shop', '.laneboard')} --name <name> --description "<whose project, what work>"`);
+    expect(filled).toBe(`laneboard init --dir ${path.join(m.home, 'shop', '.laneboard')} --name <name> --description "<whose project, what work>" --json`);
     const run = await m.run(m.home, ['init', '--dir', path.join(m.home, 'shop', '.laneboard'), '--name', 'shop', '--description', 'Shop of ACME', '--json'], env);
     expect(JSON.parse(run.stdout)).toMatchObject({ ok: true, store: path.join(m.home, 'shop', '.laneboard') });
     expect(fs.existsSync(path.join(m.home, 'shop', '.laneboard', 'config.json'))).toBe(true);

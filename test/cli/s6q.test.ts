@@ -219,11 +219,11 @@ describe('S6k tail: prime --hook under a stale LANEBOARD_DIR pin advises the pin
     const r = await cli(['prime', '--hook'], { cwd: s.root, env: { HOME: home, LANEBOARD_DIR: gone }, stdin: '{"source":"startup"}' });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain(`laneboard: no board opened (LANEBOARD_DIR points to ${gone}, which is not a directory; this folder's board is`);
-    expect(r.stdout).toContain(`If the user wants to track work here with laneboard: laneboard setup claude-code in ${s.root} pins the session to it again`);
+    expect(r.stdout).toContain(`If the user wants to track work here with laneboard: laneboard setup claude-code --json in ${s.root} pins the session to it again`);
     expect(r.stdout).not.toContain('laneboard init');
     // Plain prime names the same fix in its problem line.
     const plain = await cli(['prime'], { cwd: s.root, env: { HOME: home, LANEBOARD_DIR: gone } });
-    expect(plain.stdout).toContain(`fix: laneboard setup claude-code in ${s.root}`);
+    expect(plain.stdout).toContain(`fix: laneboard setup claude-code --json in ${s.root}`);
     expect(plain.stdout).not.toContain('laneboard init --name');
   });
 

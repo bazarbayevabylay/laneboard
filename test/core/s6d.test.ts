@@ -302,7 +302,7 @@ describe('A8 one id on two tasks in a file', () => {
     writeRaw(file, `<<<<<<< HEAD\n${text}=======\n${text}>>>>>>> devB\n`);
     const err = await rejectsWith(listTasks(as(s), {}), 'STORE_INVALID');
     expect(err.message).toContain('git merge conflict markers');
-    expect(err.fix).toMatch(/^resolve the merge conflict in .*active\.json.*laneboard doctor --restore-backup$/);
+    expect(err.fix).toMatch(/^resolve the merge conflict in .*active\.json.*laneboard doctor --restore-backup --json$/);
     const report = await doctor(as(s), {});
     expect(checkOf(report, 'active.json')?.message).toContain('fix: resolve the merge conflict');
   });

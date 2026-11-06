@@ -14,7 +14,7 @@ async function register(home: string, storeDir: string, harness: string, lockWai
     // The harness files are written already (or setup refused for another reason): a broken store or registry must not turn
     // that into this failure: say what to fix.
     const err = toLaneboardError(raw);
-    return [`the board was not added to the machine registry (laneboard boards): ${err.message}; fix: ${err.fix}`];
+    return [`the board was not added to the machine registry (laneboard boards --json): ${err.message}; fix: ${err.fix}`];
   }
 }
 

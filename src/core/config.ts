@@ -227,7 +227,7 @@ export function unreadableStoreFile(file: string, label: string, err: unknown): 
     // The CLI fix is the caller's own command unchanged (an empty edit); MCP gets the text.
     return new LaneboardError('INTERNAL', `${label} cannot be read right now (${code}): ${file}; the file is not damaged`, { fix: 'run the same command again', edit: {} });
   }
-  return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix: `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor` });
+  return new LaneboardError('STORE_INVALID', `${label} cannot be read (${code}): ${file}`, { fix: `restore ${file} as a readable file (from git or a copy), then check the store: laneboard doctor --json` });
 }
 
 // Read and validate config.json fresh from disk; `warnings` gets the note about keys kept from a newer laneboard.
@@ -239,7 +239,7 @@ export function loadConfig(storeDir: string, warnings?: string[]): ConfigT {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new LaneboardError('STORE_INVALID', `config.json is missing in ${storeDir}`, {
-        fix: `restore ${file} (from git or a copy); or move ${shellQuote(storeDir)} aside and create a new board: laneboard init --dir ${shellQuote(storeDir)} --name <name> --description "<whose project, what work>"`,
+        fix: `restore ${file} (from git or a copy); or move ${shellQuote(storeDir)} aside and create a new board: laneboard init --dir ${shellQuote(storeDir)} --name <name> --description "<whose project, what work>" --json`,
       });
     }
     throw unreadableStoreFile(file, 'config.json', err);

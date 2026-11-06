@@ -139,6 +139,22 @@ describe('LB-60.2: links and fields over MCP', () => {
     expect(stored(s, 'API-1').rev).toBe(rev);
     expect(MCP_RULES_PREAMBLE).toContain('--add-link kind=ref -> add_links: [{kind, ref}], --field k=v -> fields: {k: v}');
   });
+
+  it('a link of the right form with a wrong value keeps the fix of that value, not the form (review D1 MINOR)', async () => {
+    const { s, env } = await checked();
+    const rev = stored(s, 'API-1').rev;
+    for (const [value, fix] of [
+      [{ kind: 'commit', ref: '' }, 'add_links.0.ref must not be empty'],
+      [{ kind: 'commit', ref: 'a'.repeat(2001) }, 'shorten add_links.0.ref to at most 2000 characters'],
+      [{ kind: 'foo', ref: 'x' }, 'use a add_links.0.kind from `allowed`'],
+    ] as const) {
+      const r = await callTool('task_update', { id: 'API-1', add_links: [value], actor: 'dev-1' }, env);
+      expect(r.structuredContent, JSON.stringify(value).slice(0, 40)).toMatchObject({ code: 'INVALID_VALUE', fix });
+    }
+    const removed = await callTool('task_update', { id: 'API-1', remove_links: [{ kind: 'commit', ref: '' }], actor: 'dev-1' }, env);
+    expect(removed.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'remove_links.0.ref must not be empty' });
+    expect(stored(s, 'API-1').rev).toBe(rev);
+  });
 });
 
 describe('tool descriptions after slices A1, A2, B (handoffs, review A2 tools.ts:115)', () => {
