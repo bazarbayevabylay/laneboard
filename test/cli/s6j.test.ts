@@ -227,8 +227,13 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
   });
 
   it('a task handed in to a status outside the checks goes through every check: rev passes it to code_review, not into done', async () => {
-    const s = await reviewBoard();
+    // S6y U1: with checks on, finish never hands in outside them; such a hand-in comes only from before the checks were turned on.
+    expect((await run(await reviewBoard(), 'dev-a', ['finish', 'API-1', '--status', 'ready', '--result', 'r', '--no-commit'])).doc.error.code).toBe('INVALID_VALUE');
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    expect((await run(s, 'orch', ['create', 'Add endpoint', '--status', 'ready'])).code).toBe(0);
+    expect((await run(s, 'dev-a', ['claim', 'API-1', '--status', 'dev'])).code).toBe(0);
     expect((await run(s, 'dev-a', ['finish', 'API-1', '--status', 'ready', '--result', 'r', '--no-commit'])).doc.data.status).toBe('ready');
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch'])).doc.warnings.join('\n')).toContain('tasks handed in to a status that is no check');
     const first = await run(s, 'rev', ['finish', 'API-1', '--status', 'code_review', '--result', 'ok']);
     expect(first.doc.data).toMatchObject({ status: 'code_review', passed: true, from: 'ready' });
     expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });

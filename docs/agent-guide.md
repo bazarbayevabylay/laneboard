@@ -146,7 +146,7 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
   not in the final status and the free ones (no assignee, not final) with the claim command.
 - A board with checks or `create_by` (3.7): `prime` names the checks, who makes them and who creates tasks. Your `finish` hands your work in
-  to the check the task is in, else the first check; a checker's `finish --status <next>` (the command `prime` prints under the task) passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
+  to the check the task is in, else the first check (never into a status that is no check); a checker's `finish --status <next>` (the command `prime` prints under the task) passes it on or accepts it, never its own work. Not a creator: ask for a task id, never create one.
 
 ### 2.2 A task from start to end
 
@@ -495,7 +495,12 @@ For an orchestrator that runs subagents. Both keys are optional; a board without
 against an agent's mistake, not against a hostile agent.
 
 - `--review-statuses a,b`: the checks in order, statuses between the first and the final one. The assignee's `finish` hands in to the
-  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A checker names where the task goes:
+  check the task is in, else the first check (a later check or the final status: `INVALID_VALUE`). A hand-in goes only to a check, where
+  the checkers see it: the assignee's `finish --status <work status>` (say `blocked`) is refused (`INVALID_VALUE`); its fix keeps the
+  meaning without a hand-in, `laneboard comment <ID> --as <you> -- '<result>' && laneboard update <ID> --status <that status> --as <you>`,
+  and the message names the hand-in `finish <ID> --status <check>` (for a task waiting in a check: handed in already, nothing to hand
+  in). Such hand-ins from before (or from a board without checks that turned
+  them on) are named by `config` and by `doctor` (check `checks`, exit 6) with the holder's hand-in. A checker names where the task goes:
   `finish <ID> --status <next>` passes the handed-in task on to the next check (reply `passed: true`, `from`; still handed in, not in work)
   and from the last one `--status <final>` accepts it (`accepted: true`).
 - Work status: the status before the first check. `todo,in_progress,blocked,code_review,qa,done` gives `blocked`; when the first
@@ -541,6 +546,11 @@ against an agent's mistake, not against a hostile agent.
   (`INVALID_VALUE`): its fix is this return,
   `laneboard comment <ID> --as <checker> -- '<result>' && laneboard update <ID> --status <work status> --as <checker>`, never a `finish`
   that passes the task on or accepts it. A fix never changes what the refused command meant.
+  A stale check of a returned task (another checker's `finish`, or `update` into a check, after the return) is refused with the fix
+  `laneboard get <ID>`: the message names who returned it, when and why (that name's newest comment since the hand-in, before or after
+  its move). It stays so after the assignee moves the task on (to `blocked`, back to work) until it is handed in again; a move out of the
+  check by the author itself is no return; a later move by another name ends it only back into a check, or when the return had no
+  reason. No fix writes a comment there: a newer comment of another name would replace the reason under the assignee's task in `prime`.
 - `--creators x,y` (`create_by`): only these names create tasks, subtasks and imports; anybody else gets `INVALID_VALUE` (exit 2), its fix
   a comment on its own task (or the parent) asking for the task. `prime` of such an agent prints no create command.
 - `prime` names the checks, the checkers and the creators, lists the tasks waiting for your check, each with its ready command

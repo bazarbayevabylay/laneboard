@@ -163,7 +163,8 @@ LANEBOARD_DEFAULT_AGENT=claude-code@ann CLAUDE_CODE_SESSION_ID=e5f6a7b8 laneboar
 `--no-commit` skips it, outside git there is none), then the status. Commit first: uncommitted changes or a HEAD older than the claim
 give a warning; git is asked with a 2-second limit, and without git the task is still finished.
 
-- `--status` takes any status but the first. The assignee's `finish` into a status that is not final hands the task in (`handed_in: true`).
+- `--status` takes any status but the first. The assignee's `finish` into a status that is not final hands the task in (`handed_in: true`);
+  on a board with checks only into a check (Orchestrators).
   Somebody else's task `finish` only accepts, into the final status, and only after its assignee handed it in (`accepted: true`).
 - Handed in again into the same status with a new result: the result is recorded; the same result again changes nothing.
 - Git worktree: the board of the main checkout is found by itself, and `finish` there links the worktree's HEAD.
@@ -194,6 +195,10 @@ laneboard config --review-statuses none --reviewers none --json
 - `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
   to the check the task is in, else the first check. A checker names where the task goes: `finish <ID> --status <next>` passes it to
   the next check, from the last one `--status <final>` accepts it.
+- A hand-in goes only to a check, where the checkers see it: the assignee's `finish --status <work status>` (say `blocked`) is refused.
+  Its fix keeps the meaning without a hand-in, `comment <ID> -- '<result>' && update <ID> --status <that status>`; the message names
+  the hand-in, `finish <ID> --status <check>` (for a task waiting in a check: handed in already). Older such hand-ins: `config` warns
+  and `doctor` reports them (check `checks`, exit 6).
 - Work status: the status before the first check (`todo,in_progress,blocked,code_review,qa,done` gives `blocked`; the first status when
   the first check follows it). Claims from `prime` and returns for rework go there. `config` prints `work status: <status>` (JSON
   `review.work_status`); to change it, reorder: `laneboard config --statuses todo,blocked,in_progress,code_review,qa,done`.
@@ -224,6 +229,10 @@ laneboard config --review-statuses none --reviewers none --json
   `finish <ID> --status <check> ...`; until then `doctor` reports them (check `checks`, exit 6).
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
 - Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` shows that comment.
+  Another checker's stale `finish` (or `update` into a check) of the returned task gets the fix `laneboard get <ID>`, the message names
+  who returned it, when and why (the returner's comment since the hand-in), also after the assignee moved it (say to `blocked`), until
+  it is handed in again: no fix writes a comment that would push that reason out of the assignee's `prime`. The author's own move out
+  of a check is no return.
   A checker's `finish --status` with an earlier check or any work status (also one between two checks) is refused; its fix is that
   comment and update in one line.
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the ready

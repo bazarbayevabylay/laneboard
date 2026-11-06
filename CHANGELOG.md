@@ -37,6 +37,10 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   `config` names the work status of a board with checks, the status before the first check where claims and returns go
   (`work status: <status>`, JSON `review.work_status`); an `update --assignee` that gives a waiting task to a name that could check it
   warns that this name never checks it now, with the checkers left or `config --reviewers` (ADR §52).
+  A hand-in goes only to a check: the assignee's `finish --status <work status>` is refused, its fix `comment <ID> -- '<result>' &&
+  update <ID> --status <that status>` (no hand-in), the message names `finish <ID> --status <check>`; older such hand-ins are named by
+  `config` and `doctor` (check `checks`). A stale check of a task returned for rework gets the fix `laneboard get <ID>` and a message
+  with who returned it, when and why, no longer a "hand it in" comment that replaced the reason in the assignee's `prime` (ADR §53).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming
