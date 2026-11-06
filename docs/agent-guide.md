@@ -80,7 +80,8 @@ What `setup` writes:
 | opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 
 The PostToolUse hook reminds after an edit without a task in progress. Under the default name it stays silent while any open task of the
-board has an assignee (anybody's: subagents share the default name); set `LANEBOARD_AGENT=<your name>` for reminders about your own tasks (a single agent with no subagents: they inherit it).
+board has an assignee (anybody's: subagents share the default name), except a task of an earlier session of the same default name that
+wrote nothing for 15 minutes (closed by `/clear` or a restart); set `LANEBOARD_AGENT=<your name>` for reminders about your own tasks (a single agent with no subagents: they inherit it).
 
 Claude Code also has a plugin (`/plugin marketplace add bazarbayevabylay/laneboard`, then `/plugin install laneboard@laneboard`).
 Use the plugin or `setup claude-code`, not both: they register the same server and hooks. The SessionStart hook shows the board only
@@ -90,7 +91,9 @@ when it is in this machine's registry (`init` and `setup` add it): a board that 
 Setup follows a symlink inside the project (`CLAUDE.md -> AGENTS.md` puts the block into `AGENTS.md`) and refuses one that leads outside
 the project, dangles or ends in `.git` (`SETUP_CONFLICT`, nothing written). Lines you add between `<!-- laneboard:start -->` and
 `<!-- laneboard:end -->` are never deleted: setup refuses and names them. The `.git/info/exclude` block keeps the local settings,
-`*.laneboard.bak` and `.laneboard-created` out of git.
+`*.laneboard.bak` and `.laneboard-created` out of git. `setup codex` below the root of a git repository warns: Codex reads `AGENTS.md`
+from the repository root down to the folder it starts in, so a Codex started at the root never sees that block (nothing is moved).
+`--dry-run` says what it would do (`would create`, `would update`, `would write <file>.laneboard.bak`).
 
 ### 1.2 Check the connection
 
@@ -139,7 +142,7 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 
 ### 2.1 The rules in short
 
-- Before your first file change: claim your task or create one. Comment each meaningful step. When done: commit, then `laneboard finish <ID> --result "<result>"`.
+- Before your first file change: claim your task or create one. Comment each meaningful step. When done: commit, then `laneboard finish <ID> --result "<result>" --json`.
 - `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`). Status changes, comments, `claim` and `finish` need none, so no `get` for a rev.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
 - Always pass `--json`. Your name: `--as <name>` (MCP: `actor`; `export LANEBOARD_AGENT=<name>` only for a single agent with no subagents: they inherit it); without them Claude Code sessions write under their default name (2.5).
@@ -156,19 +159,22 @@ Your name once for the session, then create, claim, work, finish, archive. Every
 outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
 the final one (on a board with checks, 3.7: by default the check the task is in, else the first check, and the checkers set the rest).
-The assignee's `finish` into a status that is not final hands the task in: its `status` event says `handed_in: true`.
+The assignee's `finish` into a status that is not final hands the task in: its `status` event and the reply (`--json`, MCP) say `handed_in: true`.
 Somebody else's task `finish` only accepts, and only a handed-in one (the newest `status` event into its current status is the
 assignee's `finish` with `handed_in`; on a board with checks, 3.7, any handed-in task, whoever holds it now, and a checker passes it on too): into the final status, the result comment and no commit link (the assignee linked it); the assignee
 stays, the `status` event says `accepted: true` and its actor is who accepted, the reply has `accepted: true`. A task in work or moved by
 `update` (or handed in with 0.2.0, before the mark): `ALREADY_CLAIMED`, the fix asks the assignee to hand it in with
-`finish --status <status>`; the orchestrator may close it with `laneboard update <ID> --status done`. Accepting a closed task again:
+`finish --status <status>`; on a board without checks the orchestrator may close it with `laneboard update <ID> --status done` (with
+checks, 3.7, update closes only a task waiting in the last check). Accepting a closed task again:
 unchanged, with a warning. A second `finish` by the assignee into the same status with a new result records that result (rework handed in
 again); the same result again, or a closed task, changes nothing and warns; only a commit not linked yet is added. A warning, not an error, when tracked files have uncommitted changes (staged ones too) or the HEAD commit is older
 than your claim (the link would point at a commit without your work): commit and run `finish` again, or use `--no-commit`. finish asks
 git (`rev-parse`, `log`, `status`, 2 s each); no git, no answer or an error: the task is still finished, with a `could not check git` warning.
 A linked git worktree finds the board of its main checkout, and `finish` there links the worktree's HEAD. In the main checkout, when other
-worktrees have commits newer than your claim, `finish` warns, names them and prints the fix; `--commit <sha>` links a given commit
-(MCP `task_finish`: `cwd` = your worktree's absolute path, or `commit`).
+worktrees have commits newer than your claim, `finish` warns, names them and prints the fix (with several worktrees one command: the
+finish with the commit of your worktree, then `&&` the removal of the wrong link); `--commit <sha>` links a given commit
+(MCP `task_finish`: `cwd` = your worktree's absolute path, or `commit`). A commit already linked to a task (active or archived) of
+another name warns `commit <sha> is already linked to <ID>` with the command that links the commit of your work instead.
 finish's result comment carries `result: true` in its event data (`get` prints `commented (result)`); `comment` never sets it.
 
 Subtasks: `laneboard create "<title>" --status <status> --parent <ID> --json`, the parent being a task of this board (a cycle or an id of
@@ -234,7 +240,7 @@ laneboard update DEMO-2 --title "Release notes" --expected-rev 3 --json
 | 1 | internal | `INTERNAL` | retry once, then report |
 | 2 | input | `USAGE`, `UNKNOWN_OPTION`, `INVALID_VALUE`, `UNKNOWN_STATUS`, `UNKNOWN_FIELD`, `ACTOR_REQUIRED` | correct the command (`fix`, `allowed`) |
 | 3 | not found | `TASK_NOT_FOUND`, `ATTACHMENT_NOT_FOUND` | `laneboard list --scope all --text <words>` |
-| 4 | conflict | `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS` | `REV_CONFLICT`: re-apply your change on `error.details.task` with its rev; `ALREADY_CLAIMED`: do not take over, run its fix (a comment, or `claim --resume` for your own task of an earlier session, 2.5) |
+| 4 | conflict | `REV_CONFLICT`, `ALREADY_CLAIMED`, `TASK_ARCHIVED`, `ATTACHMENT_EXISTS`, `PORT_IN_USE` | `REV_CONFLICT`: re-apply your change on `error.details.task` with its rev; `ALREADY_CLAIMED`: do not take over, run its fix (a comment, `claim --resume` for your own task of an earlier session, or a new task for a closed one, 2.5) |
 | 5 | busy | `LOCK_TIMEOUT`, `LOCK_LOST` | retry the same command once |
 | 6 | store | `STORE_NOT_FOUND`, `STORE_INVALID`, `STORE_TOO_NEW`, `STORE_EXISTS`, `STORE_READ_ONLY`, `SETUP_*` | `STORE_NOT_FOUND`: find your board with `laneboard boards --json` and pass `--dir <its path>` on every command (MCP: set the server's `args`, 1.4); none for this project: `init --name <name> --description "<…>"`, then `laneboard prime` (3.4). `STORE_READ_ONLY`: a write through `--board`, or a machine registry that cannot be written (`boards --forget`). `doctor` also exits 6 while a problem is left (`data.healthy: false`) |
 
@@ -242,7 +248,11 @@ laneboard update DEMO-2 --title "Release notes" --expected-rev 3 --json
 
 The same operations as the CLI, with snake_case parameters. Write tools take `actor`; without it the server uses its `mcp --as`, then
 `LANEBOARD_AGENT`, else the default name of the session that started it. Every result has a second text block `{"store", "prefix", "warnings"}`, like the CLI envelope.
-The server's instructions are the rules with an MCP preamble (CLI command -> `task_<command>`, options -> parameters, no `--json`).
+The server's instructions are the rules with an MCP preamble (CLI command -> `task_<command>`, options -> parameters, `--add-link kind=ref`
+-> `add_links: [{kind, ref}]`, `--field k=v` -> `fields: {k: v}`, no `--json`). `structuredContent` is the CLI `data`, plus `warnings`
+when there are any. An error's `fix` and the warnings name tool calls, not CLI commands: `task_comment {"id":"DEMO-1","text":"<note>","actor":"dev-1"}`,
+two of them joined by `, then`; a command no tool runs (`boards`, `init`, `config`, `doctor`, an option like `--dir` or `--board`) stays
+a CLI command. A link or field in the CLI form (`"commit=abc"`) gets a fix that names the form. `task_prime` without a name warns to pass `actor`.
 
 | Tool | CLI |
 |---|---|
@@ -282,7 +292,14 @@ of the last update, the longest silent first: an abandoned task leads). It lists
 same user and harness qualifies; a task of an explicit name (`dev-1` above, or `claude-code@ann:reviewer`) stays `ALREADY_CLAIMED` without
 `--resume`. `ALREADY_CLAIMED` on a task of an earlier session offers `claim <ID> --resume --json` as its fix once that session has written
 nothing for 15 minutes; before that the fix is a comment and the message names `--resume`, and a `--resume` then works with a warning
-(a parallel live session of the same user has the same base: resume only your own work that matches the current request).
+(a parallel live session of the same user has the same base: resume only your own work that matches the current request), except for a
+task that session itself took back with `--resume` less than 15 minutes ago: `ALREADY_CLAIMED` for `--resume` and `claim` alike, the fix
+a comment, until that resume is 15 minutes old (two windows after one restart; the next `/clear` of a long task resumes as usual).
+A task in the final status is not resumed: `ALREADY_CLAIMED` "nothing to resume", the fix a new task (the message names the reopen
+for a task closed by mistake). `--resume` of a free task is a plain claim, with a warning that it is no task of an earlier session.
+A `claim` without `--status` of a task you hold or take back moves it from the first status into the work status (the second status
+unless final; on a board with checks the one before the first check); a plain claim of a free task keeps its status. A name whose task
+was taken from it (resumed by another session, given to another name or unassigned by someone else) reads "no longer yours" on its next `comment`.
 On a board with checks a task returned for rework shows its reason under its line there, as under an own task (or "returned for rework
 by <checker> ... with no reason"). A task handed in and waiting for a check is no work to resume: "Your earlier sessions" does not list it, and
 `claim --resume` of it gets "handed in already". Another session of the same base that worked on a task (by the events it wrote
@@ -439,7 +456,8 @@ A task that depends on a task of another board links it: `create --link task=WEB
 checked on board WEB (found by its prefix in the registry, so `HOME` must be set) before your write; `get` lists every task link in
 `linked_tasks` with its board, status and whether that status is final (`links: task=WEB-12 (WEB in_progress: <title>)`); nothing is
 blocked by it. An id of another board on your board's commands fails with `TASK_NOT_FOUND` naming that board: the fix is your command
-with `--board WEB` for a read (`get`, `events --task`, `list --parent`) and with `--dir <its store>` for a write.
+with `--board WEB` for a read (`get`, `events --task`, `list --parent`) and with `--dir <its store>` for a write. An id that board does not
+hold either fails with `TASK_NOT_FOUND` "not on this board, nor on board WEB", the fix a search there (`list --board WEB --json`).
 
 For orchestrators: `list --all-boards` reads every board of this machine (the current one first) and merges their tasks, newest update
 first; `--open` leaves out each board's own final status, `data.boards` names the boards read (one that cannot be read is skipped with a
@@ -479,7 +497,7 @@ COLUMNS=60 laneboard view --text export
 
 For people, not agents (agents keep to `list --json`). The page is read-only by design: tasks change through the CLI and MCP only.
 `laneboard board` in a project folder starts a local server and prints `http://127.0.0.1:7420/` (`--json`: `{url, port}`); it serves until Ctrl+C.
-- Port: `--port N`, else `board.port` of config.json (7420); a busy port is `PORT_IN_USE` (exit 5), whose fix `--port 0` takes a free one.
+- Port: `--port N`, else `board.port` of config.json (7420); a busy port is `PORT_IN_USE` (exit 4, a conflict: the same port stays taken), whose fix `--port 0` takes a free one.
 - `--board <prefix|name|path>` opens another board of this machine as the first tab; the other boards are tabs too.
 - Access: 127.0.0.1 only, a new token per run that the page reads by itself; other sites and other hosts get 403.
 - Live: a write shows within 1-2 s without a reload; the board is read again every minute, so `Stale` appears without a write.
@@ -510,6 +528,8 @@ against an agent's mistake, not against a hostile agent.
   them on) are named by `config` and by `doctor` (check `checks`, exit 6) with the holder's hand-in. A checker names where the task goes:
   `finish <ID> --status <next>` passes the handed-in task on to the next check (reply `passed: true`, `from`; still handed in, not in work)
   and from the last one `--status <final>` accepts it (`accepted: true`).
+- The checks follow the order of the statuses: `--review-statuses` in another order is refused, its fix in that order.
+  `--review-statuses none --reviewers <names>` is refused too (turn the checks off with `--review-statuses none`, or keep them).
 - Work status: the status before the first check. `todo,in_progress,blocked,code_review,qa,done` gives `blocked`; when the first
   check follows the first status, that status. Claims from `prime` (`claim --status`) and returns for rework go there; only the order
   of the statuses sets it. `config` prints `work status: <status> (the status before the first check)` (JSON `review.work_status`, `prime`
@@ -528,7 +548,9 @@ against an agent's mistake, not against a hostile agent.
   checkers' queue. Holding it makes that name an author of the work: it never passes the task on or accepts it. A write that gives
   a waiting task to a name that could check it (a checker's `update <ID> --assignee <itself>`, or the orchestrator's) warns: that name
   never checks it now, giving it back does not undo that; the check stays with the checkers left, else the owner's `config --reviewers`.
-  A check needs no claim or assignment: `finish <ID> --status <next>`.
+  A check needs no claim or assignment: `finish <ID> --status <next>`. A name that may not check a waiting task and did not work on it
+  neither takes it (`update <ID> --assignee <itself>`) nor moves it out of the check (`update <ID> --status <work status>`), in either
+  order: `ALREADY_CLAIMED` (unassigned: `INVALID_VALUE`), its fix a comment for the checkers. Its checkers and its author still move it.
 - Nobody claims a task waiting in a check (with or without `--status`): a check needs no claim, and holding the task would make the
   checker an author. A checker's `claim` gets `INVALID_VALUE`, fix `laneboard get <ID>`, the message names the pass and the return;
   the author's the "handed in already" refusal; anybody else's a comment (`ALREADY_CLAIMED` when held). `prime` and `task_prime` list
@@ -542,7 +564,13 @@ against an agent's mistake, not against a hostile agent.
 - `config --review-statuses` that turns a status with tasks in work into a check warns, naming each task and the hand-in its holder
   runs (`laneboard finish <ID> --status <check> --result "..." --as <holder>`); `doctor` reports them in the check `checks` (exit 6)
   until they are handed in. A move of a handed-in task by `update` or `claim` warns with the hand-in that puts it back in the queue.
-- `--reviewers x,y`: who checks (default: anybody but the author of the work). Any of them makes any check, both in a row too: the
+- The check is never bypassed: `update --status <final>` closes only a task waiting in the last check (the A17 warning: no result of a
+  check, no acceptance mark; record the result with a comment). A task in work is `ALREADY_CLAIMED` with a comment that asks its holder
+  to hand it in, one returned for rework `ALREADY_CLAIMED` with `laneboard get <ID>`, an unassigned one `INVALID_VALUE` with the hand-in,
+  one waiting in an earlier check `INVALID_VALUE` with `laneboard get <ID>` (a check passes it on with `finish`). `update --status <check>`
+  by another name of a task its holder did not hand in, or of one returned for rework, is `ALREADY_CLAIMED`, as that name's `finish` is.
+- `--reviewers x,y`: who checks (default: anybody but the author of the work). A Claude Code session writes as
+  `claude-code@<user>:<session>`, so `config --reviewers claude-code@<user>` warns: that name never checks. Any of them makes any check, both in a row too: the
   two lists are not paired. A checker's `finish` applies to the check the task is in now, whoever passed it there. The author of the
   work (any name that held the task or handed it in) never passes it on or accepts it, by `finish`, `update`, `claim`, `create` or `import`.
 - A task waiting in a check (handed in, or passed on) is handed in already: the author's `finish`, `update` or `claim` into another check
@@ -676,7 +704,8 @@ laneboard list --text "Nightly export" --json
 A Markdown TODO list (`- [ ]` / `- [x]`): `laneboard import checklist TODO.md --status <status> [--done-status <status>] [--heading-labels] --dry-run`,
 then without `--dry-run`. Each item is a task; checked items get the final status (or `--done-status`); an indented item becomes a
 subtask of the item above it. The link `file=TODO.md#<item text>` makes a re-run skip imported items; an edited item text makes a new
-task. `import markdown` reads only files with YAML frontmatter and names this command when it meets checkboxes.
+task. A `--status` or `--done-status` that is not configured stops the import (`UNKNOWN_STATUS`) on a re-run too, when every item was
+imported before. `--dry-run` shows the status each new task gets (`created[].status`; a subtask of a new parent: `parent_source`). `import markdown` reads only files with YAML frontmatter and names this command when it meets checkboxes.
 
 ```sh
 cat > TODO.md <<'EOF'
