@@ -560,3 +560,69 @@ describe('delete of an active task that carries a deleted mark (review S6e MINOR
     await rejectsWith(deleteTask(as(s, 'owner'), { id: 'LB-1', confirm_id: 'LB-1' }), 'INVALID_VALUE');
   });
 });
+
+// LB-64.5: 0.3.1 restored a tombstone to active.json with its `deleted` mark (it keeps unknown keys). Archiving that live task
+// must not turn it back into a tombstone: the mark goes, restore and get see an ordinary archived task.
+describe('archive of an active task that carries a deleted mark (LB-64.5, a tombstone restored by 0.3.1)', () => {
+  it('the archived task has no deleted mark: get shows no deleted, restore brings it back', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'kept', status: 'todo' });
+    const at = '2026-11-04T19:05:54.686Z';
+    // The 0.3.1 tombstone of the ADR §24 experiment after `laneboard restore` of 0.3.1: archived_at gone, deleted kept, a restored event.
+    const restoredBy031 = {
+      id: 'LB-9',
+      rev: 4,
+      title: 'Deleted under 0.3.1',
+      description: '',
+      status: 'todo',
+      assignee: null,
+      labels: [],
+      links: [],
+      fields: {},
+      attachments: [],
+      events: [
+        { at, actor: 'owner', type: 'archived', data: { deleted: true } },
+        { at: '2026-11-04T19:06:00.000Z', actor: 'owner', type: 'restored', data: {} },
+      ],
+      events_dropped: 2,
+      created_at: '2026-11-04T19:00:00.000Z',
+      created_by: 'a',
+      updated_at: '2026-11-04T19:06:00.000Z',
+      updated_by: 'owner',
+      deleted: { at, by: 'owner' },
+    };
+    const active = readStore(s.dir, 'active');
+    const tasks = [...active.tasks, restoredBy031];
+    writeRaw(path.join(s.dir, 'active.json'), `${JSON.stringify({ ...active, next_id: 10, tasks, content_sha256: contentSha(tasks) }, null, 2)}\n`);
+    await archiveTasks(as(s, 'owner'), { ids: ['LB-9'] });
+    expect(stored(s, 'LB-9')).not.toHaveProperty('deleted');
+    expect((await getTask(as(s), { id: 'LB-9' })).data).not.toHaveProperty('deleted');
+    expect((await restoreTask(as(s, 'owner'), { id: 'LB-9' })).data).toMatchObject({ id: 'LB-9', archived: false });
+  });
+});
+
+// LB-64.4: archiving by id a task that is not finished and has an assignee goes through, with a warning naming who holds it.
+describe('archive of an open task with an assignee (LB-64.4)', () => {
+  it('archived with a warning; a finished task or one without an assignee gets none', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'open, held', status: 'in_progress', assignee: 'other' });
+    await createTask(as(s, 'a'), { title: 'open, free', status: 'todo' });
+    await createTask(as(s, 'a'), { title: 'done, held', status: 'done', assignee: 'other' });
+    const held = await archiveTasks(as(s, 'owner'), { ids: ['LB-1'] });
+    expect(held.data.archived).toEqual([{ id: 'LB-1', rev: 2 }]);
+    expect(held.warnings).toEqual(['LB-1 is in_progress (not a final status) and assigned to other: archived anyway; to bring it back: laneboard restore LB-1']);
+    expect((await archiveTasks(as(s, 'owner'), { ids: ['LB-2', 'LB-3'] })).warnings).toEqual([]);
+  });
+
+  // Review r1: the bulk form names the status itself, so a warning on each task it picks would be noise.
+  it('the bulk form (status + updated_before) archives an open task with an assignee without a warning', async () => {
+    const s = await newStore();
+    await createTask(as(s, 'a'), { title: 'open, held, old', status: 'in_progress', assignee: 'other' });
+    const active = readStore(s.dir, 'active');
+    const tasks = active.tasks.map((t) => ({ ...t, updated_at: '2020-01-01T00:00:00.000Z' }));
+    writeRaw(path.join(s.dir, 'active.json'), `${JSON.stringify({ ...active, tasks, content_sha256: contentSha(tasks) }, null, 2)}\n`);
+    const bulk = await archiveTasks(as(s, 'owner'), { status: 'in_progress', updated_before: '1d' });
+    expect(bulk.data.archived).toEqual([{ id: 'LB-1', rev: 2 }]);
+    expect(bulk.warnings).toEqual([]);
+  });
+});

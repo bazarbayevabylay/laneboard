@@ -89,7 +89,8 @@ function checklistHint(ctx: OpContext, root: string, o: ImportOptions, checklist
 async function importMapped(ctx: OpContext, mapped: Mapped, format: ImportFormat, dryRun: boolean, checkedRerun?: string): Promise<{ data: ImportResult; warnings: string[] }> {
   if (mapped.problems.length) throw mappingError(mapped.problems);
   try {
-    return await importTasks(ctx, { tasks: mapped.tasks, dry_run: dryRun });
+    // A checklist's statuses are the --status / --done-status flags: the core checks them on skipped items too (LB-64.3).
+    return await importTasks(ctx, { tasks: mapped.tasks, dry_run: dryRun, ...(format === 'checklist' ? { statuses_from_options: true } : {}) });
   } catch (err) {
     // The core lists unknown keys and statuses; the fix names this command's flags for them.
     if (err instanceof LaneboardError && err.details && 'unknown_fields' in err.details) {

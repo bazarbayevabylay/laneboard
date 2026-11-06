@@ -18,6 +18,13 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - `config --review-statuses none --reviewers <names>` is refused instead of dropping the names (LB-62.4).
 - `schema/config.json` allows the keys config@2 keeps from a newer laneboard (top level, `review`); config@1 stays closed (LB-62.7).
 - README: `?board=` of every HTTP route but `/api/boards`, and the `assignee`, `label`, `text` filters of `/api/tasks` (LB-65.1).
+### D2
+
+- `import --dry-run` shows the status each new task gets and `parent_source` for a subtask of a parent that is new too (`created[].status`, LB-64.1).
+- `import checklist` with a `--status` / `--done-status` not in the config stops with UNKNOWN_STATUS even when every item was imported before (was exit 0, LB-64.3); `import markdown|json` still skips a file imported before as it is, whatever its status now.
+- `archive <id>` of a task that is not finished and has an assignee warns who holds it (LB-64.4).
+- `archive` drops a `deleted` mark left on an active task by a 0.3.1 restore, so the task does not become a tombstone (LB-64.5).
+- `attach` checks the stored copy in 64 KiB chunks instead of reading it whole (LB-65.6).
 
 ## 0.4.0
 

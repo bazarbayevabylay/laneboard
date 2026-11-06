@@ -90,7 +90,7 @@ describe('import markdown', () => {
     expect((await p.run(['archive', 'IMP-4', '--as', 'importer'])).code).toBe(0);
     fs.writeFileSync(path.join(p.root, 'tasks', '20260106-new.md'), '---\ntitle: A new one\nstage: research\n---\n');
     const r = await p.run([...MD_ARGS, '--as', 'importer']);
-    expect(r.json.data.created).toEqual([{ id: 'IMP-6', source: 'tasks/20260106-new.md', title: 'A new one' }]);
+    expect(r.json.data.created).toEqual([{ id: 'IMP-6', source: 'tasks/20260106-new.md', title: 'A new one', status: 'todo' }]);
     expect(r.json.data.skipped).toContainEqual({ id: 'IMP-4', source: 'tasks/20260104-docs-refresh.md' });
     expect(r.json.data.skipped).toHaveLength(5);
   });
@@ -136,7 +136,7 @@ describe('import markdown', () => {
     expect(r.code).toBe(0);
     expect(r.json.data.dry_run).toBe(true);
     expect(r.json.data.created).toHaveLength(5);
-    expect(r.json.data.created[0]).toEqual({ id: null, source: 'tasks/20260101-login-form.md', title: 'Login form validation' });
+    expect(r.json.data.created[0]).toEqual({ id: null, source: 'tasks/20260101-login-form.md', title: 'Login form validation', status: 'in_progress' });
     expect(storeState(p)).toEqual(before);
   });
 
@@ -204,7 +204,7 @@ describe('import json', () => {
     const p = await project('json', JSON_FIELDS);
     const args = JSON_ARGS.map((a) => (a === 'tasks' ? 'tasks/T-2026-01-01-002.json' : a));
     const r = await p.run([...args, '--as', 'importer']);
-    expect(r.json.data.created).toEqual([{ id: 'IMP-1', source: 'tasks/T-2026-01-01-002.json', title: 'Nightly export job' }]);
+    expect(r.json.data.created).toEqual([{ id: 'IMP-1', source: 'tasks/T-2026-01-01-002.json', title: 'Nightly export job', status: 'todo' }]);
   });
 
   it('unmapped statuses and undeclared keys are listed together; --dry-run writes nothing; broken JSON is named', async () => {
