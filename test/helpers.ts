@@ -14,6 +14,17 @@ export const CLI_SOURCE = path.join(REPO, 'src', 'cli', 'main.ts');
 
 const made: string[] = [];
 
+// Isolation guard (incident 06.11: a spawn without `env` inherited the session's LANEBOARD_DIR and created tasks on a live board).
+// Every test file that runs the CLI imports this module, so its worker drops the variables that pick a board, a name or a config
+// folder, and points LANEBOARD_DIR at a path no board can be at: a child process started without its own `env` fails (STORE_NOT_FOUND
+// or ENOTDIR) instead of reaching the runner's board. HOME becomes an empty folder of this worker: no ~/.laneboard registry, ~/.claude
+// or ~/.gitconfig of the machine is read or written. test/isolation.test.ts checks the guard.
+export const LEAKED_BOARD = '/dev/null/laneboard-test-guard';
+export const GUARD_DROPPED_ENV = ['LANEBOARD_AGENT', 'LANEBOARD_DEFAULT_AGENT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PLUGIN_CACHE_DIR', 'CODEX_HOME', 'XDG_CONFIG_HOME'] as const;
+for (const key of GUARD_DROPPED_ENV) delete process.env[key];
+process.env.LANEBOARD_DIR = LEAKED_BOARD;
+process.env.HOME = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lb-test-home-')));
+
 // Fresh temp directory (realpath, so it matches process.cwd() on macOS).
 export function tempDir(): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lb-test-')));
@@ -75,14 +86,16 @@ export async function cli(argv: string[], opts: { cwd: string; env?: Record<stri
   return { code, stdout, stderr };
 }
 
-// Run a node child process; resolves with exit code and output.
-export function spawnNode(args: string[], opts: { cwd?: string; env?: Record<string, string> } = {}): Promise<CliRun> {
+// Run a node child process with only PATH and `env` (never the runner's LANEBOARD_DIR, LANEBOARD_AGENT, HOME); `stdin` is written and
+// closed when given. Resolves with exit code and output.
+export function spawnNode(args: string[], opts: { cwd?: string; env?: Record<string, string>; stdin?: string } = {}): Promise<CliRun> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, { cwd: opts.cwd ?? REPO, env: { PATH: process.env.PATH ?? '', ...opts.env } });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
     child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+    if (opts.stdin !== undefined) child.stdin.end(opts.stdin);
     child.on('error', reject);
     child.on('exit', (code) => resolve({ code: code ?? -1, stdout, stderr }));
   });
