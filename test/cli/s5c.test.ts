@@ -54,7 +54,7 @@ describe('S5c DoD: links to tasks of other boards', () => {
     const r = await lbJson(m, ['create', 'd', '--status', 'todo', '--link', 'task=WEB-99', '--as', 'a']);
     expect(r.code).toBe(3);
     expect(r.doc.error).toMatchObject({ code: 'TASK_NOT_FOUND', message: `link task=WEB-99: no such task on board WEB (${m.web.dir})` });
-    expect(r.doc.error?.fix).toBe('laneboard list --board WEB --scope all --text "<words from the title>"');
+    expect(r.doc.error?.fix).toBe('laneboard list --board WEB --scope all --text "<words from the title>" --json');
     const fix = await cli(shellArgv(r.doc.error?.fix ?? ''), { cwd: m.lb.root, env: { HOME: m.home } });
     expect(fix.code, fix.stderr).toBe(0);
   });
@@ -63,7 +63,7 @@ describe('S5c DoD: links to tasks of other boards', () => {
     const m = await machine();
     const r = await lbJson(m, ['update', 'LB-1', '--add-link', 'task=NOPE-1', '--as', 'a']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toEqual({ code: 'INVALID_VALUE', message: 'link task=NOPE-1: no live board with prefix NOPE on this machine', fix: 'laneboard boards', allowed: ['WEB'] });
+    expect(r.doc.error).toEqual({ code: 'INVALID_VALUE', message: 'link task=NOPE-1: no live board with prefix NOPE on this machine', fix: 'laneboard boards --json', allowed: ['WEB'] });
     expect((await cli(shellArgv('laneboard boards'), { cwd: m.lb.root, env: { HOME: m.home } })).code).toBe(0);
   });
 

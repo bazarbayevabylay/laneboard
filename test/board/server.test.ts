@@ -476,14 +476,14 @@ describe('laneboard board (CLI)', () => {
     expect(doc.data.url).toBe(`http://127.0.0.1:${doc.data.port}/`);
   });
 
-  it('a busy port is PORT_IN_USE (exit 5) whose fix is the same command with --port 0, and the fix runs', async () => {
+  it('a busy port is PORT_IN_USE (exit 4: a conflict, LB-63.5) whose fix is the same command with --port 0, and the fix runs', async () => {
     const s = await newStore();
     const blocker = net.createServer();
     await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()));
     const port = (blocker.address() as net.AddressInfo).port;
     try {
       const r = await cli(['board', '--port', String(port), '--json'], { cwd: s.root });
-      expect(r.code).toBe(5);
+      expect(r.code).toBe(4);
       const error = JSON.parse(r.stdout).error;
       expect(error.code).toBe('PORT_IN_USE');
       expect(error.fix).toBe('laneboard board --json --port 0');

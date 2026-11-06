@@ -5,11 +5,11 @@ exit 3
 
 --- stderr
 error TASK_NOT_FOUND: task LB-99 does not exist (active or archive)
-  fix: find the task: laneboard list --scope all --text "<words from the title>"
+  fix: find the task: laneboard list --scope all --text "<words from the title>" --json
 
 $ laneboard get LB-99 --json
 exit 3
 --- stdout
-{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"TASK_NOT_FOUND","message":"task LB-99 does not exist (active or archive)","fix":"find the task: laneboard list --scope all --text \"<words from the title>\""}}
+{"ok":false,"store":"<ROOT>/.laneboard","prefix":"LB","error":{"code":"TASK_NOT_FOUND","message":"task LB-99 does not exist (active or archive)","fix":"find the task: laneboard list --scope all --text \"<words from the title>\" --json"}}
 --- stderr
 

@@ -7,6 +7,7 @@ import { LaneboardError, toLaneboardError } from '../errors.ts';
 import { ID_RE } from '../schema.ts';
 import type { LinkT, TaskT } from '../schema.ts';
 import { shellQuote } from '../shell.ts';
+import { readStoreFile } from '../store.ts';
 import type { StoreRef } from '../store.ts';
 import { readBoth } from '../transact.ts';
 import type { StoreView } from '../transact.ts';
@@ -58,22 +59,35 @@ export async function checkForeignTaskLinks(ctx: OpContext, links: readonly Link
     const prefix = idPrefix(ref);
     const { board, prefixes } = boardByPrefix(home, prefix, ctx.store);
     if (!board) {
-      throw new LaneboardError('INVALID_VALUE', `link task=${ref}: no live board with prefix ${prefix} on this machine`, { allowed: prefixes, fix: 'laneboard boards' });
+      throw new LaneboardError('INVALID_VALUE', `link task=${ref}: no live board with prefix ${prefix} on this machine`, { allowed: prefixes, fix: 'laneboard boards --json' });
     }
     const view = read.get(prefix) ?? (await readOtherBoard(ctx, board.store, `link task=${ref}`, prefix, warnings));
     read.set(prefix, view);
     if (!locate(view, ref)) {
       throw new LaneboardError('TASK_NOT_FOUND', `link task=${ref}: no such task on board ${prefix} (${board.store.dir})`, {
-        fix: `laneboard list --board ${prefix} --scope all --text "<words from the title>"`,
+        fix: `laneboard list --board ${prefix} --scope all --text "<words from the title>" --json`,
       });
     }
   }
   return new Set(foreign);
 }
 
+// Does the board hold `id` (active or archived): a lock-free read of its two files, so a write that holds its own lock never takes a
+// second one (each file is replaced whole, W7). undefined when a file cannot be read: the caller keeps its hint (fail open).
+function boardHolds(store: StoreRef, id: string): boolean | undefined {
+  try {
+    const warnings: string[] = [];
+    return (['active', 'archive'] as const).some((kind) => readStoreFile(store.dir, kind, warnings).data.tasks.some((t) => t.id === id));
+  } catch {
+    // An unreadable board only costs the check: the error still names the board of the prefix (its own commands report the problem).
+    return undefined;
+  }
+}
+
 // The not-found error of an id with the prefix of another live board of this machine: it names that board, and the CLI fix reaches it
 // there - a read (`get`, `events --task`, `list --parent`) with --board <prefix>, a write with --dir <its store path>. The MCP server is
-// pinned to its own store, so MCP gets the CLI command as text. Undefined for an id of this board or of no live board.
+// pinned to its own store, so MCP gets the CLI command as text. That board does not hold the id either (LB-63.4): the error says so and
+// the fix searches it there. Undefined for an id of this board or of no live board.
 export function foreignTask(ctx: OpContext, id: string, prefix: string, use: 'read' | 'write'): LaneboardError | undefined {
   const other = idPrefix(id);
   if (other === prefix || ctx.home === undefined) return undefined;
@@ -85,6 +99,11 @@ export function foreignTask(ctx: OpContext, id: string, prefix: string, use: 're
     return undefined;
   }
   if (!board) return undefined;
+  if (boardHolds(board.store, id) === false) {
+    return new LaneboardError('TASK_NOT_FOUND', `${id} is not on this board (${prefix}), nor on board ${other} (${board.store.dir}), which its prefix names`, {
+      fix: `find the task on board ${other}: laneboard list --board ${other} --scope all --text "<words from the title>" --json`,
+    });
+  }
   const where = `${id} is on board ${other} (${board.store.dir}), not on this board (${prefix})`;
   if (use === 'read') {
     return new LaneboardError('TASK_NOT_FOUND', where, {

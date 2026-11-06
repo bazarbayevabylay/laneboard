@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, archiveTasks, claimTask, createTask, OPS, registerStore } from '../../src/core/index.ts';
+import { mcpText } from '../../src/mcp/fix-text.ts';
 import { MCP_RULES_PREAMBLE, TOOL_LIST, TOOLS } from '../../src/mcp/tools.ts';
 import { as, cleanupTemp, cli, CLI_SOURCE, newStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
@@ -70,7 +71,7 @@ interface ParityCase {
   args: Record<string, unknown>;
   // Expected error code (both sides), or undefined for success.
   error?: string;
-  // Expected MCP fix when it differs from the CLI fix on purpose (CLI rebuilds argv; MCP names tool parameters).
+  // Expected MCP fix when it differs from the CLI fix as tool calls (mcpText, LB-60.1) on purpose (CLI rebuilds argv; MCP names tool parameters).
   mcpFix?: string;
   // Expected MCP message when the CLI adds CLI-only advice to it (ACTOR_REQUIRED names LANEBOARD_AGENT).
   mcpMessage?: string;
@@ -110,7 +111,7 @@ const CASES: ParityCase[] = [
   { name: 'ALREADY_CLAIMED', cli: ['claim', 'LB-2', '--as', 'dev-2'], tool: 'task_claim', args: { id: 'LB-2', actor: 'dev-2' }, error: 'ALREADY_CLAIMED' },
   { name: 'TASK_ARCHIVED', cli: ['comment', 'LB-3', 'more', '--as', 'a'], tool: 'task_comment', args: { id: 'LB-3', text: 'more', actor: 'a' }, error: 'TASK_ARCHIVED' },
   { name: 'INVALID_VALUE id', cli: ['get', 'lb-1'], tool: 'task_get', args: { id: 'lb-1' }, error: 'INVALID_VALUE', mcpFix: 'use LB-1' },
-  { name: 'UNKNOWN_FIELD', cli: ['update', 'LB-1', '--unset-field', 'prio', '--as', 'a'], tool: 'task_update', args: { id: 'LB-1', unset_fields: ['prio'], actor: 'a' }, error: 'UNKNOWN_FIELD', mcpFix: 'use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type>' },
+  { name: 'UNKNOWN_FIELD', cli: ['update', 'LB-1', '--unset-field', 'prio', '--as', 'a'], tool: 'task_update', args: { id: 'LB-1', unset_fields: ['prio'], actor: 'a' }, error: 'UNKNOWN_FIELD', mcpFix: 'use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type> --json' },
   {
     name: 'ACTOR_REQUIRED',
     cli: ['create', 'x', '--status', 'todo'],
@@ -276,14 +277,17 @@ describe('MCP server over stdio (SDK client)', () => {
     const cliRoot = cloneRoot(base.root);
     const mcpRoot = cloneRoot(base.root);
     const viaCli = await cli([...(sub(c.cli) as string[]), '--json'], { cwd: cliRoot });
-    const envelope = JSON.parse(viaCli.stdout) as { ok: boolean; data?: unknown; error?: Record<string, unknown> };
+    const envelope = JSON.parse(viaCli.stdout) as { ok: boolean; data?: unknown; warnings?: string[]; error?: Record<string, unknown> };
     const mcp = await startMcp(mcpRoot);
     try {
       const r = await mcp.call(c.tool, sub(c.args) as Record<string, unknown>);
       if (!c.error) {
         expect(envelope.ok, viaCli.stdout).toBe(true);
         expect(r.isError, r.text.join(' ')).toBe(false);
-        expect(normalize(r.structured)).toEqual(normalize(envelope.data));
+        // LB-60.3: the warnings ride in structuredContent too (only when there are any), each CLI command of a task tool as its call.
+        const { warnings: mcpWarnings, ...mcpData } = r.structured;
+        expect(normalize(mcpData)).toEqual(normalize(envelope.data));
+        expect(normalize(mcpWarnings ?? [])).toEqual(normalize((envelope.warnings ?? []).map(mcpText)));
         return;
       }
       expect(envelope.error?.code).toBe(c.error);
@@ -291,7 +295,7 @@ describe('MCP server over stdio (SDK client)', () => {
       const { fix: cliFix, message: cliMessage, ...cliRest } = envelope.error ?? {};
       const { fix: mcpFix, message: mcpMessage, ...mcpRest } = r.structured;
       expect(normalize(mcpRest)).toEqual(normalize(cliRest));
-      expect(mcpFix).toBe(c.mcpFix ?? cliFix);
+      expect(mcpFix).toBe(c.mcpFix ?? mcpText(String(cliFix)));
       expect(mcpMessage).toBe(c.mcpMessage ?? cliMessage);
       expect(JSON.parse(r.text[0] ?? '{}')).toEqual(r.structured);
     } finally {

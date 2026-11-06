@@ -102,7 +102,7 @@ describe('S6y U1: on a board with checks the holder hands in only to a check', (
         expect(r.code, target).toBe(2);
         expect(r.doc.error, target).toMatchObject({
           code: 'INVALID_VALUE',
-          fix: `laneboard comment API-1 --as dev-1 -- 'Form done, ready for review' && laneboard update API-1 --status ${target} --as dev-1`,
+          fix: `laneboard comment API-1 --as dev-1 --json -- 'Form done, ready for review' && laneboard update API-1 --status ${target} --as dev-1 --json`,
         });
         expect(r.doc.error, target).not.toHaveProperty('input');
         expect(r.doc.error.message, target).toContain(`on this board ${target} is no check`);
@@ -125,7 +125,7 @@ describe('S6y U1: on a board with checks the holder hands in only to a check', (
       const s = await waiting(l);
       const r = await run(s, 'dev-1', ['finish', 'API-1', '--status', l.work, '--result', 'more work needed']);
       expect(r.code).toBe(2);
-      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 --as dev-1 -- 'more work needed' && laneboard update API-1 --status ${l.work} --as dev-1` });
+      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 --as dev-1 --json -- 'more work needed' && laneboard update API-1 --status ${l.work} --as dev-1 --json` });
       expect(await row(s, 'API-1')).toMatchObject({ status: l.checks[0], handed_in: true });
       expect(sh(s, r.doc.error.fix)).toBe(0);
       expect(await row(s, 'API-1')).toMatchObject({ status: l.work, handed_in: false });
@@ -136,7 +136,7 @@ describe('S6y U1: on a board with checks the holder hands in only to a check', (
       expect((await run(s, 'dev-1', ['update', 'API-1', '--unassign'])).code).toBe(0);
       const before = await task(s, 'API-1');
       const r = await run(s, 'dev-2', ['finish', 'API-1', '--status', l.work, '--result', 'r', '--no-commit']);
-      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 --as dev-2 -- r && laneboard update API-1 --status ${l.work} --as dev-2` });
+      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 --as dev-2 --json -- r && laneboard update API-1 --status ${l.work} --as dev-2 --json` });
       expect(await task(s, 'API-1')).toMatchObject({ assignee: null, rev: before.rev });
     });
   }
@@ -192,7 +192,7 @@ describe('S6y U2: a stale check of a task returned for rework reads it; the auth
         for (const [what, argv, code, exit] of attempts) {
           const r = await run(s, 'orch', argv);
           expect(r.code, what).toBe(exit);
-          expect(r.doc.error, what).toMatchObject({ code, fix: 'laneboard get API-1' });
+          expect(r.doc.error, what).toMatchObject({ code, fix: 'laneboard get API-1 --json' });
           expect(r.doc.error.message, what).toMatch(new RegExp(`^API-1 was returned for rework by rev at \\S+ \\(${from} -> ${l.work}\\), reason: "Empty state text missing i18n"; it is ${l.work} with dev-1 and not handed in`));
           expect(r.doc.error.message, what).not.toContain('hand it in:');
           expect(sh(s, r.doc.error.fix), what).toBe(0);
@@ -206,7 +206,7 @@ describe('S6y U2: a stale check of a task returned for rework reads it; the auth
       const s = await waiting(l);
       expect((await run(s, 'rev', ['update', 'API-1', '--status', l.work])).code).toBe(0);
       const r = await run(s, 'rev', ['finish', 'API-1', '--status', l.checks[1] ?? l.final, '--result', 'ok']);
-      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
+      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1 --json' });
       expect(r.doc.error.message).toContain(`API-1 was returned for rework by you at `);
       expect(r.doc.error.message).toContain(`(${l.checks[0]} -> ${l.work}), with no comment;`);
     });
@@ -214,7 +214,7 @@ describe('S6y U2: a stale check of a task returned for rework reads it; the auth
     it(`${l.name}: control: a task in work never handed in keeps the comment to the holder (A14)`, async () => {
       const s = await board(l);
       const r = await run(s, 'orch', ['finish', 'API-1', '--status', l.checks[1] ?? l.final, '--result', 'ok']);
-      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment API-1 "hand it in: laneboard finish API-1 --status ${l.checks[0]} --result <result>" --as orch` });
+      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment API-1 "hand it in: laneboard finish API-1 --status ${l.checks[0]} --result <result>" --as orch --json` });
     });
 
     it(`${l.name}: the author handed it in again after the return: the check passes it as usual`, async () => {
@@ -239,7 +239,7 @@ describe('S6y U2: a stale check of a task returned for rework reads it; the auth
     await returned(s, ONE, 'missing test');
     const r = await run(s, 'orch', ['finish', 'API-1', '--result', 'ok']);
     expect(r.code).toBe(4);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1 --json' });
     expect(r.doc.error.message).toMatch(/^API-1 was returned for rework by rev at \S+ \(review -> in_progress\), reason: "missing test";/);
     expect(sh(s, r.doc.error.fix)).toBe(0);
     expect((await task(s, 'API-1')).events.at(-1)).toMatchObject({ type: 'status', actor: 'rev' });
@@ -264,7 +264,7 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
         ];
         for (const [what, argv, code] of attempts) {
           const r = await run(s, 'orch', argv);
-          expect(r.doc.error, `${move} ${what}`).toMatchObject({ code, fix: 'laneboard get API-1' });
+          expect(r.doc.error, `${move} ${what}`).toMatchObject({ code, fix: 'laneboard get API-1 --json' });
           expect(r.doc.error.message, `${move} ${what}`).toMatch(
             new RegExp(`^API-1 was returned for rework by rev at \\S+ \\(${l.checks[0]} -> ${l.work}\\), reason: "Empty state text missing i18n"; it is ${move} with dev-1 and not handed in`),
           );
@@ -283,7 +283,7 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
     const s = await waiting(TWO);
     expect((await run(s, 'dev-1', ['update', 'API-1', '--status', 'dev'])).code).toBe(0);
     const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'CR ok']);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status code_review --result <result>" --as orch' });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status code_review --result <result>" --as orch --json' });
     expect(r.doc.error.message).not.toContain('returned for rework');
     const u = await run(s, 'orch', ['update', 'API-1', '--status', 'code_review']);
     expect(u.doc.error.message).not.toContain('returned for rework');
@@ -295,7 +295,7 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
     expect(sh(s, "laneboard update API-1 --status dev --as rev && laneboard comment API-1 --as rev -- 'Empty state text missing i18n'")).toBe(0);
     expect((await run(s, 'dev-1', ['update', 'API-1', '--status', 'blocked'])).code).toBe(0);
     const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'CR ok']);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1 --json' });
     expect(r.doc.error.message).toContain('(code_review -> dev), reason: "Empty state text missing i18n";');
     expect(r.doc.error.message).not.toContain('with no comment');
   });
@@ -306,7 +306,7 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
       await returned(s, TWO);
       expect((await run(s, 'orch', ['update', 'API-1', '--status', moved])).code).toBe(0);
       const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'CR ok']);
-      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
+      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1 --json' });
       expect(r.doc.error.message).toMatch(new RegExp(`^API-1 was returned for rework by rev at \\S+ \\(code_review -> dev\\), reason: "Empty state text missing i18n"; it is ${moved} with dev-1`));
       expect(sh(s, r.doc.error.fix)).toBe(0);
       expect(await primeText(s, 'dev-1')).toContain('last comment by rev: > Empty state text missing i18n');
@@ -352,7 +352,7 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
       const s = await waiting(l);
       const r = await run(s, 'dev-1', ['finish', 'API-1', '--status', l.work, '--result', 'more work needed']);
       expect(r.code).toBe(2);
-      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 --as dev-1 -- 'more work needed' && laneboard update API-1 --status ${l.work} --as dev-1` });
+      expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: `laneboard comment API-1 --as dev-1 --json -- 'more work needed' && laneboard update API-1 --status ${l.work} --as dev-1 --json` });
       expect(r.doc.error.message).toMatch(new RegExp(`^API-1 is handed in already and waits in ${l.checks[0]} for the check of rev, orch \\(`));
       expect(r.doc.error.message).toContain(`to put it into ${l.work} with your result, out of the checkers' queue (the hand-in is gone): comment, then laneboard update API-1 --status ${l.work}`);
       expect(r.doc.error.message).not.toContain('to hand API-1 in');

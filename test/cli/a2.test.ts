@@ -48,7 +48,7 @@ describe('the check bypass: update --status <final> on a board with checks close
       expect(r.doc.error, by).toMatchObject({
         code: 'ALREADY_CLAIMED',
         details: { assignee: 'dev-1' },
-        fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status review --result <result>" --as r2',
+        fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status review --result <result>" --as r2 --json',
       });
       expect(r.doc.error.message, by).toContain('task API-1 is claimed by dev-1 and is in_progress, not handed in with finish');
       expect(await task(s, 'API-1'), by).toMatchObject({ status: 'in_progress', assignee: 'dev-1', rev: 2 });
@@ -61,7 +61,7 @@ describe('the check bypass: update --status <final> on a board with checks close
     expect((await run(s.root, 'r1', ['update', 'API-1', '--status', 'in_progress'])).code).toBe(0);
     const r = await run(s.root, 'r2', ['update', 'API-1', '--status', 'done']);
     expect(r.code).toBe(4);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard get API-1' });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard get API-1 --json' });
     expect(r.doc.error.message).toContain('API-1 was returned for rework by r1');
     expect((await task(s, 'API-1')).status).toBe('in_progress');
   });
@@ -71,7 +71,7 @@ describe('the check bypass: update --status <final> on a board with checks close
     expect((await run(s.root, 'orch', ['update', 'API-1', '--unassign'])).code).toBe(0);
     const r = await run(s.root, 'r2', ['update', 'API-1', '--status', 'done']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status review --result "<what you did, how you checked it>" --as r2' });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status review --result "<what you did, how you checked it>" --as r2 --json' });
     expect((await task(s, 'API-1')).status).toBe('in_progress');
   });
 
@@ -79,7 +79,7 @@ describe('the check bypass: update --status <final> on a board with checks close
     const s = await board(['code_review', 'qa'], '', true);
     const r = await run(s.root, 'rev', ['update', 'API-1', '--status', 'done']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1 --json' });
     expect(r.doc.error.message).toContain('update never closes it: qa is still to check, and a check passes it on with finish');
     expect((await task(s, 'API-1')).status).toBe('code_review');
   });
@@ -135,7 +135,7 @@ describe('LB-63.1: one code for a stale check, by finish and by update', () => {
     const upd = await run(s.root, 'r2', ['update', 'API-1', '--status', 'review']);
     expect([fin.code, upd.code]).toEqual([4, 4]);
     expect(upd.doc.error).toEqual(fin.doc.error);
-    expect(upd.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard get API-1' });
+    expect(upd.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: 'dev-1' }, fix: 'laneboard get API-1 --json' });
   });
 
   it('a task its holder did not hand in: update into the check is ALREADY_CLAIMED, as finish', async () => {
@@ -145,7 +145,7 @@ describe('LB-63.1: one code for a stale check, by finish and by update', () => {
     expect([fin.doc.error.code, upd.doc.error.code, fin.code, upd.code]).toEqual(['ALREADY_CLAIMED', 'ALREADY_CLAIMED', 4, 4]);
     expect(upd.doc.error).toMatchObject({
       details: { assignee: 'dev-1' },
-      fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status review --result <result>" --as r1',
+      fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status review --result <result>" --as r1 --json',
     });
   });
 });

@@ -87,7 +87,7 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
   it('silent 14 min: the comment fix, --resume named in the message for a closed session', async () => {
     const s = await abandoned(14 * MIN);
     const r = await json(s, ['claim', 'WORD-2'], SESSION_2);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment WORD-2 "<note for ${NAME_1}>" --as ${NAME_2}` });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment WORD-2 "<note for ${NAME_1}>" --as ${NAME_2} --json` });
     expect(r.doc.error.message).toBe(
       `task WORD-2 is held by ${NAME_1}, another session of your default name that wrote 14 min ago: it may be a parallel session at work, so do not take it over; if that session is closed: laneboard claim WORD-2 --resume`,
     );
@@ -100,7 +100,7 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
     expect((await json(s, ['comment', 'WORD-2', 'still on it'], SESSION_1)).code).toBe(0);
     later(2 * MIN);
     const r = await json(s, ['claim', 'WORD-1'], SESSION_2);
-    expect(r.doc.error.fix).toBe(`laneboard comment WORD-1 "<note for ${NAME_1}>" --as ${NAME_2}`);
+    expect(r.doc.error.fix).toBe(`laneboard comment WORD-1 "<note for ${NAME_1}>" --as ${NAME_2} --json`);
     expect(r.doc.error.message).toContain('that wrote 2 min ago');
   });
 
@@ -121,7 +121,7 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
     const s = await abandoned(16 * MIN);
     expect((await json(s, ['finish', 'WORD-1', '--result', 'x', '--status', 'doing'], SESSION_2)).doc.error.fix).toBe('laneboard claim WORD-1 --resume --json');
     const other = await json(s, ['claim', 'WORD-1'], { ...SESSION_2, LANEBOARD_AGENT: 'dev-1' });
-    expect(other.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment WORD-1 "<note for ${NAME_1}>" --as dev-1` });
+    expect(other.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: `laneboard comment WORD-1 "<note for ${NAME_1}>" --as dev-1 --json` });
     expect(other.doc.error.message).not.toContain('--resume');
   });
 
@@ -135,7 +135,7 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
       expect(r.code, argv.join(' ')).toBe(4);
       // The fix of the refusals for somebody else's task stays: a comment to the holder.
       expect(r.doc.error, argv.join(' ')).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: `${BASE}:x` } });
-      expect(r.doc.error.fix, argv.join(' ')).toMatch(new RegExp(`^laneboard comment WORD-1 ".+" --as ${NAME_2}$`));
+      expect(r.doc.error.fix, argv.join(' ')).toMatch(new RegExp(`^laneboard comment WORD-1 ".+" --as ${NAME_2} --json$`));
       expect(`${r.doc.error.message} ${r.doc.error.fix}`, argv.join(' ')).not.toContain('--resume');
     }
   });

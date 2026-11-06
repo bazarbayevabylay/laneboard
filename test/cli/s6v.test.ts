@@ -53,7 +53,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
       message:
         'API-1 is handed in and qa: a check passes it on to a later check or accepts it into done (code_review -> qa -> done), never into code_review; ' +
         'to return it for rework, comment why, then laneboard update API-1 --status dev (the assignee hands it in again with finish)',
-      fix: "laneboard comment API-1 --as rev -- 'back: missing test' && laneboard update API-1 --status dev --as rev",
+      fix: "laneboard comment API-1 --as rev --json -- 'back: missing test' && laneboard update API-1 --status dev --as rev --json",
     });
     expect(await task(s, 'API-1')).toMatchObject({ status: 'qa', rev: before.rev });
     runFix(s, r.doc.error.fix);
@@ -76,7 +76,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     ] as const) {
       const r = await run(s, 'orch', ['finish', 'API-1', '--status', to, '--result', 'no']);
       expect(r.code, to).toBe(2);
-      expect(r.doc.error.fix, to).toBe(`laneboard comment API-1 --as orch -- no && laneboard update API-1 --status ${work} --as orch`);
+      expect(r.doc.error.fix, to).toBe(`laneboard comment API-1 --as orch --json -- no && laneboard update API-1 --status ${work} --as orch --json`);
       expect(r.doc.error.fix, to).not.toMatch(/finish|done|qa/);
     }
     expect(await task(s, 'API-1')).toMatchObject({ status: 'qa' });
@@ -86,7 +86,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     const s = await handedIn(false);
     const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'dev', '--result', "it's broken"]);
     expect(r.code).toBe(2);
-    expect(r.doc.error.fix).toBe(`laneboard comment API-1 --as rev -- 'it'\\''s broken' && laneboard update API-1 --status dev --as rev`);
+    expect(r.doc.error.fix).toBe(`laneboard comment API-1 --as rev --json -- 'it'\\''s broken' && laneboard update API-1 --status dev --as rev --json`);
     runFix(s, r.doc.error.fix);
     const after = await task(s, 'API-1');
     expect(after.status).toBe('dev');
@@ -97,7 +97,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
     const s = await handedIn(true);
     const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'backlog', '--result', 'not now']);
     expect(r.code).toBe(2);
-    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard comment API-1 --as rev -- 'not now' && laneboard update API-1 --status backlog --as rev" });
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: "laneboard comment API-1 --as rev --json -- 'not now' && laneboard update API-1 --status backlog --as rev --json" });
     expect(r.doc.error.message).toContain('back to the start: laneboard update API-1 --status backlog');
     runFix(s, r.doc.error.fix);
     expect(await task(s, 'API-1')).toMatchObject({ status: 'backlog' });
@@ -106,7 +106,7 @@ describe('S6v B-U1: a checker asking for an earlier status gets the return for r
   it('control: the current check is no pass (S6w I3: the fix reads the task), and the checker passes on and accepts by naming the next status', async () => {
     const s = await handedIn(false);
     const same = await run(s, 'rev', ['finish', 'API-1', '--status', 'code_review', '--result', 'ok']);
-    expect(same.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect(same.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1 --json' });
     expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
     expect((await run(s, 'orch', ['finish', 'API-1', '--status', 'done', '--result', 'qa ok'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
@@ -136,7 +136,7 @@ describe('S6v review r1: a work status between the checks, and a result that sta
       message:
         'API-1 is handed in and code_review: a check passes it on to a later check or accepts it into done (code_review -> qa -> done), never into fixing; ' +
         'to return it for rework, comment why, then laneboard update API-1 --status fixing (the assignee hands it in again with finish)',
-      fix: "laneboard comment API-1 --as rev -- 'back: fix lint' && laneboard update API-1 --status fixing --as rev",
+      fix: "laneboard comment API-1 --as rev --json -- 'back: fix lint' && laneboard update API-1 --status fixing --as rev --json",
     });
     runFix(s, r.doc.error.fix);
     const after = await task(s, 'API-1');
@@ -150,7 +150,7 @@ describe('S6v review r1: a work status between the checks, and a result that sta
     const s = await inReview();
     expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'review ok'])).doc.data).toMatchObject({ status: 'qa', passed: true });
     const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'fixing', '--result', 'no']);
-    expect(r.doc.error.fix).toBe('laneboard comment API-1 --as orch -- no && laneboard update API-1 --status fixing --as orch');
+    expect(r.doc.error.fix).toBe('laneboard comment API-1 --as orch --json -- no && laneboard update API-1 --status fixing --as orch --json');
   });
 
   it('a result that starts with "-" runs as printed: the comment keeps the text, the task goes back to the work status', async () => {
@@ -158,7 +158,7 @@ describe('S6v review r1: a work status between the checks, and a result that sta
       const s = await handedIn(false);
       const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'dev', `--result=${text}`]);
       expect(r.code, text).toBe(2);
-      expect(r.doc.error.fix, text).toMatch(/^laneboard comment API-1 --as rev -- \S.* && laneboard update API-1 --status dev --as rev$/);
+      expect(r.doc.error.fix, text).toMatch(/^laneboard comment API-1 --as rev --json -- \S.* && laneboard update API-1 --status dev --as rev --json$/);
       runFix(s, r.doc.error.fix);
       const after = await task(s, 'API-1');
       expect(after.status, text).toBe('dev');

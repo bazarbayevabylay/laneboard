@@ -18,7 +18,7 @@ function waiting(actor: string, at: string, checkers: string): Record<string, st
   return {
     code: 'INVALID_VALUE',
     message: `API-1 is handed in already and waits in ${at} for the check of ${checkers} (code_review -> qa -> done): nothing to do; the author never moves it to another check or into done, and a note for the checkers is a comment`,
-    fix: `laneboard comment API-1 "<note for the check>" --as ${actor}`,
+    fix: `laneboard comment API-1 "<note for the check>" --as ${actor} --json`,
   };
 }
 
@@ -103,7 +103,7 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     expect(viaFinish.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status code_review --result r --no-commit --as dev-a --json' });
     const viaUpdate = await run(s, 'dev-a', ['update', 'API-1', '--status', 'done']);
     expect(viaUpdate.code).toBe(2);
-    expect(viaUpdate.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a' });
+    expect(viaUpdate.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a --json' });
     // Nor a later check: the assignee does not skip code_review.
     expect((await run(s, 'dev-a', ['finish', 'API-1', '--status', 'qa', '--result', 'r', '--no-commit'])).doc.error.code).toBe('INVALID_VALUE');
     expect((await row(s, 'API-1')).status).toBe('dev');
@@ -114,10 +114,10 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit']);
     const r = await run(s, 'dev-b', ['finish', 'API-1', '--result', 'lgtm']);
     expect(r.code).toBe(4);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for dev-a>" --as dev-b' });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for dev-a>" --as dev-b --json' });
     expect(r.doc.error.message).not.toContain('laneboard update');
     const closing = await run(s, 'dev-b', ['update', 'API-1', '--status', 'done']);
-    expect(closing.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for dev-a>" --as dev-b' });
+    expect(closing.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "<note for dev-a>" --as dev-b --json' });
     // The orchestrator in review.by closes by update (no acceptance mark) only a task in the last check: from code_review the
     // update would skip qa (slice A2, the check bypass), so it passes it on to qa with finish first.
     expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).code).toBe(2);
@@ -161,13 +161,13 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     expect(again.doc.data).toMatchObject({ status: 'qa' });
     expect(again.doc.warnings[0]).toMatch(/^no changes: API-1 is already qa, where you passed it on/);
     const bare = await run(s, 'rev', ['finish', 'API-1', '--result', 'ok']);
-    expect(bare.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect(bare.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1 --json' });
     expect((await row(s, 'API-1')).status).toBe('qa');
     // The same checker moves it on only by naming the status; an earlier check is refused (S6v B-U1 run 3: the fix is the return for
     // rework, never the acceptance into done).
     expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'x', '--status', 'code_review'])).doc.error).toMatchObject({
       code: 'INVALID_VALUE',
-      fix: 'laneboard comment API-1 --as rev -- x && laneboard update API-1 --status dev --as rev',
+      fix: 'laneboard comment API-1 --as rev --json -- x && laneboard update API-1 --status dev --as rev --json',
     });
     expect((await run(s, 'rev', ['finish', 'API-1', '--result', 'qa too', '--status', 'done'])).doc.data).toMatchObject({ status: 'done', accepted: true, from: 'qa' });
   });
@@ -178,7 +178,7 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     const [a, b] = await Promise.all([run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'rev ok']), run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'orch ok'])]);
     expect([a.code, b.code].sort()).toEqual([0, 2]);
     const refused = a.code === 2 ? a : b;
-    expect(refused.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1' });
+    expect(refused.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard get API-1 --json' });
     expect((await row(s, 'API-1')).status).toBe('qa');
   });
 
@@ -193,13 +193,13 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
   it('a check of a task its assignee did not hand in is refused without a command around the check', async () => {
     const s = await reviewBoard();
     const r = await run(s, 'rev', ['finish', 'API-1', '--result', 'ok']);
-    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status code_review --result <result>" --as rev' });
+    expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-1 "hand it in: laneboard finish API-1 --status code_review --result <result>" --as rev --json' });
     expect(r.doc.error.message).not.toContain('close it as the orchestrator');
   });
 });
 
 describe('review r1: no way around the checks (claim --status, a hand-in outside the checks, the author after unassign)', () => {
-  const updateFix = (actor: string): string => `laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as ${actor}`;
+  const updateFix = (actor: string): string => `laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as ${actor} --json`;
 
   it('claim --status done: the assignee INVALID_VALUE, not in review.by ALREADY_CLAIMED, a checker taking the task INVALID_VALUE (as update)', async () => {
     const s = await reviewBoard();
@@ -210,10 +210,10 @@ describe('review r1: no way around the checks (claim --status, a hand-in outside
     await run(s, 'orch', ['create', 'Free', '--status', 'ready']);
     const other = await run(s, 'dev-b', ['claim', 'API-2', '--status', 'done']);
     expect(other.code).toBe(4);
-    expect(other.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-2 "<note for its assignee>" --as dev-b' });
+    expect(other.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard comment API-2 "<note for its assignee>" --as dev-b --json' });
     expect((await run(s, 'dev-b', ['update', 'API-2', '--status', 'done'])).doc.error).toEqual(other.doc.error);
     const checker = await run(s, 'rev', ['claim', 'API-2', '--status', 'done']);
-    expect(checker.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-2 --status code_review --result "<what you did, how you checked it>" --as rev' });
+    expect(checker.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard finish API-2 --status code_review --result "<what you did, how you checked it>" --as rev --json' });
     expect((await row(s, 'API-1')).status).toBe('dev');
     expect(await row(s, 'API-2')).toMatchObject({ status: 'ready', assignee: null });
   });

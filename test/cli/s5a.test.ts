@@ -117,7 +117,7 @@ describe('S5a DoD: description append', () => {
     await json(s, ['create', 'T', '--status', 'todo', '--description-file', 'long.md', '--as', 'a']);
     const { code, doc } = await json(s, ['update', 'LB-1', '--append-description', 'more text', '--as', 'a']);
     expect(code).toBe(2);
-    expect(doc.error).toMatchObject({ code: 'INVALID_VALUE', message: 'description would be 100010 characters, over 100000', fix: 'laneboard attach LB-1 <path of a file with the text>' });
+    expect(doc.error).toMatchObject({ code: 'INVALID_VALUE', message: 'description would be 100010 characters, over 100000', fix: 'laneboard attach LB-1 <path of a file with the text> --json' });
     fs.writeFileSync(path.join(s.root, 'more.md'), 'more text');
     const r = await cli([...shellArgv(doc.error.fix.replace('<path of a file with the text>', 'more.md')), '--as', 'a'], { cwd: s.root });
     expect(r.code, r.stdout + r.stderr).toBe(0);

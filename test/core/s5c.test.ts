@@ -59,7 +59,7 @@ describe('links to tasks of other boards (ADR §30)', () => {
     const { home, lb, web } = await twoBoards();
     const err = await rejectsWith(createTask(as(lb, 'a', { home }), { title: 'x', status: 'todo', links: [{ kind: 'task', ref: 'WEB-99' }] }), 'TASK_NOT_FOUND');
     expect(err.message).toBe(`link task=WEB-99: no such task on board WEB (${web.dir})`);
-    expect(err.fix).toBe('laneboard list --board WEB --scope all --text "<words from the title>"');
+    expect(err.fix).toBe('laneboard list --board WEB --scope all --text "<words from the title>" --json');
     expect(readStore(lb.dir, 'active').tasks).toHaveLength(0);
   });
 
@@ -72,7 +72,7 @@ describe('links to tasks of other boards (ADR §30)', () => {
       const err = await rejectsWith(createTask(as(lb, 'a', { home }), { title: 'x', status: 'todo', links: [{ kind: 'task', ref }] }), 'INVALID_VALUE');
       expect(err.message).toBe(`link task=${ref}: no live board with prefix ${ref.split('-')[0]} on this machine`);
       expect(err.allowed).toEqual(['WEB']);
-      expect(err.fix).toBe('laneboard boards');
+      expect(err.fix).toBe('laneboard boards --json');
     }
   });
 

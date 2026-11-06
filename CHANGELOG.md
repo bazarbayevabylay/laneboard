@@ -67,6 +67,20 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - LB-55.3: with that worktree warning `finish` no longer also warns "HEAD has not moved since you claimed".
 - LB-65.9: `GIT_PROJECT_MARKERS` and `ReworkReturn` are no longer exported.
 
+### D1
+
+- LB-60.1: over MCP the `fix` of an error and the warnings name tool calls, not CLI commands: `task_comment {"id":"LB-1","text":"<note>","actor":"dev-2"}`, two commands joined by `, then`. A command no tool runs (`boards`, `init`, `config`, `doctor`, `--board`, `--dir`, `--file`) stays as it is.
+- LB-60.2: a link or `fields` parameter in the CLI form (`"commit=abc"`, `"priority=2"`) gets a fix that names the form (`add_links: [{"kind": "commit", "ref": "<sha>"}]`); the MCP preamble maps `--add-link` and `--field`.
+- LB-60.3: MCP `structuredContent` carries `warnings` too, when there are any.
+- LB-60.4: `task_prime` without a name (agent `null`) warns to pass `actor`.
+- LB-60.5: STORE_NOT_FOUND over MCP names a relative `--dir` or `LANEBOARD_DIR` of the server resolved against its folder.
+- LB-63.2: the default fixes of the error codes and the remaining fixes of update and claim, comment, finish refusals carry `--json` (rule 3).
+- LB-63.3 over MCP: `task_finish` of a hand-in says `handed_in: true`, as `finish --json`.
+- LB-63.4: an id with the prefix of another board that board does not hold either is TASK_NOT_FOUND "not on this board, nor on board X", with a search there as the fix (was "X-9 is on board X").
+- LB-63.5: `PORT_IN_USE` exits 4 (conflict, http 409), not 5 "busy, retry once": the same port stays taken.
+- `finish` in a main checkout with several worktrees, its commit linked to another name's task already: one warning (the worktree one, naming those tasks), not two with almost the same command.
+- MCP tool descriptions: `task_update` names the refusals on a board with checks (`ALREADY_CLAIMED` for another name's task), `task_claim` the first status and the closed task, `task_finish` `handed_in`, `task_prime` `tasks` vs `in_progress` and `roles.waiting[].last_return`.
+
 ## 0.4.0
 
 The audit release: data safety, setup safety, orchestrator workflows, any MCP client, monorepos, and English docs.

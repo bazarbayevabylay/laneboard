@@ -34,7 +34,7 @@ describe('S6z over MCP', () => {
     const r = await callTool('task_update', { id: 'API-1', status: 'in_progress', actor: 'orch' }, env);
     expect(r.isError).toBeUndefined();
     expect(warnings(r).filter((w) => w.includes('no reason'))).toEqual([
-      "API-1 went back for rework with no reason from you: dev-1's prime says it was returned with no reason; add the reason (shown to dev-1 until the next hand-in): laneboard comment API-1 --as orch -- '<why it goes back>'",
+      "API-1 went back for rework with no reason from you: dev-1's prime says it was returned with no reason; add the reason (shown to dev-1 until the next hand-in): task_comment {\"id\":\"API-1\",\"actor\":\"orch\",\"text\":\"<why it goes back>\"}",
     ]);
     const prime = (await callTool('task_prime', { actor: 'dev-1' }, env)).structuredContent as Record<string, any>;
     expect(prime.roles.feedback).toEqual([{ id: 'API-1', comment: null, returned: { by: 'orch', at: expect.any(String) } }]);
