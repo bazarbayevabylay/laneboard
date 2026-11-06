@@ -102,7 +102,10 @@ laneboard setup codex
 - Claude Code hooks: SessionStart prints the rules, the board and your tasks (`laneboard prime --hook`); after `Edit`, `Write`,
   `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
 - Under the default name the edit reminder stays silent while any open task of the board has an assignee (anybody's: subagents
-  share the default name). For reminders about your own tasks only, set `LANEBOARD_AGENT=<your name>`.
+  share the default name), except a task of an earlier session of the same default name that wrote nothing for 15 minutes (closed by
+  `/clear` or a restart). For reminders about your own tasks only, set `LANEBOARD_AGENT=<your name>`.
+- `setup codex` in a folder below the root of a git repository warns: Codex reads `AGENTS.md` from the repository root down to the
+  folder it starts in, so a Codex started at the root never sees that block.
 - On a board with `--reviewers` or `--creators`, a session with no name of its own reads one line with those names and
   `laneboard prime --as <name>` (Orchestrators, "Your name after a restart"). No file setup writes carries a name.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
@@ -127,7 +130,11 @@ the project (a global config would pin every project of the machine to this one 
   none answers every call with `STORE_NOT_FOUND`: its `fix` says how to start your client for the project (Codex: in the project folder
   or `LANEBOARD_DIR=<board> codex`, never `--dir` in the global `~/.codex/config.toml`), and `details.boards` lists the boards.
 - A server whose `--dir` is not the board of its folder warns on every call, as `LANEBOARD_DIR` does: check `prefix` in each reply.
-- Your name on writes: the tool's `actor`, else `mcp --as`, else `LANEBOARD_AGENT`, else the session's default name.
+- Your name on writes: the tool's `actor`, else `mcp --as`, else `LANEBOARD_AGENT`, else the session's default name; with none,
+  `task_prime` warns to pass `actor`.
+- An error's `fix` and the warnings name tool calls, not CLI commands: `task_comment {"id":"WEB-1","text":"<note>","actor":"codex-1"}`,
+  two of them joined by `, then`. A command no tool runs (`boards`, `init`, `config`, `doctor`, `--dir`) stays a CLI command.
+  `structuredContent` is the CLI `data`, plus `warnings` when there are any.
 - The client cannot find `laneboard`? Put the absolute path from `command -v laneboard` into `command`; with nvm that path changes
   with the Node.js version, so update it after switching.
 - 12 tools: `task_prime`, `task_create`, `task_get`, `task_list`, `task_update`, `task_claim`, `task_comment`, `task_finish`,
@@ -149,7 +156,7 @@ mistake, not against a hostile agent.
 | Two parallel sessions | two names, so the second one's `claim` fails with `ALREADY_CLAIMED` |
 | Where a name came from | every event has `actor_source`: `explicit` or `default`; `get` marks `(default name)` |
 | Subagents of one session | share its default name, so each passes its own `--as`; `prime` under the default name says so |
-| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age, the longest silent (abandoned) first; past 5 it ends in `... N more (M in all): laneboard list --sessions-of <base> --json`, which lists them all, never your own (`prime --json`, `task_prime`: `resumable_total`); `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning. On a board with checks a task handed in and waiting for a check is not resumed: the same base in any session is its author, gets "handed in already" and never sees it as a check of its own |
+| After `/clear` or a restart | a new session id, a new name. The SessionStart hook (except resume and compaction) lists the unfinished tasks of earlier sessions with the same base and their age, the longest silent (abandoned) first; past 5 it ends in `... N more (M in all): laneboard list --sessions-of <base> --json`, which lists them all, never your own (`prime --json`, `task_prime`: `resumable_total`); `claim <ID> --resume` takes one over. `ALREADY_CLAIMED` on such a task offers `--resume` once that session wrote nothing for 15 minutes, else a comment; `--resume` of a live session works with a warning, except a task that session itself took back with `--resume` less than 15 minutes ago (`ALREADY_CLAIMED`, a comment as the fix). A closed task is not resumed: the fix is a new task. `--resume` of a free task is a plain claim, with a warning. A `claim` of a task you hold or take back moves it from the first status into the work status (the second status unless final; with checks the one before the first check). A session whose task was taken over reads "no longer yours" on its next `comment`. On a board with checks a task handed in and waiting for a check is not resumed: the same base in any session is its author, gets "handed in already" and never sees it as a check of its own |
 | Codex, Cursor, Gemini CLI, OpenCode | no default name (no session id): pass `--as` |
 
 ```sh
@@ -171,7 +178,10 @@ give a warning; git is asked with a 2-second limit, and without git the task is 
 - Handed in again into the same status with a new result: the result is recorded; the same result again changes nothing.
 - Git worktree: the board of the main checkout is found by itself, and `finish` there links the worktree's HEAD.
   `finish` in the main checkout while other worktrees have newer commits warns with the fix; `--commit <sha>` names the commit
-  (MCP: `cwd` = your worktree's absolute path, or `commit`).
+  (MCP: `cwd` = your worktree's absolute path, or `commit`). With several worktrees the fix is one command: the finish with your
+  worktree's commit, then `&&` the removal of the wrong link.
+- A commit already linked to a task of another name gives the warning `commit <sha> is already linked to <ID>` with the command that
+  links the commit of your work instead.
 - Subtasks: `create ... --parent WEB-1` (a task of the same board); `get` lists `children`, `list --parent WEB-1` the direct ones.
 - `update --append-description` adds a paragraph without `--expected-rev`; `--description` replaces the text and keeps the old one in its event.
 - `--expected-rev` is needed only for edits on top of what you read (description, fields); never for status, comment, claim or finish.
@@ -194,7 +204,8 @@ laneboard finish WEB-3 --status done --result "Checked with an admin token" --as
 laneboard config --review-statuses none --reviewers none --json
 ```
 
-- `--review-statuses code_review,qa`: the checks in order (between the first and the final status). The assignee's `finish` hands in
+- `--review-statuses code_review,qa`: the checks in order (between the first and the final status, in the order of the statuses: another
+  order is refused, its fix in that order). The assignee's `finish` hands in
   to the check the task is in, else the first check. A checker names where the task goes: `finish <ID> --status <next>` passes it to
   the next check, from the last one `--status <final>` accepts it.
 - A hand-in goes only to a check, where the checkers see it: the assignee's `finish --status <work status>` (say `blocked`) is refused.
@@ -209,6 +220,7 @@ laneboard config --review-statuses none --reviewers none --json
   the pass (`finish --status <next>`) and the return for rework with a placeholder for its reason, `-- '<why it goes back>'`, not your
   `--result`. No fix of a checker's refusal passes on or accepts a task.
 - `--reviewers rev,orch`: who checks (default: anybody but the author of the work). The author never passes on or accepts its own work.
+  A Claude Code session writes as `claude-code@<user>:<session>`, so `--reviewers claude-code@<user>` warns: that name never checks.
 - Any of the reviewers makes any check, both in a row too: the two lists are not paired (`rev` is not bound to `code_review`).
   A checker's `finish` applies to the check the task is in now, whoever passed it there.
 - A task waiting in a check is handed in: the author's `finish`, `update` or `claim` into another check or the final status gets
@@ -216,10 +228,16 @@ laneboard config --review-statuses none --reviewers none --json
 - A task enters a check only with `finish`, so the checkers always see it: `update`, `claim`, `create` and `import` into a check are
   refused. The holder's fix is the hand-in with `finish`; a checker's is `get` with both commands; anybody else's a comment to the holder.
   A closed task is reopened first: the fix is `update <ID> --status <work status> && finish <ID> --status <check> ...`.
+- The checks are never bypassed: `update --status <final>` closes only a task waiting in the last check (with a warning: no result
+  of a check, no acceptance mark). A task in work is `ALREADY_CLAIMED` with a comment that asks its holder to hand it in, one returned
+  for rework `ALREADY_CLAIMED` with `laneboard get <ID>`, an unassigned one `INVALID_VALUE` with the hand-in, one waiting in an earlier
+  check `INVALID_VALUE` with `laneboard get <ID>`. A board without checks closes by update as before.
 - A new holder keeps the hand-in: `update --assignee` or `--unassign` of a task waiting in a check leave it in the
   checkers' queue. The new holder is an author of the work all the same and never passes it on or accepts it. When the new holder
   could check it (a checker's `update <ID> --assignee <itself>`), the write warns: it never checks this task now, the check stays with
   the checkers left, else the owner's `config --reviewers`. A check needs no assignment: `finish <ID> --status <next>`.
+  A name that may not check a waiting task and did not work on it neither takes it (`update --assignee <itself>`) nor moves it out of
+  the check (`update --status <work status>`), in either order: `ALREADY_CLAIMED` (unassigned: `INVALID_VALUE`), its fix a comment.
 - Nobody claims a task waiting in a check: a check needs no claim (`finish --status <next>`), and the claim would make the checker
   an author. A checker's `claim` gets the fix `laneboard get <ID>`, the message names the pass and the return (with the same
   placeholder); anybody else a comment.
@@ -354,7 +372,7 @@ prints `http://127.0.0.1:7420/` and serves until Ctrl+C.
 
 | What | How |
 |---|---|
-| Port | `--port N`, else `board.port` of `config.json` (7420); busy: `PORT_IN_USE`, `--port 0` takes a free one |
+| Port | `--port N`, else `board.port` of `config.json` (7420); busy: `PORT_IN_USE` (exit 4), `--port 0` takes a free one |
 | Boards | every board of this machine is a tab; `--board <prefix\|name\|path>` opens another one first |
 | Access | this machine only (127.0.0.1), a new token per run |
 | Live | a write shows within 1-2 s; the page reloads data every minute |
@@ -397,7 +415,8 @@ project's files is this machine's.
 
 `laneboard import markdown <folder>` (files with YAML frontmatter), `import json <folder|file>` (task files with history) and
 `import checklist TODO.md --status todo` (a Markdown TODO list: an item is a task, `[x]` the final status, an indented item a subtask).
-An unknown key or status stops the import and lists every value; `--dry-run` writes nothing; a second run skips what it imported.
+An unknown key or status stops the import and lists every value; `--dry-run` writes nothing (it shows the status each new task gets);
+a second run skips what it imported (`import checklist` still checks its `--status` and `--done-status`).
 Options and examples: [docs/agent-guide.md](docs/agent-guide.md#4-migrate-import-existing-tasks).
 
 ```sh
