@@ -3,6 +3,18 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
+## Unreleased
+
+### A1
+
+- LB-54.1: `claim --resume` (and a plain `claim`) no longer takes a task an earlier session of the same default name closed: `ALREADY_CLAIMED`, "nothing to resume", the fix is a new task; no fix names `--resume` for it.
+- LB-54.2: `claim --resume` without `--status` of a task in the first status moves it into the work status (LB-57.4 rule).
+- LB-54.3: `claim --resume` of a free task warns that it was a plain claim, not a task of an earlier session.
+- LB-54.4: a task another session took back with `--resume` stays with it while that session writes: a second `--resume` (or claim) is `ALREADY_CLAIMED` with the comment fix until it has been silent 15 min.
+- LB-54.5: `comment` by a name that lost the task (taken over with `--resume`, given to another name or unassigned by someone else) warns "no longer yours".
+- LB-57.4: `claim` without `--status` of a task you already hold moves it from the first status into the work status (the one before the checks, else the second status unless final) instead of "no changes"; a plain claim of a free task keeps its status.
+- LB-63.6: on a board with checks, `update --assignee <self>` of a task waiting for a check by a name that may not check it (and did not work on it) is refused like `claim` (`ALREADY_CLAIMED`, or `INVALID_VALUE` when unassigned).
+
 ## 0.4.0
 
 The audit release: data safety, setup safety, orchestrator workflows, any MCP client, monorepos, and English docs.
