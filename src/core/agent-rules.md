@@ -5,7 +5,7 @@ laneboard agent rules (task board & CLI for AI coding agents):
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name; add `--as <name>` only for a name of your own.
 5. `--expected-rev` is optional: only for edits on top of what you read (`--description` replaces the whole text; `--field`), pass the rev from your last read or write. Status, comment, claim, finish, `--append-description`: without it, and no `get` for it.
 6. REV_CONFLICT: re-apply your change on `error.details.task` (keep others' edits, merge the description) with its rev. Never retry blindly.
-7. ALREADY_CLAIMED: do not take over; run its `fix` (`--resume`: only your own task from before /clear or a restart). A checker's `finish` accepts a task handed in with `finish` or passes it to the next check (prime lists them), never its own work.
+7. ALREADY_CLAIMED: do not take over; run its `fix` (`--resume`: only your own task from before /clear or a restart). With checks, a checker's `finish` accepts a task handed in with `finish` or passes it to the next check, never its own work.
 8. Statuses (in order; the last one is final) and typed fields come from config; `laneboard prime` lists them. On UNKNOWN_* copy a value from `allowed`.
 9. Notes: `laneboard comment <ID> "<text>"` (`get` shows type `commented`). Files: `laneboard attach <ID> <path>`. Links: `--add-link branch=<name>` / `pr=<url>` / `commit=<sha>` (finish links HEAD).
 10. Finished tasks: `laneboard archive <ID>`. Old ones: `laneboard list --scope all --text <q>`.
@@ -22,7 +22,7 @@ short 3 73302aa1: Always pass `--json`. Name: without `--as`, the session defaul
 short 4 1fa716f3: New task, start: the create and claim commands below (`--status`, `--assignee`, `--json` set; subtask: `--parent <ID>`; `--as` only for your own name, rule 3).
 short 5 75e18f80: `--expected-rev` only for edits on top of what you read (`--description`, `--field`): your last rev. Not for status, comment, claim, finish, `--append-description`.
 short 6 1573e298: REV_CONFLICT: re-apply your change on `error.details.task` with its rev (keep others' edits); never retry blindly.
-short 7 4e3f60ee: ALREADY_CLAIMED: do not take over; run its `fix` (`--resume`: only your own task from before /clear or a restart).
+short 7 3ee89210: ALREADY_CLAIMED: do not take over; run its `fix` (`--resume`: only your own task from before /clear or a restart).
 short 8 49f53a24: Statuses (in order; last is final), typed fields: the lines below the store. On UNKNOWN_* copy a value from `allowed`.
 short 9 178bbb03: Notes: `laneboard comment <ID> "<text>"`; files: `laneboard attach <ID> <path>`; links: `--add-link commit=<sha>` (branch=, pr=; finish links HEAD).
 short 11 cdb10d5f: Ids are exact, with the board prefix (WEB-12). Every `--json` reply names `store` and `prefix`: write only to your project's board.

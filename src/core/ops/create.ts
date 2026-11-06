@@ -73,8 +73,8 @@ export function checkCreator(config: ConfigT, active: StoreFileT, actor: string,
   const on = parent ?? own;
   const fix =
     on === undefined
-      ? `report the task you need to whoever started you (${who} create tasks here), then wait for its id: laneboard claim <ID> --as ${shellQuote(actor)}`
-      : `laneboard comment ${on} "<task you need, for ${who} to create>" --as ${shellQuote(actor)}`;
+      ? `report the task you need to whoever started you (${who} create tasks here), then wait for its id: laneboard claim <ID> --as ${shellQuote(actor)} --json`
+      : `laneboard comment ${on} "<task you need, for ${who} to create>" --as ${shellQuote(actor)} --json`;
   throw new LaneboardError('INVALID_VALUE', `on this board only ${who} create tasks (config create_by), and you write as ${actor}; do not create it under another name: ask them`, {
     details: { create_by: [...creators] },
     fix,
@@ -91,6 +91,8 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
   labels.forEach(checkLabel);
   const links = unique(p.links ?? [], linkKey);
   const warnings: string[] = [];
+  // A name in create_by hands tasks out (LB-61.1): its task for another name gets no "not to you" warning.
+  let handsOut = false;
   // Links to other boards: checked there before this board's lock is taken (ADR §30).
   const checked = await checkForeignTaskLinks(ctx, links, warnings);
   const data = await transact(
@@ -98,6 +100,7 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
     { files: ['active', 'archive'] },
     (s) => {
       checkCreator(s.config, s.active, actor, parentForFix(p.parent, s.config.prefix));
+      handsOut = s.config.create_by !== undefined;
       checkStatus(s.config, p.status);
       const fields = { ...(p.fields ?? {}), ...parseFieldArgs(s.config, p.field_args ?? []) };
       checkFields(s.config, fields);
@@ -142,12 +145,13 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
     },
     txOptions(ctx, warnings),
   );
-  if (data.assignee !== null && data.assignee !== actor) warnings.push(otherAssignee(data, actor));
+  if (data.assignee !== null && data.assignee !== actor && !handsOut) warnings.push(otherAssignee(data, actor));
   return { data, warnings };
 }
 
 // Warning for a task created for an assignee other than the writer: right for an orchestrator handing work out, but an agent
-// that made up a name for itself (--assignee backend-developer without --as) would not find the task as its own in prime.
+// that made up a name for itself (--assignee backend-developer without --as) would not find the task as its own in prime. Not on a
+// board with create_by (LB-61.1): only its named creators get this far, and handing work out is what they create tasks for.
 function otherAssignee(task: TaskView, actor: string): string {
   const assignee = task.assignee ?? '';
   return (

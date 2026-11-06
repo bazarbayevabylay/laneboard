@@ -55,7 +55,8 @@ describe('rules 1 and 7 (A-U4, P1/P2) within the budgets', () => {
     const rules = agentRules();
     const line = (n: number): string => rules.split('\n').find((l) => l.startsWith(`${n}. `)) ?? '';
     expect(line(1)).toContain('claim your task or create one (`laneboard prime` says how, or whom to ask)');
-    expect(line(7)).toContain("A checker's `finish` accepts a task handed in with `finish` or passes it to the next check (prime lists them), never its own work.");
+    // LB-57.1: the sentence is for a board with checks (prime leaves it out elsewhere).
+    expect(line(7)).toContain("With checks, a checker's `finish` accepts a task handed in with `finish` or passes it to the next check, never its own work.");
     expect(rules.length).toBeLessThanOrEqual(RULES_MAX_CHARS);
     expect(shortRules(rules).length).toBeLessThanOrEqual(SHORT_RULES_MAX_CHARS);
     expect(mcpRules().length).toBeLessThanOrEqual(4096);
@@ -70,7 +71,7 @@ describe('P2: create_by (config --creators)', () => {
     expect(r.code).toBe(2);
     expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', details: { create_by: ['orch'] } });
     expect(r.doc.error.message).toContain('only orch create tasks (config create_by), and you write as dev-a');
-    expect(r.doc.error.fix).toBe('laneboard comment API-1 "<task you need, for orch to create>" --as dev-a');
+    expect(r.doc.error.fix).toBe('laneboard comment API-1 "<task you need, for orch to create>" --as dev-a --json');
     expect(await ids(s)).toEqual(before);
     expect((await run(s, 'orch', ['create', 'Extra', '--status', 'ready'])).code).toBe(0);
   });
@@ -79,10 +80,10 @@ describe('P2: create_by (config --creators)', () => {
     const s = await board({ creators: ['orch'] });
     const r = await run(s, 'dev-b', ['create', 'Extra', '--status', 'ready']);
     expect(r.code).toBe(2);
-    expect(r.doc.error.fix).toBe('report the task you need to whoever started you (orch create tasks here), then wait for its id: laneboard claim <ID> --as dev-b');
+    expect(r.doc.error.fix).toBe('report the task you need to whoever started you (orch create tasks here), then wait for its id: laneboard claim <ID> --as dev-b --json');
     const sub = await run(s, 'dev-b', ['create', 'Sub', '--status', 'ready', '--parent', 'API-1']);
     expect(sub.code).toBe(2);
-    expect(sub.doc.error.fix).toBe('laneboard comment API-1 "<task you need, for orch to create>" --as dev-b');
+    expect(sub.doc.error.fix).toBe('laneboard comment API-1 "<task you need, for orch to create>" --as dev-b --json');
   });
 
   it('import of a non-creator is refused, the dry run too; the creator imports', async () => {
@@ -122,7 +123,7 @@ describe('P2: create_by (config --creators)', () => {
     try {
       const r = await client.callTool({ name: 'task_create', arguments: { title: 'Extra', status: 'ready' } });
       expect(r.isError).toBe(true);
-      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<task you need, for orch to create>" --as dev-a' });
+      expect(r.structuredContent).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard comment API-1 "<task you need, for orch to create>" --as dev-a --json' });
       const prime = await client.callTool({ name: 'task_prime', arguments: {} });
       expect((prime.structuredContent as Record<string, any>).roles).toMatchObject({ checks: ['code_review', 'qa'], creators: ['orch'], can_create: false, work_status: 'dev' });
     } finally {

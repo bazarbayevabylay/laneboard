@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, claimTask, createTask, shortRuleForms } from '../../src/core/index.ts';
-import { BOARD_DATA_NOTE, PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
+import { BOARD_DATA_NOTE, boardRules, PRIME_MAX_CHARS, primeText } from '../../src/cli/format.ts';
 import type { PrimeData } from '../../src/cli/format.ts';
 import { as, ceilingRules, cleanupTemp, cli, newStore, tempDir, writeRaw } from '../helpers.ts';
 
@@ -19,12 +19,14 @@ describe('prime', () => {
     const r = await cli(['prime', '--hook'], { cwd: s.root, env: { LANEBOARD_AGENT: 'dev-1' } });
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
+    // A board without checks: rule 7 without its checker sentence (LB-57.1).
     expect(r.stdout).toBe(
-      `${agentRules()}\n\n${BOARD_DATA_NOTE}\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1; done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
+      `${boardRules(agentRules(), false)}\n\n${BOARD_DATA_NOTE}\nStore: ${s.dir} (prefix LB) - test: test board\nStatuses in order (final: done), active tasks: todo 1, in_progress 1, review 1; done 0\nFields (--field key=value): priority (number, 0 = highest)\nYour active tasks (dev-1), newest update first:\n  LB-3  [todo]  rev 1  Mine second\n  LB-1  [in_progress]  rev 2  Mine first\n`,
     );
     const json = JSON.parse((await cli(['prime', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(json).toMatchObject({ store: s.dir, prefix: 'LB', warnings: [] });
-    expect(json.data).toMatchObject({ rules: agentRules(), agent: 'dev-1', store: s.dir, prefix: 'LB', store_warning: null, store_problem: null, first_status: 'todo', final_status: 'done', in_progress: 2, fields: { priority: { type: 'number', description: '0 = highest', example: 'priority=1' } } });
+    // in_progress leaves out LB-3 in the first status (LB-57.3); both are listed.
+    expect(json.data).toMatchObject({ rules: agentRules(), agent: 'dev-1', store: s.dir, prefix: 'LB', store_warning: null, store_problem: null, first_status: 'todo', final_status: 'done', in_progress: 1, fields: { priority: { type: 'number', description: '0 = highest', example: 'priority=1' } } });
     expect(json.data.tasks.map((t: { id: string }) => t.id)).toEqual(['LB-3', 'LB-1']);
   });
 
@@ -161,7 +163,8 @@ describe('prime', () => {
     expect(r.code).toBe(0);
     const text = r.stdout.trimEnd();
     expect(text.length).toBeLessThanOrEqual(PRIME_MAX_CHARS);
-    expect(text.startsWith(agentRules())).toBe(true);
+    // A board without checks: rule 7 without its checker sentence (LB-57.1).
+    expect(text.startsWith(boardRules(agentRules(), false))).toBe(true);
     const more = /\n\.\.\. (\d+) more: laneboard list --assignee dev-1 --status todo --status in_progress --status review --json$/.exec(text);
     expect(more).not.toBeNull();
     const shown = text.split('\n').filter((l) => /^ {2}LB-\d+ /.test(l)).length;
