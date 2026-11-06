@@ -787,29 +787,27 @@ Checks
 - U1 (MAJOR): after a restart the orchestrator's SessionStart hook ran `prime --hook` under the session's default name, not the name
   in `--reviewers`/`--creators` (`orch`): "Only orch create tasks here (not you)", no "Waiting for your check". The only documented knob,
   `LANEBOARD_AGENT=orch`, is inherited by subagents (order `--as` > `LANEBOARD_AGENT`), so a subagent without `--as` wrote as `orch`.
-  Sources, checked 2026-11-06: code.claude.com/docs/en/hooks ("SessionStart: runs when Claude Code starts a new session or resumes an
-  existing session"; spawning a subagent fires `SubagentStart`, whose `additionalContext` goes into the subagent's own conversation;
-  "Hooks from settings files ... also run inside subagents. When a subagent calls a tool, tool events such as PreToolUse and PostToolUse
-  fire") and code.claude.com/docs/en/sub-agents (in settings.json "tool events ... fire for the subagent's tool calls ..., and
-  SubagentStart and SubagentStop fire when a subagent starts or finishes"; "Each subagent starts with a fresh, isolated context window";
-  subagents load CLAUDE.md). So SessionStart never runs inside a subagent and its text reaches only the main conversation.
-  Decision: optional `setup claude-code --as <name>` writes the SessionStart hook as `laneboard prime --hook --as <name>` (`primeHookCommand`);
-  prime under the hook's own explicit `--as` prints `Your name: <name>, given by this project's SessionStart hook ...: pass --as <name>
-  on every laneboard command (MCP tools: actor <name>); never export LANEBOARD_AGENT. Subagents and parallel workers are not <name> ...`
-  (`PrimeData.hook_named`, text only; in the closing block, so PRIME_MAX_CHARS counts it). The name goes nowhere a subagent reads:
-  not the env (settings `env` reaches every subprocess, subagents' Bash too), not CLAUDE.md (subagents load it), not the edit hook
-  (PostToolUse fires inside subagents), not `mcp --as` (the MCP server is shared by the session and its subagents). Without `--as`
-  setup, the hook and prime are unchanged. Our SessionStart entry is recognized with any name (`primeHookName`), so a later setup
-  replaces it as told (without `--as`: back to `PRIME_HOOK_COMMAND`, with a warning naming `setup claude-code --as <old>` to keep it;
-  another name: a warning) and `--remove` takes it out. `--as` for another harness is `USAGE` (fix drops it): setup writes no hook there,
-  and ignoring it would leave the orchestrator believing its name is set; Codex (and cursor, gemini, opencode) get no hook from setup,
-  so an orchestrator passes `--as` on every command and runs `prime --as <name>` after a restart (README). A bad name: `INVALID_VALUE`.
-  The hook lives in the committed `.claude/settings.json` with the other hooks: the name is the project's orchestrator role, not a
-  personal one. Rejected: a config key `orchestrator` (a board-wide name every session's hook would take, subagents' hooks too, and
-  config@2 would grow); `LANEBOARD_AGENT` in settings env (inherited by subagents, the U1 risk itself); the hook in settings.local.json
-  (Claude Code runs the hooks of both files, so the hook without a name would run too); matching the default name's base (U5, backlog).
-  Residual: the plugin's hook has no name (use setup for this); a person who opens a second main session in the project also starts as
-  that name, and its claims meet the first session's as one name (two orchestrators of one project need two names by hand).
+  Decision (r1, owner of the orchestration): no project file carries a name; a hint instead. For a session with no name of its own
+  (the default name, or none) on a board with named roles (`review.by` non-empty, or `create_by`) that do not include its name, prime
+  and the hook print one line after the session line (`namedRolesLine`, closing block, so PRIME_MAX_CHARS counts it; each list cut at
+  80 characters, the full lists are in the roles line): "Named roles here: reviewers rev, orch; creators orch. If you are one of
+  them, run `laneboard prime --as <name>` and pass --as <name> to every command." A named session (`--as`, `LANEBOARD_AGENT`) gets
+  none. "(not you)" after the creators is said only to a named session; an unnamed one reads "(not under the default name)" or
+  "(not without a name)", and the way to get a task starts "not one of them? ask whoever started you ...". The orchestrator runs
+  `laneboard prime --as orch` first after a restart and keeps its name in its own instructions (README "Your name after a restart").
+  `setup --as` is `USAGE` for every harness (fix drops it), never ignored: the orchestrator would believe its name is set.
+  `LANEBOARD_AGENT` is advised only with its condition (ACTOR_REQUIRED message, the keep-the-name line of prime): a single agent with
+  no subagents; subagents inherit it.
+  Rejected: (1) the name in the SessionStart hook of the committed `.claude/settings.json` (`setup claude-code --as orch`, S7a before
+  r1): every main session that reads the file got it, a colleague's clone, a second window, a worker started as its own session in a
+  linked worktree; such a worker created, claimed and handed in as `orch`, and the real `orch` could not check the task (the author
+  never checks its own work, §43); (2) the name in `.claude/settings.local.json` (review proposal: a key only `prime --hook` reads):
+  closes the colleague's clone, not the sessions of one machine, since Claude Code uses the main checkout's local file in a linked
+  worktree too (code.claude.com/docs/en/settings); (3) `LANEBOARD_AGENT` in the env or settings `env`: subagents and every subprocess
+  inherit it; (4) a config key `orchestrator`: a board-wide name every session would take; (5) matching the default name's base (U5, backlog).
+  Residual: an unnamed session that is not the orchestrator reads the hint too (it says "if you are one of them"); the orchestrator
+  depends on its own instructions to name itself after a restart; MCP `task_prime` has no hint (its `roles` carry the names, the
+  server's actor is set by `mcp --as`).
 - U6 (MINOR): rev ran the documented return (`comment <ID> -- '<why>' && update <ID> --status <work>`, the fix of its own refused
   finish) and got the A17 warning "was handed in; after this move it is not ... laneboard finish <ID> --status <check> ... --as dev-3",
   as if it erred, with a command under the author's name. Decision: an update that is a return for rework (`returnByThisWrite`:
@@ -820,9 +818,14 @@ Checks
   the checkers' queue` (unassigned: "nobody (unassigned)", "whoever takes it"). The S6z warning of a return with no reason stays.
   A17 stays for every move that is no return: the author's own move out of a check (its own hand-in), a close by update into the final
   status, claim (refused for a waiting task since S6w r2; an old hand-in outside the checks); without checks nothing changes.
-  Checks: test/cli/s7a.test.ts (setup hook with and without `--as`, rerun, replace, remove, codex refusal, bad name, the hook run in sh
-  with the env setup wrote: queue, create, the line; control without `--as`; a subagent's write under the default name; the line only
-  for the hook's own `--as`; 64-character name within PRIME_MAX_CHARS; U6 on two and one check: the refusal's fix run as printed, JSON
-  reply, no reason, new holder and unassigned, later moves of a returned task, author's move and close by update keep A17, no checks), test/mcp/s7a.test.ts.
+  `returned` has two shapes on purpose: the write reply `{to, reason}` tells the returner who reworks it and why; prime's feedback
+  `{by, at}` tells the holder who returned it and when (the reason is its `comment`).
+  Checks: test/cli/s7a.test.ts (U1 r1: setup refuses `--as` for every harness, with `--remove` and empty, nothing written, usage
+  without it; setup writes no name; the hook of an unnamed main session: the hint, no "not you", no orch queue; another window: hint,
+  writes under its own default name; `prime --as orch`: queue, create, no hint; named sessions: no hint, "not you" kept; no hint on a
+  board without named roles or with checks by anybody; reviewers or creators alone; no name at all: hint; a default name inside the
+  roles: no hint; long name lists within PRIME_MAX_CHARS. U6 on two and one check: the refusal's fix run as printed, JSON reply, no
+  reason, new holder and unassigned, later moves of a returned task, author's move and close by update keep A17, no checks), test/mcp/s7a.test.ts.
   Expectations rewritten: s6j (6) (the return now has no warning and `returned`), s6w R3 (A17's hand-in is run after the author's own
-  move; rev's return has `returned`). Golden files: help.txt (setup usage gains `[--as <name>]`).
+  move; rev's return has `returned`), prime.test.ts (the keep-the-name line names LANEBOARD_AGENT's condition). Golden files:
+  error-ACTOR_REQUIRED.txt and prime-no-agent.txt (LANEBOARD_AGENT with its condition); help.txt as before S7a.

@@ -38,7 +38,7 @@ describe('prime', () => {
         'Statuses in order (final: done), active tasks: todo 0, in_progress 0, review 0; done 1\nFields (--field key=value): priority (number, 0 = highest)\n' +
           'You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:\n' +
           '  laneboard create "<short title of your work>" --status todo --assignee <your-name> --as <your-name> --json\n' +
-          'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).\n',
+          'Then pass the same --as <your-name> on every command (export LANEBOARD_AGENT=<your-name> only if no subagent runs under you: they inherit it).\n',
       ),
     ).toBe(true);
   });

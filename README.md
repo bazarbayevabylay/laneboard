@@ -103,8 +103,8 @@ laneboard setup codex
   `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
 - Under the default name the edit reminder stays silent while any open task of the board has an assignee (anybody's: subagents
   share the default name). For reminders about your own tasks only, set `LANEBOARD_AGENT=<your name>`.
-- `laneboard setup claude-code --as orch` writes the SessionStart hook as `laneboard prime --hook --as orch`: the main session starts
-  as `orch` after every restart (Orchestrators, "Your name after a restart"). Without `--as` the hook is as above.
+- On a board with `--reviewers` or `--creators`, a session with no name of its own reads one line with those names and
+  `laneboard prime --as <name>` (Orchestrators, "Your name after a restart"). No file setup writes carries a name.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
 - Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
   `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks.
@@ -250,21 +250,24 @@ laneboard config --review-statuses none --reviewers none --json
 ### Your name after a restart
 
 The orchestrator's name is in `--reviewers` or `--creators` (say `orch`), but after a restart or `/clear` a Claude Code session gets
-a new default name. So that the SessionStart hook shows `orch`'s queue and lets it create tasks, set the name once in the project:
+a new default name. So the orchestrator's first command after a restart is:
 
 ```sh
-laneboard setup claude-code --as orch --dry-run
+laneboard prime --as orch
 ```
 
-- Without `--dry-run` it writes the SessionStart hook as `laneboard prime --hook --as orch`. The hook prints the rules and the
-  board for `orch`, "Waiting for your check" with the pass commands, and a line to pass `--as orch` on every command (MCP: `actor`).
-- Subagents never get the name: SessionStart runs for the session only, and its text reaches only the main conversation.
-  The env, `CLAUDE.md` and the edit hook carry no name: subagents inherit the env, read `CLAUDE.md` and run the edit hook too.
-- Do not `export LANEBOARD_AGENT=orch` in the orchestrator's session: its subagents inherit it, and one without `--as` would write as `orch`.
-- A later `setup claude-code` without `--as` writes the hook without a name again and warns; `--remove` takes it out.
-  The hook lives in the committed `.claude/settings.json`, so the name is the project's orchestrator name, not a personal one.
-- Codex and the other harnesses have no hook from setup (`setup codex --as` is refused): the orchestrator passes `--as orch` on every
-  command and runs `laneboard prime --as orch` first after a restart.
+- Then it passes `--as orch` on every command (MCP: `actor`). Its `prime` shows "Waiting for your check" with the pass commands and
+  the create command.
+- Keep the name in the orchestrator's own instructions (its prompt, or the note it reads after a restart), never in a shared file.
+- Why not a shared file: `.claude/settings.json`, `.claude/settings.local.json`, `CLAUDE.md` and the env reach every session that
+  reads them: a colleague's clone, a second window, a worker in a linked worktree (Claude Code shares the local file with them too).
+  Such a worker would write as `orch`, and the real `orch` could not check its task: the author never checks its own work.
+  So `setup` takes no `--as` (`USAGE`).
+- Until a session names itself, the SessionStart hook and `prime` print one line on such a board: "Named roles here: reviewers rev,
+  orch; creators orch. If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command."
+  A named session (`--as`, `LANEBOARD_AGENT`) does not see it.
+- `export LANEBOARD_AGENT=<name>` suits a single agent with no subagents (say in Codex or a script). Never in an orchestrator's
+  session: its subagents inherit it, and one without `--as` would write as `orch`.
 
 ### Taking over a claimed task
 

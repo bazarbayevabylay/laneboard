@@ -290,10 +290,11 @@ under its default name) is its author: it never passes it on or accepts it, and 
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
 of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
 
-An orchestrator named in `--reviewers` or `--creators` (say `orch`) keeps that name after a restart with `laneboard setup claude-code --as orch`:
-the SessionStart hook then runs `prime --hook --as orch` and says to pass `--as orch` on every command. SessionStart runs for the session
-only and its text reaches only the main conversation, so subagents never get the name; the env, `CLAUDE.md` and the edit hook carry none.
-Never `export LANEBOARD_AGENT=orch` there: subagents inherit it. Codex and the other harnesses get no hook from setup: pass `--as`.
+An orchestrator named in `--reviewers` or `--creators` (say `orch`) runs `laneboard prime --as orch` first after a restart and passes
+`--as orch` on every command; it keeps that name in its own instructions, never in a shared file (settings, `CLAUDE.md`, env): those reach
+every session that reads them (a colleague's clone, another window, a worker in a linked worktree), so `setup` takes no `--as`.
+Until a session names itself, `prime` and the SessionStart hook on such a board print `Named roles here: ...` with the names and that
+command; a named session does not see it. Never `export LANEBOARD_AGENT=orch` there: subagents inherit it.
 
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name

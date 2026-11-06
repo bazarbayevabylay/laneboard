@@ -21,7 +21,7 @@ import type { TextEdit } from '../files.ts';
 import { jsonEdit, jsonEdits, jsonValueAt } from '../json-key.ts';
 import type { JsonOwned } from '../json-key.ts';
 import { blockEdit, MD_MARKERS } from '../md-block.ts';
-import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, MCP_ARGS, MCP_COMMAND, primeHookCommand, primeHookName, shellWord } from './common.ts';
+import { EDIT_HOOK_COMMAND, EDIT_HOOK_MATCHER, instructionLines, MCP_ARGS, MCP_COMMAND, PRIME_HOOK_COMMAND, shellWord } from './common.ts';
 import type { Harness, HarnessContext, StorePin } from './common.ts';
 import { gitExclude, gitRoot } from './git-exclude.ts';
 
@@ -30,35 +30,28 @@ const LOCAL_SETTINGS = '.claude/settings.local.json';
 const ENV_DIR = ['env', 'LANEBOARD_DIR'];
 const ENV_AGENT = ['env', 'LANEBOARD_DEFAULT_AGENT'];
 
-// Does this matcher group run a command `ours` recognizes (so it is ours)?
-function runs(ours: (command: unknown) => boolean): (entry: unknown) => boolean {
+// Does this matcher group run `command` (so it is ours)?
+function runs(command: string): (entry: unknown) => boolean {
   return (entry) => {
     const hooks = (entry as { hooks?: unknown } | null)?.hooks;
-    return Array.isArray(hooks) && hooks.some((h) => ours((h as { command?: unknown } | null)?.command));
+    return Array.isArray(hooks) && hooks.some((h) => (h as { command?: unknown } | null)?.command === command);
   };
 }
 
-// The SessionStart hook setup wrote, with or without --as (primeHookName), is ours: a setup with another name (or none) replaces it.
-const isPrimeHook = (command: unknown): boolean => primeHookName(command) !== undefined;
-
-// The hooks: SessionStart runs prime under the main session's name when setup got --as (ADR §55); the edit reminder never takes it,
-// as PostToolUse fires inside subagents too (code.claude.com/docs/en/hooks: tool events run the same hooks there).
-function hookParts(c: HarnessContext): JsonOwned[] {
-  return [
-    {
-      kind: 'entry',
-      path: ['hooks', 'SessionStart'],
-      value: { matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: primeHookCommand(c.hookAs) }] },
-      match: runs(isPrimeHook),
-    },
-    {
-      kind: 'entry',
-      path: ['hooks', 'PostToolUse'],
-      value: { matcher: EDIT_HOOK_MATCHER, hooks: [{ type: 'command', command: EDIT_HOOK_COMMAND }] },
-      match: runs((command) => command === EDIT_HOOK_COMMAND),
-    },
-  ];
-}
+const HOOK_PARTS: JsonOwned[] = [
+  {
+    kind: 'entry',
+    path: ['hooks', 'SessionStart'],
+    value: { matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: PRIME_HOOK_COMMAND }] },
+    match: runs(PRIME_HOOK_COMMAND),
+  },
+  {
+    kind: 'entry',
+    path: ['hooks', 'PostToolUse'],
+    value: { matcher: EDIT_HOOK_MATCHER, hooks: [{ type: 'command', command: EDIT_HOOK_COMMAND }] },
+    match: runs(EDIT_HOOK_COMMAND),
+  },
+];
 
 // The env keys with any value (for strip and owns; the value does not matter there).
 const ENV_KEYS: JsonOwned[] = [
@@ -245,18 +238,17 @@ export function movingPin(text: string | null, c: HarnessContext): string | unde
 // Edit of a settings file: the hooks and/or the env. Without the env (it goes to a local file) the hooks file loses a pin an earlier
 // setup left there (movingPin) and refuses another store pinned in it; --remove takes such a pin out too.
 function settingsEdit(file: string, c: HarnessContext, parts: { hooks: boolean; env: boolean }): TextEdit {
-  const hookOwned = hookParts(c);
-  const owned = [...(parts.hooks ? hookOwned : []), ...(parts.env ? ENV_KEYS : [])];
+  const owned = [...(parts.hooks ? HOOK_PARTS : []), ...(parts.env ? ENV_KEYS : [])];
   const any = jsonEdits(file, owned);
-  const hooksOnly = jsonEdits(file, hookOwned);
+  const hooksOnly = jsonEdits(file, HOOK_PARTS);
   const envOnly = jsonEdits(file, ENV_KEYS);
   const bothEnv = ENV_KEYS.map((k) => jsonEdits(file, [k]));
-  const all = jsonEdits(file, [...hookOwned, ...ENV_KEYS]);
+  const all = jsonEdits(file, [...HOOK_PARTS, ...ENV_KEYS]);
   if (parts.env) {
     return {
       add(text) {
         if (parts.hooks) checkRootPin(c);
-        return jsonEdits(file, [...(parts.hooks ? hookOwned : []), ...envParts(file, text, c)]).add(text);
+        return jsonEdits(file, [...(parts.hooks ? HOOK_PARTS : []), ...envParts(file, text, c)]).add(text);
       },
       strip: (text) => any.strip(text),
       owns: (text) => any.owns(text),
@@ -336,36 +328,6 @@ function committedPinWarnings(c: HarnessContext): string[] {
   ];
 }
 
-// The main session's names in the SessionStart hooks setup wrote into .claude/settings.json ('' for a hook without --as).
-function hookNames(c: HarnessContext): string[] {
-  let groups: unknown;
-  try {
-    groups = jsonValueAt(readText(path.join(c.cwd, SETTINGS)), ['hooks', 'SessionStart']);
-  } catch {
-    // An unreadable settings file: setup itself reports it when it plans the write; here it only means "no name known".
-    return [];
-  }
-  if (!Array.isArray(groups)) return [];
-  const commands = groups.flatMap((g) => {
-    const hooks = (g as { hooks?: unknown } | null)?.hooks;
-    return Array.isArray(hooks) ? hooks.map((h) => (h as { command?: unknown } | null)?.command) : [];
-  });
-  return commands.map(primeHookName).filter((name): name is string => name !== undefined);
-}
-
-// A setup that drops or changes the main session's name an earlier setup --as put into the SessionStart hook (ADR §55): say so, and
-// how to keep it (setup writes the hook as this run is told).
-function hookNameWarnings(c: HarnessContext): string[] {
-  const now = c.hookAs ?? '';
-  return [...new Set(hookNames(c))]
-    .filter((name) => name !== '' && name !== now)
-    .map((name) =>
-      now === ''
-        ? `the SessionStart hook in ${SETTINGS} ran laneboard prime --hook --as ${name}; this setup without --as writes it without a name, so after a restart the main session gets the session's default name again; to keep ${name}: laneboard setup claude-code --as ${name}`
-        : `the SessionStart hook in ${SETTINGS} ran laneboard prime --hook --as ${name}; this setup writes --as ${now} instead`,
-    );
-}
-
 // Is this path in the machine registry? A registry that cannot be read says no (setup reports it when it registers the board).
 function registered(c: HarnessContext, dir: string): boolean {
   try {
@@ -431,6 +393,6 @@ export const claudeCode: Harness = {
     const plugin = dir
       ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove`]
       : [];
-    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...hookNameWarnings(c), ...plugin];
+    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...plugin];
   },
 };

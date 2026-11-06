@@ -27,7 +27,7 @@ You have no task in progress (your name is not set). Start one the first way tha
 2. A free task below fits the request: as in 1.
 3. Otherwise create one:
   laneboard create "<short title of your work>" --status todo --assignee <your-name> --as <your-name> --json
-Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).
+Then pass the same --as <your-name> on every command (export LANEBOARD_AGENT=<your-name> only if no subagent runs under you: they inherit it).
 Free tasks (no assignee):
   LB-1  [todo]  rev 1  Fix login
 --- stderr

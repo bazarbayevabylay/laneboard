@@ -1,9 +1,9 @@
 // S7a (UX run 8, persona B: U1, U6).
 // U1: after a restart the orchestrator's SessionStart hook ran prime under the session's default name, not the name in --reviewers or
-// --creators (orch): "Only orch create tasks (not you)" and no queue of its checks. `setup claude-code --as orch` now writes the
-// SessionStart hook with `prime --hook --as orch`, and that hook says to pass --as orch on every command. SessionStart fires for the
-// session only and its output reaches only the main conversation, so no subagent gets the name; nothing goes into the env (subagents'
-// Bash inherits it) and the edit hook (PostToolUse fires inside subagents too) stays without a name. Without --as nothing changes.
+// --creators (orch): "Only orch create tasks (not you)" and no queue of its checks. r1: no project file carries a name (a name there
+// reaches every session that reads it: a colleague's clone, another window, a worker in a linked worktree), so `setup --as` is refused.
+// An unnamed session on a board with named roles reads one line with the names and `laneboard prime --as <name>`; "not you" is said
+// only to a session that named itself. The orchestrator runs `laneboard prime --as orch` first after a restart (README).
 // U6: the documented return for rework (comment, then update into the work status) warned the checker as if it erred, with the
 // author's hand-in under the author's --as; now the reply confirms the return (to whom, the reason, the author hands it in again).
 import { execFileSync } from 'node:child_process';
@@ -18,8 +18,9 @@ import type { TestStore } from '../helpers.ts';
 afterAll(cleanupTemp);
 
 const SESSION = '0rch0002-bbbb-4bbb-8bbb-000000000002';
-const HOOK_LINE =
-  "Your name: orch, given by this project's SessionStart hook (laneboard setup claude-code --as orch): pass --as orch on every laneboard command (MCP tools: actor orch); never export LANEBOARD_AGENT. Subagents and parallel workers are not orch: each passes its own --as <name>.";
+const OTHER_SESSION = '0the0003-cccc-4ccc-8ccc-000000000003';
+const HINT =
+  'Named roles here: reviewers rev, orch; creators orch. If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command.';
 
 interface Project {
   cwd: string;
@@ -28,13 +29,14 @@ interface Project {
   run: (argv: string[], env?: Record<string, string>) => ReturnType<typeof cli>;
 }
 
-// A project with the run 8 board: statuses with two checks, reviewers rev and orch, creators orch; a temp HOME (no git).
-async function project(): Promise<Project> {
+// A project with a board under a temp HOME (no git): the run 8 board (statuses with two checks, reviewers rev and orch, creators
+// orch) unless `roles` gives other config arguments ([] for a board without named roles).
+async function project(roles = ['--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch', '--creators', 'orch']): Promise<Project> {
   const cwd = tempDir();
   const home = tempDir();
   const run = (argv: string[], env: Record<string, string> = {}): ReturnType<typeof cli> => cli(argv, { cwd, env: { HOME: home, ...env } });
   expect((await run(['init', '--description', 'run 8 board', '--prefix', 'BACK', '--statuses', 'todo,in_progress,code_review,qa,done'])).code).toBe(0);
-  expect((await run(['config', '--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch', '--creators', 'orch'])).code).toBe(0);
+  if (roles.length > 0) expect((await run(['config', ...roles])).code).toBe(0);
   return { cwd, home, run };
 }
 
@@ -59,18 +61,18 @@ function binDir(): string {
 }
 
 // The environment Claude Code gives a session in the project and its subprocesses: the env of the local settings setup wrote, the session id.
-function sessionEnv(p: Project): Record<string, string> {
+function sessionEnv(p: Project, session = SESSION): Record<string, string> {
   const env = (readJson(p, '.claude/settings.local.json')?.env ?? {}) as Record<string, string>;
-  return { ...env, HOME: p.home, CLAUDE_CODE_SESSION_ID: SESSION };
+  return { ...env, HOME: p.home, CLAUDE_CODE_SESSION_ID: session };
 }
 
 // Run the SessionStart hook command setup wrote, in sh, as Claude Code does at startup (hook input on stdin); its stdout.
-function runHook(p: Project): string {
+function runHook(p: Project, session = SESSION): string {
   const [command] = hooks(p).start;
   return execFileSync('sh', ['-c', command ?? 'false'], {
     cwd: p.cwd,
-    env: { ...sessionEnv(p), PATH: `${binDir()}:${process.env.PATH ?? ''}` },
-    input: JSON.stringify({ source: 'startup', session_id: SESSION }),
+    env: { ...sessionEnv(p, session), PATH: `${binDir()}:${process.env.PATH ?? ''}` },
+    input: JSON.stringify({ source: 'startup', session_id: session }),
     encoding: 'utf8',
   });
 }
@@ -82,117 +84,126 @@ async function handedIn(p: Project): Promise<void> {
   expect((await p.run(['finish', 'BACK-1', '--result', 'endpoint added', '--no-commit', '--as', 'dev-1'])).code).toBe(0);
 }
 
-describe('S7a U1: setup claude-code --as <name> names the main session in the SessionStart hook', () => {
-  it('writes prime --hook --as orch in SessionStart only: the edit hook, the env and CLAUDE.md carry no name; a second run is unchanged', async () => {
+describe('S7a U1 r1: no project file names a session; an unnamed session reads the named roles and how to take one', () => {
+  it('setup refuses --as (USAGE, fix without it) for every harness, with --remove and empty too; nothing is written; usage has no --as', async () => {
     const p = await project();
-    const r = await p.run(['setup', 'claude-code', '--as', 'orch', '--json']);
-    expect(r.code).toBe(0);
-    expect(JSON.parse(r.stdout).warnings).toEqual([]);
-    expect(hooks(p)).toEqual({
-      start: ["command -v laneboard >/dev/null 2>&1 && laneboard prime --hook --as orch || echo 'laneboard CLI missing: npm i -g laneboard'"],
-      edit: [EDIT_HOOK_COMMAND],
-    });
-    // Subagents inherit the env and read CLAUDE.md, so neither holds the name.
-    expect(Object.keys(readJson(p, '.claude/settings.local.json')?.env ?? {}).sort()).toEqual(['LANEBOARD_DEFAULT_AGENT', 'LANEBOARD_DIR']);
-    expect(JSON.stringify(readJson(p, '.claude/settings.local.json'))).not.toContain('orch');
-    expect(fs.readFileSync(path.join(p.cwd, 'CLAUDE.md'), 'utf8')).not.toContain('orch');
-    const again = JSON.parse((await p.run(['setup', 'claude-code', '--as', 'orch', '--json'])).stdout);
-    expect(again.data.files.map((f: { result: string }) => f.result)).toEqual(again.data.files.map(() => 'unchanged'));
-  });
-
-  it('without --as setup writes the hook as before (PRIME_HOOK_COMMAND) and says nothing about a name', async () => {
-    const p = await project();
-    const r = JSON.parse((await p.run(['setup', 'claude-code', '--json'])).stdout);
-    expect(r.warnings).toEqual([]);
-    expect(hooks(p)).toEqual({ start: [PRIME_HOOK_COMMAND], edit: [EDIT_HOOK_COMMAND] });
-  });
-
-  it('a later setup without --as (or with another name) replaces the named hook and warns how to keep the name; --remove takes it out', async () => {
-    const p = await project();
-    expect((await p.run(['setup', 'claude-code', '--as', 'orch'])).code).toBe(0);
-    const plain = JSON.parse((await p.run(['setup', 'claude-code', '--json'])).stdout);
-    expect(plain.warnings).toEqual([
-      "the SessionStart hook in .claude/settings.json ran laneboard prime --hook --as orch; this setup without --as writes it without a name, so after a restart the main session gets the session's default name again; to keep orch: laneboard setup claude-code --as orch",
-    ]);
-    expect(hooks(p).start).toEqual([PRIME_HOOK_COMMAND]);
-    expect((await p.run(['setup', 'claude-code', '--as', 'orch'])).code).toBe(0);
-    const other = JSON.parse((await p.run(['setup', 'claude-code', '--as', 'lead', '--json'])).stdout);
-    expect(other.warnings).toEqual(['the SessionStart hook in .claude/settings.json ran laneboard prime --hook --as orch; this setup writes --as lead instead']);
-    expect(hooks(p).start).toEqual(["command -v laneboard >/dev/null 2>&1 && laneboard prime --hook --as lead || echo 'laneboard CLI missing: npm i -g laneboard'"]);
-    expect((await p.run(['setup', 'claude-code', '--remove'])).code).toBe(0);
-    expect(hooks(p)).toEqual({ start: [], edit: [] });
-  });
-
-  it('--as for a harness without a hook is refused, nothing written; a bad name is refused', async () => {
-    const p = await project();
-    const codex = await p.run(['setup', 'codex', '--as', 'orch', '--json']);
-    expect(codex.code).toBe(2);
-    expect(JSON.parse(codex.stdout).error).toEqual({
-      code: 'USAGE',
-      message: '--as names the main session in the SessionStart hook setup claude-code writes; setup codex writes no hook, so pass --as <name> on every laneboard command instead',
-      fix: 'laneboard setup codex --json',
-    });
-    expect(fs.existsSync(path.join(p.cwd, 'AGENTS.md'))).toBe(false);
-    const bad = await p.run(['setup', 'claude-code', '--as', 'orch lead', '--json']);
-    expect(JSON.parse(bad.stdout).error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard setup claude-code --as <name like orch> --json' });
+    for (const argv of [
+      ['setup', 'claude-code', '--as', 'orch'],
+      ['setup', 'codex', '--as', 'orch'],
+      ['setup', 'claude-code', '--remove', '--as', 'orch'],
+      ['setup', 'claude-code', '--as='],
+    ]) {
+      const r = await p.run([...argv, '--json']);
+      expect(r.code, argv.join(' ')).toBe(2);
+      const error = JSON.parse(r.stdout).error as { code: string; message: string; fix: string };
+      expect(error.code).toBe('USAGE');
+      expect(error.message).toContain('setup takes no --as');
+      expect(error.message).toContain('laneboard prime --as <name>');
+      expect(error.fix).toBe(`laneboard ${argv.filter((a) => a !== '--as' && a !== 'orch' && a !== '--as=').join(' ')} --json`);
+    }
     expect(fs.existsSync(path.join(p.cwd, '.claude'))).toBe(false);
+    expect(fs.existsSync(path.join(p.cwd, 'AGENTS.md'))).toBe(false);
+    const help = (await p.run(['setup', '--help'])).stdout;
+    expect(help.split('\n')[0]).toBe('laneboard setup <claude-code|codex|cursor|gemini|opencode> [--remove [--global]] [--dry-run]');
   });
 
-  it('the repro: after a restart the hook runs as orch - its queue with the pass command, create allowed, the line to pass --as orch', async () => {
+  it('setup writes the hooks without a name and puts no role name into any file', async () => {
     const p = await project();
-    expect((await p.run(['setup', 'claude-code', '--as', 'orch'])).code).toBe(0);
-    await handedIn(p);
-    const out = runHook(p);
-    expect(out).toContain(`\n${HOOK_LINE}\n`);
-    expect(out).toContain('Waiting for your check:\n  BACK-1  [code_review]');
-    expect(out).toContain('    pass: laneboard finish BACK-1 --status qa --result "<result of your check>" --as orch --json');
-    expect(out).toContain('laneboard create "<short title of your work>" --status todo --assignee orch --as orch --json');
-    expect(out).not.toContain('not you');
-    expect(out).not.toContain('Your name: session default');
-    expect(out.length).toBeLessThanOrEqual(PRIME_MAX_CHARS + 1);
+    expect(JSON.parse((await p.run(['setup', 'claude-code', '--json'])).stdout).warnings).toEqual([]);
+    expect(hooks(p)).toEqual({ start: [PRIME_HOOK_COMMAND], edit: [EDIT_HOOK_COMMAND] });
+    for (const file of ['.claude/settings.json', '.claude/settings.local.json', 'CLAUDE.md', '.mcp.json']) {
+      const full = path.join(p.cwd, file);
+      if (fs.existsSync(full)) expect(fs.readFileSync(full, 'utf8'), file).not.toMatch(/\borch\b|--as [A-Za-z0-9]/);
+    }
   });
 
-  it('control: the hook of a setup without --as runs under the session default name, as before (no hook line, not orch)', async () => {
+  it('the repro: the hook of an unnamed main session prints the hint, never "not you", and no queue of orch', async () => {
     const p = await project();
     expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
     await handedIn(p);
     const out = runHook(p);
     expect(out).toContain('Your name: session default claude-code@');
-    expect(out).not.toContain('given by this project');
+    expect(out).toContain(`\n${HINT}\n`);
+    expect(out).toContain('Only orch create tasks here (not under the default name).');
+    expect(out).toContain('Only orch create tasks on this board: not one of them? ask whoever started you for a task id');
+    expect(out).not.toContain('not you');
     expect(out).not.toContain('Waiting for your check');
+    expect(out).not.toContain('--as orch');
   });
 
-  it('a subagent of that session (the same env, no --as) never writes as orch: its name stays the session default', async () => {
+  it('another window (its own session) sees the hint too and writes under its own default name, never as orch', async () => {
     const p = await project();
-    expect((await p.run(['setup', 'claude-code', '--as', 'orch'])).code).toBe(0);
+    expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
     await handedIn(p);
-    const r = await cli(['comment', 'BACK-1', 'subagent note', '--json'], { cwd: p.cwd, env: sessionEnv(p) });
-    expect(r.code).toBe(0);
+    expect(runHook(p, OTHER_SESSION)).toContain(HINT);
+    expect((await cli(['comment', 'BACK-1', 'second window note', '--json'], { cwd: p.cwd, env: sessionEnv(p, OTHER_SESSION) })).code).toBe(0);
     const events = JSON.parse((await p.run(['get', 'BACK-1', '--json'])).stdout).data.events as Array<{ type: string; actor: string; actor_source: string }>;
-    expect(events.at(-1)).toMatchObject({ type: 'commented', actor: expect.stringMatching(/^claude-code@.+:0rch0002$/), actor_source: 'default' });
+    expect(events.at(-1)).toMatchObject({ type: 'commented', actor: expect.stringMatching(/^claude-code@.+:0the0003$/), actor_source: 'default' });
   });
 
-  it('the line is only the hook\'s own --as: plain prime --as orch, and the hook under LANEBOARD_AGENT, print it not', async () => {
+  it('the orchestrator after prime --as orch: its queue with the pass command, create allowed, no hint', async () => {
     const p = await project();
-    expect((await p.run(['prime', '--as', 'orch'])).stdout).not.toContain('given by this project');
-    const viaEnv = await p.run(['prime', '--hook'], { LANEBOARD_AGENT: 'orch' });
-    expect(viaEnv.stdout).not.toContain('given by this project');
-    const viaAs = await p.run(['prime', '--hook', '--as', 'orch']);
-    expect(viaAs.stdout).toContain(HOOK_LINE);
+    expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
+    await handedIn(p);
+    const out = (await cli(['prime', '--as', 'orch'], { cwd: p.cwd, env: sessionEnv(p) })).stdout;
+    expect(out).toContain('Waiting for your check:\n  BACK-1  [code_review]');
+    expect(out).toContain('    pass: laneboard finish BACK-1 --status qa --result "<result of your check>" --as orch --json');
+    expect(out).toContain('laneboard create "<short title of your work>" --status todo --assignee orch --as orch --json');
+    expect(out).toContain('Only orch create tasks here.');
+    expect(out).not.toContain('Named roles here');
   });
 
-  it('the hook line fits PRIME_MAX_CHARS with a 64-character name and a long queue', async () => {
+  it('a named session gets no hint (--as or LANEBOARD_AGENT); a named non-creator still reads "not you"', async () => {
     const p = await project();
-    const name = `o${'r'.repeat(62)}h`;
-    for (let i = 1; i <= 12; i++) {
-      expect((await p.run(['create', `Task ${i} ${'t'.repeat(150)}`, '--status', 'todo', '--assignee', 'dev-1', '--as', 'orch'])).code).toBe(0);
-      expect((await p.run(['claim', `BACK-${i}`, '--status', 'in_progress', '--as', 'dev-1'])).code).toBe(0);
-      expect((await p.run(['finish', `BACK-${i}`, '--result', 'r', '--no-commit', '--as', 'dev-1'])).code).toBe(0);
+    expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
+    for (const named of [await cli(['prime', '--as', 'dev-2'], { cwd: p.cwd, env: sessionEnv(p) }), await cli(['prime'], { cwd: p.cwd, env: { ...sessionEnv(p), LANEBOARD_AGENT: 'dev-2' } })]) {
+      expect(named.stdout).not.toContain('Named roles here');
+      expect(named.stdout).toContain('Only orch create tasks here (not you).');
+      expect(named.stdout).toContain('Only orch create tasks on this board: ask whoever started you');
     }
-    expect((await p.run(['config', '--reviewers', `rev,orch,${name}`])).code).toBe(0);
-    const out = (await p.run(['prime', '--hook', '--as', name])).stdout;
-    expect(out).toContain(`Your name: ${name}, given by this project's SessionStart hook`);
-    expect(out).toContain('Waiting for your check:\n  BACK-');
+    expect((await cli(['prime', '--hook', '--as', 'dev-2'], { cwd: p.cwd, env: sessionEnv(p), stdin: '{"source":"startup"}' })).stdout).not.toContain('Named roles here');
+  });
+
+  it('no hint on a board without named roles (none, or checks by anybody); the hint names only the roles there are', async () => {
+    for (const roles of [[], ['--review-statuses', 'code_review,qa']]) {
+      const p = await project(roles);
+      expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
+      expect(runHook(p), roles.join(' ')).not.toContain('Named roles here');
+    }
+    const reviewers = await project(['--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch']);
+    expect((await reviewers.run(['setup', 'claude-code'])).code).toBe(0);
+    expect(runHook(reviewers)).toContain('\nNamed roles here: reviewers rev, orch. If you are one of them, run `laneboard prime --as <name>`');
+    const creators = await project(['--creators', 'orch']);
+    expect((await creators.run(['setup', 'claude-code'])).code).toBe(0);
+    expect(runHook(creators)).toContain('\nNamed roles here: creators orch. If you are one of them, run `laneboard prime --as <name>`');
+  });
+
+  it('a session with no name at all (outside Claude Code) gets the hint; a default name that is in the roles gets none', async () => {
+    const p = await project();
+    const bare = (await p.run(['prime'])).stdout;
+    expect(bare).toContain(HINT);
+    expect(bare).toContain('Only orch create tasks here (not without a name).');
+    expect(bare).not.toContain('not you');
+    expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
+    const own = JSON.parse((await cli(['prime', '--json'], { cwd: p.cwd, env: sessionEnv(p) })).stdout).data.agent as string;
+    expect(own).toMatch(/^claude-code@.+:0rch0002$/);
+    expect((await p.run(['config', '--reviewers', `rev,orch,${own}`])).code).toBe(0);
+    expect(runHook(p)).not.toContain('Named roles here');
+  });
+
+  it('the hint fits PRIME_MAX_CHARS with long name lists and a long queue; the lists are cut, the command never', async () => {
+    const p = await project();
+    expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
+    const names = Array.from({ length: 10 }, (_, i) => `${'n'.repeat(62)}${i}x`);
+    expect((await p.run(['config', '--reviewers', names.join(','), '--creators', names.join(',')])).code).toBe(0);
+    for (let i = 1; i <= 12; i++) {
+      expect((await p.run(['create', `Task ${i} ${'t'.repeat(150)}`, '--status', 'todo', '--assignee', 'dev-1', '--as', names[0] ?? ''])).code).toBe(0);
+    }
+    const out = runHook(p);
+    const hint = out.split('\n').find((l) => l.startsWith('Named roles here: reviewers '));
+    expect(hint).toBeDefined();
+    expect(hint).toContain('…; creators ');
+    expect(hint).toMatch(/If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command\.$/);
     expect(out.length).toBeLessThanOrEqual(PRIME_MAX_CHARS + 1);
   });
 });

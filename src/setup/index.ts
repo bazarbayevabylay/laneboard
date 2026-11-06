@@ -1,7 +1,7 @@
 // `laneboard setup <harness> [--remove [--global]] [--dry-run]`: write (or roll back) laneboard's MCP entry and instruction block for one harness.
 import fs from 'node:fs';
 import path from 'node:path';
-import { ACTOR_RE, initTarget, isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, shellQuote, STORE_DIR_NAME, storePrefix, storeState, suggestClosest } from '../core/index.ts';
+import { initTarget, isLiveBoard, LaneboardError, readRegistry, repositoryCheckouts, samePath, shellQuote, STORE_DIR_NAME, storePrefix, storeState, suggestClosest } from '../core/index.ts';
 import type { BoardEntry } from '../core/index.ts';
 import { applyPlan, planAdd, planKeep, planRemove, readText } from './files.ts';
 import type { FileResult, PlannedFile } from './files.ts';
@@ -34,8 +34,6 @@ export interface SetupInput {
   // The store is the board of cwd's git repository found above cwd (a package of a monorepo, a linked worktree): named in a warning.
   storeAbove?: boolean;
   env: Record<string, string | undefined>;
-  // claude-code only: the main session's name its SessionStart hook passes to prime (`--as`, ADR §55); undefined: no name in the hook.
-  as?: string;
 }
 
 export interface SetupFileResult {
@@ -246,25 +244,6 @@ function planWarnings(harness: string, plan: readonly PlannedFile[], keepers: Ke
   return out;
 }
 
-// The main session's name for the SessionStart hook (`setup claude-code --as <name>`, ADR §55), checked like any name; undefined without
-// --as and on --remove (which takes our hook out with any name). Only Claude Code gets a hook from setup, so --as for another harness
-// is refused rather than ignored: the orchestrator would believe its name is set.
-function hookName(harness: Harness, input: SetupInput): string | undefined {
-  if (input.as === undefined || input.as === '' || input.remove) return undefined;
-  if (harness.name !== 'claude-code') {
-    throw new LaneboardError('USAGE', `--as names the main session in the SessionStart hook setup claude-code writes; setup ${harness.name} writes no hook, so pass --as <name> on every laneboard command instead`, {
-      edit: { drop: [{ name: 'as' }] },
-    });
-  }
-  if (!ACTOR_RE.test(input.as)) {
-    throw new LaneboardError('INVALID_VALUE', `--as "${input.as}" must match ^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$`, {
-      input: { field: 'as', value: input.as, format: '<name like orch>' },
-      fix: 'use letters, digits and . _ : @ - without spaces for --as, e.g. laneboard setup claude-code --as orch',
-    });
-  }
-  return input.as;
-}
-
 // Plan every file first (an unparseable or unwritable file stops everything before any write), then write unless dry run.
 export function runSetup(input: SetupInput): { data: SetupResult; warnings: string[]; registered: boolean } {
   const harness = findHarness(input.harness);
@@ -279,9 +258,8 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
     fix: 'export HOME=<your home directory> and run setup again',
     edit: { env: 'HOME=<your home directory>' },
   });
-  const hookAs = hookName(harness, input);
   const cwd = path.resolve(input.cwd);
-  const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir), ...(hookAs === undefined ? {} : { hookAs }) };
+  const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir) };
   const roots = [cwd, home];
   const users = new Map<string, string[]>();
   const projects = new Map<string, string[]>();

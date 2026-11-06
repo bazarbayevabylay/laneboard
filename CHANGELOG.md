@@ -60,8 +60,9 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
 - `setup claude-code` warns in one line when the board path and your name go into the committed `.claude/settings.json` (ADR §49).
 - `finish --commit <sha>`; MCP `task_finish` takes `cwd` (your worktree) or `commit` (ADR §41).
 - `setup codex --remove --global` removes the global Codex entry even while other projects use it (ADR §39).
-- `setup claude-code --as <name>`: the SessionStart hook runs `prime --hook --as <name>`, so an orchestrator in `--reviewers` or
-  `--creators` keeps its name after a restart; subagents never get it (the hook runs for the main session only) (ADR §55).
+- On a board with `--reviewers` or `--creators`, `prime` and the SessionStart hook of a session with no name of its own print one line
+  with those names and `laneboard prime --as <name>`; "not you" is said only to a named session. An orchestrator runs
+  `laneboard prime --as orch` first after a restart; no project file carries a name, so `setup` refuses `--as` (ADR §55).
 - `list` items carry `handed_in`, `in_work` and `stale`; `laneboard` with no arguments prints the help; `-v` is `--version`.
 - One warning line when the CLI runs on Node.js older than 22 (`warnings` with `--json`) (ADR §50).
 - `CHANGELOG.md`; `README.md` in English (sections for any MCP client, monorepos and orchestrators); the package metadata
