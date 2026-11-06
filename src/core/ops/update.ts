@@ -12,6 +12,7 @@ import { transact } from '../transact.ts';
 import {
   actorSourceOf,
   addEvent,
+  assignmentEvent,
   byEarlierSession,
   checkActor,
   checkExpectedRev,
@@ -191,6 +192,10 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       const assignee = p.assignee === undefined ? task.assignee : p.assignee;
       const assignChange = assignee !== task.assignee ? { from: task.assignee, to: assignee } : undefined;
+      // A name that may not check a task waiting for a check never takes it by update --assignee itself (LB-63.6): claim never does.
+      if (assignChange?.to === actor && waitsInCheck(s.config, task) && !workedOn(task, actor, ctx.sessionBase) && !mayCheck(s.config, task, actor, ctx.sessionBase)) {
+        throw waitingTakeRefusal(s.config, task, actor);
+      }
       const handInLost = statusChange ? checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, assignee, ctx.sessionBase) : undefined;
       // The A17 warning keeps its place among the warnings; it is added after the write, unless this write is a return for rework (U6).
       const lostAt = warnings.length;
@@ -274,11 +279,58 @@ function earlierSessionClaimed(id: string, holder: string, actor: string, silent
   );
 }
 
+// ALREADY_CLAIMED for a task in a final status held by another session of the actor's default name (LB-54.1): --resume takes back
+// only unfinished work (the rule of prime's earlier-session list, read.ts heldBySessionsOf), so neither the message nor the fix names
+// --resume for it; the fix is the new task, the message names the reopen for a task closed by mistake.
+function closedEarlierSessionTask(config: ConfigT, id: string, holder: string, status: string, actor: string): LaneboardError {
+  return new LaneboardError(
+    'ALREADY_CLAIMED',
+    `task ${id} is ${status}: closed by ${holder}, an earlier session of your default name; --resume takes back only unfinished work, so there is nothing to resume; ` +
+      `new work is a new task, and a task closed by mistake is reopened first: laneboard update ${id} --status ${reworkStatus(config)}, then laneboard claim ${id} --resume`,
+    { details: { assignee: holder }, fix: `laneboard create "<short title of your work>" --status ${config.statuses[0] ?? '<status>'} --assignee ${actor} --json` },
+  );
+}
+
+// Milliseconds since `holder` took `task` back with claim --resume itself (the event that gave it the task is its `assigned` event
+// with `resumed: true`); undefined when it holds the task by another event (its own claim, create, a reassignment).
+function resumedByHolderAgo(task: TaskT, holder: string, now: string): number | undefined {
+  const e = assignmentEvent(task);
+  if (e === undefined || e.type !== 'assigned' || e.actor !== holder || e.data.resumed !== true) return undefined;
+  return Math.max(0, Date.parse(now) - Date.parse(e.at));
+}
+
+// ALREADY_CLAIMED for a task another session of the actor's default name took back with claim --resume less than
+// EARLIER_SESSION_SILENT_MS ago (LB-54.4): two sessions resume the same task one right after the other (two tabs after one restart),
+// and it stays with the first. An older resume is the next /clear of a long task: that one takes the usual path (exit 0, the warning
+// of resumeWarnings), review A1 r1. The fix is the comment; the message names when it may be resumed.
+function resumedByLiveSession(id: string, holder: string, actor: string, resumedAgo: number): LaneboardError {
+  return new LaneboardError(
+    'ALREADY_CLAIMED',
+    `task ${id} was taken back with claim --resume by ${holder}, another session of your default name, ${minutesText(resumedAgo)} ago: ` +
+      `a task resumed within ${minutesText(EARLIER_SESSION_SILENT_MS)} stays with the session that took it, as another one may be a parallel session at work, so do not take it over; ` +
+      `if that session is closed, the task can be resumed once its resume is ${minutesText(EARLIER_SESSION_SILENT_MS)} old: laneboard claim ${id} --resume`,
+    { details: { assignee: holder }, fix: `laneboard comment ${id} "<note for ${holder}>" --as ${actor}` },
+  );
+}
+
+// The status a claim without --status moves a task in the first status to when the actor holds it already or takes it back with
+// --resume (LB-57.4, LB-54.2: such a claim starts the work, it is no "no changes" in the first status): on a board with checks the one
+// before the first check (config names it: claims go there), else the second status unless it is the final one. The status prime's
+// claim command names (format.ts workStatus). undefined: the task stays where it is.
+function claimWorkStatus(config: ConfigT): string | undefined {
+  if (reviewStatuses(config).length > 0) return workStatusBeforeChecks(config);
+  const second = config.statuses[1];
+  return second === undefined || finalStatuses(config.statuses).includes(second) ? undefined : second;
+}
+
 // Take a task: assignee := actor; a task held by someone else fails with ALREADY_CLAIMED, unless `resume` takes it over from
 // another session of the same default name base (an `assigned` event with `resumed: true`). A resume warns when that session wrote
 // less than EARLIER_SESSION_SILENT_MS ago (a parallel session may still be at work: two tabs after a restart, A-U6) and names the
 // parent task held by the same session (finish of the parent needs it back too, A-U2). On a board with checks a task that waits for a check
 // is claimed by nobody (S6w r2, waitingClaimRefusal): a checker checks it with finish, and a claim would make the checker its author.
+// LB-54: a closed task of an earlier session is not resumed (closedEarlierSessionTask), nor one another session resumed less than
+// EARLIER_SESSION_SILENT_MS ago (resumedByLiveSession); --resume of a free task warns that it was a plain claim. Without --status
+// an own or resumed task in the first status moves into the work status (claimWorkStatus, LB-54.2, LB-57.4).
 export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(ClaimInput, input);
@@ -296,13 +348,24 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       if (waitsInCheck(s.config, task)) throw waitingClaimRefusal(s.config, task, actor, ctx.sessionBase);
       const holder = task.assignee;
       const earlier = heldByEarlierSession(task, ctx.sessionBase, actor);
+      if (earlier && holder !== null) {
+        if (finalStatuses(s.config.statuses).includes(task.status)) throw closedEarlierSessionTask(s.config, id, holder, task.status, actor);
+        const resumedAgo = resumedByHolderAgo(task, holder, s.now);
+        if (resumedAgo !== undefined && resumedAgo < EARLIER_SESSION_SILENT_MS) throw resumedByLiveSession(id, holder, actor, resumedAgo);
+      }
       const resumed = p.resume === true && earlier;
       if (holder !== null && holder !== actor && !resumed) {
         throw earlier ? earlierSessionClaimed(id, holder, actor, silentFor(s.active.tasks, holder, s.now), '') : claimedBy(ctx, id, holder, actor, p.resume === true);
       }
       if (resumed && holder !== null) resumeWarnings(s.active.tasks, task, holder, ctx.sessionBase, actor, s.now, finalStatuses(s.config.statuses), warnings);
+      if (p.resume === true && holder === null) {
+        warnings.push(`${id} had no assignee, so --resume took it as a plain claim: it is no task of an earlier session of yours; make sure it is the work you were asked to do`);
+      }
       const assignChange = holder !== actor ? { from: holder, to: actor, ...(resumed ? { resumed: true } : {}) } : undefined;
-      const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
+      // Only a task the actor holds or takes back (LB-57.4, LB-54.2): a plain claim of a free task keeps its status (assignee := you).
+      const startsWork = (holder === actor || resumed) && task.status === s.config.statuses[0];
+      const target = p.status ?? (startsWork ? claimWorkStatus(s.config) : undefined);
+      const statusChange = target !== undefined && target !== task.status ? { from: task.status, to: target } : undefined;
       // The same checks as update (review r1): claim --status is no way around them; the actor holds the task after the claim.
       const handInLost = statusChange ? checkReviewMove(s.config, task, actor, statusChange.to, true, actor, ctx.sessionBase) : undefined;
       if (handInLost !== undefined) warnings.push(handInLost);
@@ -349,7 +412,21 @@ export const CommentInput = z.strictObject({
 });
 export type CommentInputT = z.infer<typeof CommentInput>;
 
-// Add a comment (a `commented` event).
+// The warning of a comment by a name that held `task` until somebody else took it away (LB-54.5: a session whose task another session
+// took back with claim --resume, or an old holder after a reassignment): the newest `assigned` event is from the actor to another
+// name (or nobody), written by somebody else. undefined when the actor holds it, never held it, or gave it away itself.
+function lostTaskWarning(task: TaskT, actor: string, now: string): string | undefined {
+  if (task.assignee === actor) return undefined;
+  const e = task.events.findLast((ev) => ev.type === 'assigned');
+  if (e === undefined || e.data.from !== actor || e.actor === actor) return undefined;
+  const to = typeof e.data.to === 'string' ? e.data.to : null;
+  const ago = minutesText(Math.max(0, Date.parse(now) - Date.parse(e.at)));
+  const how = e.data.resumed === true ? `${e.actor} took it over with claim --resume` : to === null ? `${e.actor} unassigned it` : `${e.actor} gave it to ${to}`;
+  const ask = to === null ? 'the orchestrator' : `${to} or the orchestrator`;
+  return `${task.id} is no longer yours: ${how} ${ago} ago; your comment is written, but stop work on it unless it is given back (ask ${ask})`;
+}
+
+// Add a comment (a `commented` event); a comment of a name that lost the task warns (lostTaskWarning, LB-54.5).
 export async function commentTask(ctx: OpContext, input: CommentInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
   const p = parseInput(CommentInput, input);
@@ -360,6 +437,8 @@ export async function commentTask(ctx: OpContext, input: CommentInputT): Promise
     (s) => {
       const id = normalizeId(p.id, s.config.prefix);
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
+      const lost = lostTaskWarning(task, actor, s.now);
+      if (lost !== undefined) warnings.push(lost);
       touch(task, s.now, actor);
       addEvent(task, s.config, s.now, actor, 'commented', { text: p.text }, actorSourceOf(ctx));
       return toTaskView(task, false);
@@ -657,6 +736,20 @@ function waitingClaimRefusal(config: ConfigT, task: TaskT, actor: string, sessio
   const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor}`;
   const holder = task.assignee;
   if (holder !== null && holder !== actor) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: holder }, fix });
+  return new LaneboardError('INVALID_VALUE', message, { fix });
+}
+
+// The refusal of update --assignee <actor> of a task that waits for a check by a name that may not check it and did not work on it
+// (LB-63.6: no way around waitingClaimRefusal; a checker gets the S6x B-U2 warning instead, its author keeps the move). ALREADY_CLAIMED
+// when somebody holds it, else INVALID_VALUE, as claim; the fix is a comment.
+function waitingTakeRefusal(config: ConfigT, task: TaskT, actor: string): LaneboardError {
+  const final = finalStatuses(config.statuses)[0] ?? '';
+  const message =
+    `${task.id} is handed in and waits in ${task.status} for the check of ${checkersOf(config, task)} (${checksLine(reviewStatuses(config), final)}): ` +
+    `you may not check it (config review.by: ${reviewers(config).join(', ')}), so you never take it: update --assignee takes no task that waits for a check, as claim does not; ` +
+    `a note for the checkers is a comment${noCheckerExit(config, task)}`;
+  const fix = `laneboard comment ${task.id} "<note for the check>" --as ${actor}`;
+  if (task.assignee !== null) return new LaneboardError('ALREADY_CLAIMED', message, { details: { assignee: task.assignee }, fix });
   return new LaneboardError('INVALID_VALUE', message, { fix });
 }
 

@@ -142,17 +142,23 @@ describe('P5 (A-U2): ALREADY_CLAIMED on an earlier session task, by how long tha
 });
 
 describe('P5 (A-U6): a resume of a session active less than 15 min ago warns', () => {
-  it('two new sessions resume the same task: both exit 0, the second gets the warning', async () => {
+  // Changed in 0.4.1 (LB-54.4): the second of two resumes of the same task is refused while the first resume is younger than 15 min
+  // (test/cli/lb54.test.ts); the warning stays for a session that holds the task by its own claim (a /clear right after it).
+  it('two new sessions resume the same task: the first without a warning, the second ALREADY_CLAIMED; a live own claim: exit 0 with the warning', async () => {
     const s = await abandoned(16 * MIN);
     const first = await json(s, ['claim', 'WORD-2', '--resume'], SESSION_2);
     expect(first.code).toBe(0);
     expect(first.doc.warnings.filter((w: string) => w.includes('taken from'))).toEqual([]);
     later(30_000);
     const second = await json(s, ['claim', 'WORD-2', '--resume'], SESSION_3);
-    expect(second.code).toBe(0);
-    expect(second.doc.data).toMatchObject({ assignee: NAME_3, resumed_from: NAME_2 });
-    expect(second.doc.warnings).toContain(
-      `WORD-2 taken from a session active <1 min ago (${NAME_2}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-2 "<note for ${NAME_2}>"`,
+    expect(second.code).toBe(4);
+    expect(second.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', details: { assignee: NAME_2 } });
+    const live = await abandoned(30_000);
+    const taken = await json(live, ['claim', 'WORD-2', '--resume'], SESSION_3);
+    expect(taken.code).toBe(0);
+    expect(taken.doc.data).toMatchObject({ assignee: NAME_3, resumed_from: NAME_1 });
+    expect(taken.doc.warnings).toContain(
+      `WORD-2 taken from a session active <1 min ago (${NAME_1}): if it is a parallel session at work, not your own closed one, tell it: laneboard comment WORD-2 "<note for ${NAME_1}>"`,
     );
   });
 

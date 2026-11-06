@@ -43,8 +43,9 @@ describe('write replies are short (LB-7)', () => {
     expect(created.warnings[0]).toMatch(/^LB-2 is assigned to dev-2, not to you \(a\)/);
     // People: one line with what changed and the state after it.
     expect((await run(['comment', 'LB-2', 'note', '--as', 'a'])).stdout).toBe('LB-2 commented (rev 2, todo, dev-2)\n');
-    expect((await run(['claim', 'LB-2', '--as', 'dev-2'])).stdout).toBe('LB-2 claimed (rev 2, todo, dev-2)\n');
-    expect((await run(['update', 'LB-2', '--unassign', '--as', 'a'])).stdout).toBe('LB-2 updated (rev 3, todo, unassigned)\n');
+    // 0.4.1 (LB-57.4): a claim of one's own task in the first status moves it into the work status.
+    expect((await run(['claim', 'LB-2', '--as', 'dev-2'])).stdout).toBe('LB-2 claimed (rev 3, in_progress, dev-2)\n');
+    expect((await run(['update', 'LB-2', '--unassign', '--as', 'a'])).stdout).toBe('LB-2 updated (rev 4, in_progress, unassigned)\n');
     // --full: the task as get shows it, in JSON and for people; get alone adds its parent and children (ADR §25).
     const full = await json(['comment', 'LB-2', 'more', '--as', 'a', '--full']);
     const got = await json(['get', 'LB-2']);
@@ -53,7 +54,7 @@ describe('write replies are short (LB-7)', () => {
     expect(full.data).toEqual(task);
     expect(full.data.events.at(-1)).toMatchObject({ type: 'commented', data: { text: 'more' } });
     const human = (await run(['comment', 'LB-2', 'last', '--as', 'a', '--full'])).stdout;
-    expect(human).toMatch(/^LB-2 {2}For someone\n {2}status: todo · assignee: - · rev: 5 /);
+    expect(human).toMatch(/^LB-2 {2}For someone\n {2}status: in_progress · assignee: - · rev: 6 /);
     expect(human).toContain('commented  last');
     expect((await run(['create', 'x', '--status', 'todo', '--as', 'a', '--full', '--json'])).stdout).toContain('"events":[');
   });
