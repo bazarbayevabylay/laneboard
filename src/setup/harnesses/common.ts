@@ -16,8 +16,26 @@ export function pinnedMcpArgs(storeDir: string): string[] {
 // shell's other projects would write to this board (UX run 3 C-U3).
 export const CODEX_ENV_VARS = ['LANEBOARD_DIR'] as const;
 
-// SessionStart hook command (Claude Code): prints the rules and the agent's tasks; a hint when the CLI is missing.
-export const PRIME_HOOK_COMMAND = "command -v laneboard >/dev/null 2>&1 && laneboard prime --hook || echo 'laneboard CLI missing: npm i -g laneboard'";
+// SessionStart hook command (Claude Code): prints the rules and the agent's tasks; a hint when the CLI is missing. `as`: the name of the
+// main session (setup claude-code --as <name>, ADR §55): SessionStart fires for the session only, never inside a subagent, and its output
+// reaches the main conversation only (code.claude.com/docs/en/hooks, /sub-agents), so a subagent never gets that name from it.
+export function primeHookCommand(as?: string): string {
+  const name = as === undefined ? '' : ` --as ${shellQuote(as)}`;
+  return `command -v laneboard >/dev/null 2>&1 && laneboard prime --hook${name} || echo 'laneboard CLI missing: npm i -g laneboard'`;
+}
+
+// The SessionStart hook command of a setup without --as (the plugin's hook too).
+export const PRIME_HOOK_COMMAND = primeHookCommand();
+
+// The main session's name in a SessionStart hook command setup wrote (`--as <name>`), '' for one without a name, undefined for a command
+// that is not ours.
+export function primeHookName(command: unknown): string | undefined {
+  if (command === PRIME_HOOK_COMMAND) return '';
+  const [head, tail] = PRIME_HOOK_COMMAND.split(' || ');
+  if (typeof command !== 'string' || !command.startsWith(`${head} --as `) || !command.endsWith(` || ${tail}`)) return undefined;
+  const name = command.slice(`${head} --as `.length, command.length - ` || ${tail}`.length);
+  return name !== '' && primeHookCommand(name) === command ? name : undefined;
+}
 
 // PostToolUse hook command (Claude Code) after a file edit tool: a reminder when no task is in progress; silent and exit 0 otherwise or on any failure.
 export const EDIT_HOOK_COMMAND = 'command -v laneboard >/dev/null 2>&1 && laneboard prime --edit-hook 2>/dev/null; exit 0';
@@ -66,6 +84,8 @@ export interface HarnessContext {
   // Absolute path of the store this project is pinned to.
   storeDir: string;
   env: Record<string, string | undefined>;
+  // setup claude-code --as <name>: the main session's name in the SessionStart hook (ADR §55); undefined: the session's default name.
+  hookAs?: string;
 }
 
 export interface HarnessFile {

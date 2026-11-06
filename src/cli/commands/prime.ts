@@ -178,10 +178,13 @@ export const prime: CommandDef = {
     // unset HOME, and that file can add a hook of its own anyway.
     const registered = summary !== undefined ? summary.registered : hook && ctx !== undefined ? inRegistry(ctx.home, ctx.store.dir, warnings) : null;
     const unregistered = hook && ctx !== undefined && registered === false;
+    // The hook's own --as (setup claude-code --as, ADR §55) names the main session: its text says to pass that name on.
+    const hookNamed = hook && typeof c.values.as === 'string' && c.values.as !== '' && agentSource === 'explicit';
     const data: PrimeData = {
       rules,
       agent: agent ?? null,
       agent_source: agentSource,
+      ...(hookNamed ? { hook_named: true as const } : {}),
       name: summary?.name ?? null,
       description: summary?.description ?? null,
       // A store that was found but fails to load is named too: primeText then marks its error message as board data.

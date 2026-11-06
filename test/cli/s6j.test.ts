@@ -122,14 +122,15 @@ describe('P1 criteria (1)-(8): a task goes dev -> code_review -> qa -> done with
     expect((await run(s, 'orch', ['update', 'API-1', '--status', 'done'])).code).toBe(0);
   });
 
-  it('(6): rev returns the task with update --status dev: the hand-in is gone, with the A17 warning; the comment is the last one dev-a sees', async () => {
+  it('(6): rev returns the task with update --status dev: the hand-in is gone, the reply confirms the return; the comment is the last one dev-a sees', async () => {
     const s = await reviewBoard();
     await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r', '--no-commit']);
     expect((await run(s, 'rev', ['comment', 'API-1', 'REWORK: tests missing'])).code).toBe(0);
     const back = await run(s, 'rev', ['update', 'API-1', '--status', 'dev']);
     expect(back.code).toBe(0);
-    // S6w r1: the named commands run (a checker's finish names --status): the hand-in again of the holder after the move.
-    expect(back.doc.warnings).toEqual(['API-1 was handed in; after this move it is not (a check passes it on or accepts it with finish --status qa, not by a move), so no checker sees it until it is handed in again: laneboard finish API-1 --status code_review --result "<what you did, how you checked it>" --as dev-a']);
+    // S7a U6 (run 8): the documented return gets no A17 warning (its hand-in is dev-a's command); the reply names who has it and why.
+    expect(back.doc.warnings).toEqual([]);
+    expect(back.doc.data).toEqual({ id: 'API-1', rev: expect.any(Number), status: 'dev', assignee: 'dev-a', returned: { to: 'dev-a', reason: 'REWORK: tests missing' } });
     expect(await row(s, 'API-1')).toMatchObject({ status: 'dev', handed_in: false, in_work: true, last_comment: { actor: 'rev', text: 'REWORK: tests missing' } });
     // Handed in again after rework: a new hand-in to code_review with the new result (A15).
     const again = await run(s, 'dev-a', ['finish', 'API-1', '--result', 'r2 with tests', '--no-commit']);

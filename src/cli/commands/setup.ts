@@ -3,7 +3,7 @@ import path from 'node:path';
 import { LaneboardError, registerStore, samePath, setupTarget, STORE_DIR_NAME, toLaneboardError } from '../../core/index.ts';
 import { HARNESS_NAMES, runSetup } from '../../setup/index.ts';
 import { setupText } from '../format.ts';
-import { flag } from './args.ts';
+import { flag, str } from './args.ts';
 import type { CommandDef } from './types.ts';
 
 // Add the board at `storeDir` to the machine registry for `harness`; its warnings, or one with the fix when that fails.
@@ -20,13 +20,14 @@ async function register(home: string, storeDir: string, harness: string, lockWai
 
 export const setup: CommandDef = {
   name: 'setup',
-  usage: `setup <${HARNESS_NAMES.join('|')}> [--remove [--global]] [--dry-run]`,
+  usage: `setup <${HARNESS_NAMES.join('|')}> [--as <name>] [--remove [--global]] [--dry-run]`,
   summary:
     'Register the laneboard MCP server and instruction block for a harness (run in the project root); --remove rolls it back. ' +
     'The project is pinned to its store: --dir, else LANEBOARD_DIR, else the board of this git repository found above (a package of a monorepo, a linked worktree), else ./.laneboard (Claude Code: env LANEBOARD_DIR and the default agent name in .claude/settings.local.json, ' +
     'kept out of git by .git/info/exclude: the folder\'s own, or the repository root\'s for a package pinned to the board at that root; ' +
     '.claude/settings.json only for a folder with a board of its own inside another git repository, or at a root that holds other boards; others: in the instructions). ' +
     'An existing board is added to the machine registry. ' +
+    'claude-code --as <name>: the SessionStart hook runs prime --as <name>, so the main session (an orchestrator in --reviewers or --creators) keeps that name after a restart; subagents never get it (the hook does not run for them). ' +
     '--remove keeps the entry of a global file (codex: ~/.codex/config.toml) while other projects of the machine registry may use it; --global removes it anyway.',
   options: { remove: { type: 'boolean' }, global: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },
   args: { min: 1, max: 1 },
@@ -42,7 +43,7 @@ export const setup: CommandDef = {
     const home = c.io.env.HOME;
     let r: ReturnType<typeof runSetup>;
     try {
-      r = runSetup({ harness, remove, global: flag(c.values, 'global'), dryRun, cwd: c.io.cwd, env: c.io.env, storeDir, storeAbove: target.found === 'parent' || target.found === 'worktree' });
+      r = runSetup({ harness, remove, global: flag(c.values, 'global'), dryRun, cwd: c.io.cwd, env: c.io.env, storeDir, storeAbove: target.found === 'parent' || target.found === 'worktree', as: str(c.values, 'as') });
     } catch (raw) {
       // SETUP_CONFLICT for a repository root's pin: its fix runs setup at the root, which finds this folder's board only in the
       // registry. Register the board first (a board made before the registry or under another HOME is missing there), then refuse.

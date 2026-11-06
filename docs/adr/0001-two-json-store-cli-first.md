@@ -782,3 +782,47 @@ Checks
   hand-in, never a note from you"; from the returner "a comment from you now would become the reason in <holder>'s prime". README, README.ru
   (the unclearCheck placeholder line under the checker's finish in both) and the agent guide follow. Checks: s6z "S6z r1" block, U5 own
   note of an earlier session (task.assignee is the reader's name), 7 resumable give 5 feedback entries. Golden files: none changed.
+
+## 55. UX run 8 before publication (S7a, LB-53; UX run 8 persona B U1, U6; supersedes §43 "update of a handed-in task warns that the hand-in is lost" and §51 S6w r1 "the A17 warning names ... the hand-in that runs after the move" for a return for rework by update)
+- U1 (MAJOR): after a restart the orchestrator's SessionStart hook ran `prime --hook` under the session's default name, not the name
+  in `--reviewers`/`--creators` (`orch`): "Only orch create tasks here (not you)", no "Waiting for your check". The only documented knob,
+  `LANEBOARD_AGENT=orch`, is inherited by subagents (order `--as` > `LANEBOARD_AGENT`), so a subagent without `--as` wrote as `orch`.
+  Sources, checked 2026-11-06: code.claude.com/docs/en/hooks ("SessionStart: runs when Claude Code starts a new session or resumes an
+  existing session"; spawning a subagent fires `SubagentStart`, whose `additionalContext` goes into the subagent's own conversation;
+  "Hooks from settings files ... also run inside subagents. When a subagent calls a tool, tool events such as PreToolUse and PostToolUse
+  fire") and code.claude.com/docs/en/sub-agents (in settings.json "tool events ... fire for the subagent's tool calls ..., and
+  SubagentStart and SubagentStop fire when a subagent starts or finishes"; "Each subagent starts with a fresh, isolated context window";
+  subagents load CLAUDE.md). So SessionStart never runs inside a subagent and its text reaches only the main conversation.
+  Decision: optional `setup claude-code --as <name>` writes the SessionStart hook as `laneboard prime --hook --as <name>` (`primeHookCommand`);
+  prime under the hook's own explicit `--as` prints `Your name: <name>, given by this project's SessionStart hook ...: pass --as <name>
+  on every laneboard command (MCP tools: actor <name>); never export LANEBOARD_AGENT. Subagents and parallel workers are not <name> ...`
+  (`PrimeData.hook_named`, text only; in the closing block, so PRIME_MAX_CHARS counts it). The name goes nowhere a subagent reads:
+  not the env (settings `env` reaches every subprocess, subagents' Bash too), not CLAUDE.md (subagents load it), not the edit hook
+  (PostToolUse fires inside subagents), not `mcp --as` (the MCP server is shared by the session and its subagents). Without `--as`
+  setup, the hook and prime are unchanged. Our SessionStart entry is recognized with any name (`primeHookName`), so a later setup
+  replaces it as told (without `--as`: back to `PRIME_HOOK_COMMAND`, with a warning naming `setup claude-code --as <old>` to keep it;
+  another name: a warning) and `--remove` takes it out. `--as` for another harness is `USAGE` (fix drops it): setup writes no hook there,
+  and ignoring it would leave the orchestrator believing its name is set; Codex (and cursor, gemini, opencode) get no hook from setup,
+  so an orchestrator passes `--as` on every command and runs `prime --as <name>` after a restart (README). A bad name: `INVALID_VALUE`.
+  The hook lives in the committed `.claude/settings.json` with the other hooks: the name is the project's orchestrator role, not a
+  personal one. Rejected: a config key `orchestrator` (a board-wide name every session's hook would take, subagents' hooks too, and
+  config@2 would grow); `LANEBOARD_AGENT` in settings env (inherited by subagents, the U1 risk itself); the hook in settings.local.json
+  (Claude Code runs the hooks of both files, so the hook without a name would run too); matching the default name's base (U5, backlog).
+  Residual: the plugin's hook has no name (use setup for this); a person who opens a second main session in the project also starts as
+  that name, and its claims meet the first session's as one name (two orchestrators of one project need two names by hand).
+- U6 (MINOR): rev ran the documented return (`comment <ID> -- '<why>' && update <ID> --status <work>`, the fix of its own refused
+  finish) and got the A17 warning "was handed in; after this move it is not ... laneboard finish <ID> --status <check> ... --as dev-3",
+  as if it erred, with a command under the author's name. Decision: an update that is a return for rework (`returnByThisWrite`:
+  `reworkReturn` by this actor at this write, on a board with checks; one test with the S6z no-reason warning) gets no A17 warning;
+  the reply carries `returned {to: <holder after the write> | null, reason: <the returner's comment since the hand-in as lastComment
+  shows it> | null}` (WriteFacts, CLI JSON and MCP `task_update`), and the human line reads `<ID> returned for rework to <holder>
+  (rev, status, holder); reason: "<text>" | no reason yet; <holder> reworks it and hands it in again with finish, then it is back in
+  the checkers' queue` (unassigned: "nobody (unassigned)", "whoever takes it"). The S6z warning of a return with no reason stays.
+  A17 stays for every move that is no return: the author's own move out of a check (its own hand-in), a close by update into the final
+  status, claim (refused for a waiting task since S6w r2; an old hand-in outside the checks); without checks nothing changes.
+  Checks: test/cli/s7a.test.ts (setup hook with and without `--as`, rerun, replace, remove, codex refusal, bad name, the hook run in sh
+  with the env setup wrote: queue, create, the line; control without `--as`; a subagent's write under the default name; the line only
+  for the hook's own `--as`; 64-character name within PRIME_MAX_CHARS; U6 on two and one check: the refusal's fix run as printed, JSON
+  reply, no reason, new holder and unassigned, later moves of a returned task, author's move and close by update keep A17, no checks), test/mcp/s7a.test.ts.
+  Expectations rewritten: s6j (6) (the return now has no warning and `returned`), s6w R3 (A17's hand-in is run after the author's own
+  move; rev's return has `returned`). Golden files: help.txt (setup usage gains `[--as <name>]`).

@@ -290,6 +290,11 @@ under its default name) is its author: it never passes it on or accepts it, and 
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
 of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
 
+An orchestrator named in `--reviewers` or `--creators` (say `orch`) keeps that name after a restart with `laneboard setup claude-code --as orch`:
+the SessionStart hook then runs `prime --hook --as orch` and says to pass `--as orch` on every command. SessionStart runs for the session
+only and its text reaches only the main conversation, so subagents never get the name; the env, `CLAUDE.md` and the edit hook carry none.
+Never `export LANEBOARD_AGENT=orch` there: subagents inherit it. Codex and the other harnesses get no hook from setup: pass `--as`.
+
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name
 (they expose no session id, and one shared name would merge parallel sessions again), so pass `--as` there.
@@ -542,8 +547,9 @@ against an agent's mistake, not against a hostile agent.
 - A task waiting in a check (handed in, or passed on) is handed in already: the author's `finish`, `update` or `claim` into another check
   or the final status gets `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment; it never
   goes back to an earlier check. `finish` without `--status` there records a new result after rework, the status stays.
-- Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
-  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. The reason is
+- Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone; the reply confirms
+  `returned for rework to <assignee>` with the reason and that the assignee hands it in again, JSON and MCP `returned {to, reason}`,
+  no warning; the author's own move out of a check still warns with its hand-in); the assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. The reason is
   only the returner's newest comment since the last hand-in (before or after its move): a comment from an earlier round is never shown.
   A return with none warns the returner with `laneboard comment <ID> --as <checker> -- '<why it goes back>'` (a comment written then
   becomes the reason), and the assignee's `prime` says `returned for rework by <checker> at <time> with no reason - ask them or see

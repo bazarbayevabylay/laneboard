@@ -103,6 +103,8 @@ laneboard setup codex
   `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
 - Under the default name the edit reminder stays silent while any open task of the board has an assignee (anybody's: subagents
   share the default name). For reminders about your own tasks only, set `LANEBOARD_AGENT=<your name>`.
+- `laneboard setup claude-code --as orch` writes the SessionStart hook as `laneboard prime --hook --as orch`: the main session starts
+  as `orch` after every restart (Orchestrators, "Your name after a restart"). Without `--as` the hook is as above.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
 - Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
   `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks.
@@ -230,8 +232,9 @@ laneboard config --review-statuses none --reviewers none --json
 - `config --review-statuses` that turns a status with tasks in work into a check warns with each task and its holder's
   `finish <ID> --status <check> ...`; until then `doctor` reports them (check `checks`, exit 6).
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
-- Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` (and the SessionStart
-  hook, for a task of an earlier session) shows that comment: only the returner's comment since the last hand-in, never one from an
+- Return for rework: the checker comments why, then `update <ID> --status <work status>`. The reply confirms it with no warning:
+  `returned for rework to <assignee>`, the reason, and that the assignee hands it in again with `finish` (JSON and MCP:
+  `returned {to, reason}`). The assignee's `prime` (and the SessionStart hook, for a task of an earlier session) shows that comment: only the returner's comment since the last hand-in, never one from an
   earlier round. A return with no comment warns the returner with `laneboard comment <ID> --as <checker> -- '<why it goes back>'`, and
   the assignee's `prime` says "returned for rework by <checker> at <time> with no reason - ask them or see laneboard get <ID>".
   Another checker's stale `finish` (or `update` into a check) of the returned task gets the fix `laneboard get <ID>`, the message names
@@ -243,6 +246,25 @@ laneboard config --review-statuses none --reviewers none --json
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the ready
   `pass: laneboard finish <ID> --status <next> ...` under each task (MCP `task_prime`: `roles.waiting[].next_status`).
 - Boards created before 0.4.0 keep working as they were; checks are turned on only by hand with `laneboard config`.
+
+### Your name after a restart
+
+The orchestrator's name is in `--reviewers` or `--creators` (say `orch`), but after a restart or `/clear` a Claude Code session gets
+a new default name. So that the SessionStart hook shows `orch`'s queue and lets it create tasks, set the name once in the project:
+
+```sh
+laneboard setup claude-code --as orch --dry-run
+```
+
+- Without `--dry-run` it writes the SessionStart hook as `laneboard prime --hook --as orch`. The hook prints the rules and the
+  board for `orch`, "Waiting for your check" with the pass commands, and a line to pass `--as orch` on every command (MCP: `actor`).
+- Subagents never get the name: SessionStart runs for the session only, and its text reaches only the main conversation.
+  The env, `CLAUDE.md` and the edit hook carry no name: subagents inherit the env, read `CLAUDE.md` and run the edit hook too.
+- Do not `export LANEBOARD_AGENT=orch` in the orchestrator's session: its subagents inherit it, and one without `--as` would write as `orch`.
+- A later `setup claude-code` without `--as` writes the hook without a name again and warns; `--remove` takes it out.
+  The hook lives in the committed `.claude/settings.json`, so the name is the project's orchestrator name, not a personal one.
+- Codex and the other harnesses have no hook from setup (`setup codex --as` is refused): the orchestrator passes `--as orch` on every
+  command and runs `laneboard prime --as orch` first after a restart.
 
 ### Taking over a claimed task
 

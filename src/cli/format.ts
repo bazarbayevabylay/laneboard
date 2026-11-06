@@ -222,6 +222,9 @@ export interface PrimeData {
   agent: string | null;
   // Where the name came from: explicit (--as, LANEBOARD_AGENT) or the session's default name; null without a name.
   agent_source: 'explicit' | 'default' | null;
+  // Only in the text of `prime --hook --as <name>` (setup claude-code --as, ADR §55): the hook gave the main session its name, so prime
+  // says to pass it on every command; never in prime --json (the hook takes no --json).
+  hook_named?: true;
   // Board name and description from config (null without a store or for older stores).
   name: string | null;
   description: string | null;
@@ -265,6 +268,13 @@ function sessionLine(agent: string): string {
     `Your name: session default ${agent} (no --as needed). Subagent or parallel worker? It is your parent's name: ` +
     'run laneboard prime --as <your-own-name> and pass that --as on every command.'
   );
+}
+
+// The name the SessionStart hook gave the main session (setup claude-code --as, ADR §55): later commands pass it themselves, since
+// LANEBOARD_AGENT would reach the subagents' commands too; the hook never runs for a subagent, so a subagent never reads this line.
+function hookNameLine(agent: string): string {
+  const as = shellQuote(agent);
+  return `Your name: ${agent}, given by this project's SessionStart hook (laneboard setup claude-code --as ${as}): pass --as ${as} on every laneboard command (MCP tools: actor ${as}); never export LANEBOARD_AGENT. Subagents and parallel workers are not ${agent}: each passes its own --as <name>.`;
 }
 
 // `line` cut to `room` characters, marked with an ellipsis when cut.
@@ -513,6 +523,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   // Without a name the agent's own tasks are unknown, so the ways to start one are always shown.
   const closing = [
     d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent) : '',
+    d.agent !== null && d.agent_source === 'explicit' && d.hook_named === true ? hookNameLine(d.agent) : '',
     dirLine,
     noTask ? noTaskText(d, dir, { resume, free, check: waits }) : '',
     listed ? `Your active tasks (${d.agent}), newest update first:` : '',
