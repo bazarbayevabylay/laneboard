@@ -142,7 +142,7 @@ A concrete value is suggested only for an obvious typo (`in-progress` → `in_pr
 laneboard agent rules (task board & CLI for AI coding agents):
 1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`laneboard prime` says how, or whom to ask); comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
 2. Use only `laneboard` commands (or the task_* MCP tools). Never edit .laneboard/*.json by hand.
-3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command or LANEBOARD_AGENT (MCP: `actor`); each subagent or parallel worker needs one.
+3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command (MCP: `actor`), one per subagent or worker; LANEBOARD_AGENT only if none (inherited).
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name; add `--as <name>` only for a name of your own.
 5. `--expected-rev` is optional: only for edits on top of what you read (`--description` replaces the whole text; `--field`), pass the rev from your last read or write. Status, comment, claim, finish, `--append-description`: without it, and no `get` for it.
 6. REV_CONFLICT: re-apply your change on `error.details.task` (keep others' edits, merge the description) with its rev. Never retry blindly.
@@ -782,3 +782,52 @@ Checks
   hand-in, never a note from you"; from the returner "a comment from you now would become the reason in <holder>'s prime". README, README.ru
   (the unclearCheck placeholder line under the checker's finish in both) and the agent guide follow. Checks: s6z "S6z r1" block, U5 own
   note of an earlier session (task.assignee is the reader's name), 7 resumable give 5 feedback entries. Golden files: none changed.
+
+## 55. UX run 8 before publication (S7a, LB-53; UX run 8 persona B U1, U6; supersedes §43 "update of a handed-in task warns that the hand-in is lost" and §51 S6w r1 "the A17 warning names ... the hand-in that runs after the move" for a return for rework by update)
+- U1 (MAJOR): after a restart the orchestrator's SessionStart hook ran `prime --hook` under the session's default name, not the name
+  in `--reviewers`/`--creators` (`orch`): "Only orch create tasks here (not you)", no "Waiting for your check". The only documented knob,
+  `LANEBOARD_AGENT=orch`, is inherited by subagents (order `--as` > `LANEBOARD_AGENT`), so a subagent without `--as` wrote as `orch`.
+  Decision (r1, owner of the orchestration): no project file carries a name; a hint instead. For a session with no name of its own
+  (the default name, or none) on a board with named roles (`review.by` non-empty, or `create_by`) that do not include its name, prime
+  and the hook print one line after the session line (`namedRolesLine`, closing block, so PRIME_MAX_CHARS counts it; each list cut at
+  80 characters, the full lists are in the roles line): "Named roles here: reviewers rev, orch; creators orch. If you are one of
+  them: `laneboard prime --as <name>`, then --as <name> on every command." (r2: shortened, same meaning) A named session (`--as`, `LANEBOARD_AGENT`) gets
+  none. "(not you)" after the creators is said only to a named session; an unnamed one reads "(not under the default name)" or
+  "(not without a name)", and the way to get a task starts "not one of them? ask whoever started you ...". The orchestrator runs
+  `laneboard prime --as orch` first after a restart and keeps its name in its own instructions (README "Your name after a restart").
+  `setup --as` is `USAGE` for every harness (fix drops it), never ignored: the orchestrator would believe its name is set.
+  `LANEBOARD_AGENT` is advised only with its condition (ACTOR_REQUIRED message and fix, the keep-the-name line of prime; r2: rule 3 and its short form, the setup name line, guide 2.1): a single agent with
+  no subagents; subagents inherit it.
+  Rejected: (1) the name in the SessionStart hook of the committed `.claude/settings.json` (`setup claude-code --as orch`, S7a before
+  r1): every main session that reads the file got it, a colleague's clone, a second window, a worker started as its own session in a
+  linked worktree; such a worker created, claimed and handed in as `orch`, and the real `orch` could not check the task (the author
+  never checks its own work, §43); (2) the name in `.claude/settings.local.json` (review proposal: a key only `prime --hook` reads):
+  closes the colleague's clone, not the sessions of one machine, since Claude Code uses the main checkout's local file in a linked
+  worktree too (code.claude.com/docs/en/settings); (3) `LANEBOARD_AGENT` in the env or settings `env`: subagents and every subprocess
+  inherit it; (4) a config key `orchestrator`: a board-wide name every session would take; (5) matching the default name's base (U5, backlog).
+  Residual: an unnamed session that is not the orchestrator reads the hint too (it says "if you are one of them"); the orchestrator
+  depends on its own instructions to name itself after a restart; MCP `task_prime` has no hint (its `roles` carry the names, the
+  server's actor is set by `mcp --as`).
+  Budget: the hint counts in PRIME_MAX_CHARS, so it can push tasks of earlier sessions into "… N more" (the oldest one and the
+  `list --sessions-of` footer stay); for that the S6z repro fixture in test/cli/s6z.test.ts has 80-character titles, not 150.
+- U6 (MINOR): rev ran the documented return (`comment <ID> -- '<why>' && update <ID> --status <work>`, the fix of its own refused
+  finish) and got the A17 warning "was handed in; after this move it is not ... laneboard finish <ID> --status <check> ... --as dev-3",
+  as if it erred, with a command under the author's name. Decision: an update that is a return for rework (`returnByThisWrite`:
+  `reworkReturn` by this actor at this write, on a board with checks; one test with the S6z no-reason warning) gets no A17 warning;
+  the reply carries `returned {to: <holder after the write> | null, reason: <the returner's comment since the hand-in as lastComment
+  shows it> | null}` (WriteFacts, CLI JSON and MCP `task_update`), and the human line reads `<ID> returned for rework to <holder>
+  (rev, status, holder); reason: "<text>" | no reason yet; <holder> reworks it and hands it in again with finish, then it is back in
+  the checkers' queue` (unassigned: "nobody (unassigned)", "whoever takes it"). The S6z warning of a return with no reason stays.
+  A17 stays for every move that is no return: the author's own move out of a check (its own hand-in), a close by update into the final
+  status, claim (refused for a waiting task since S6w r2; an old hand-in outside the checks); without checks nothing changes.
+  `returned` has two shapes on purpose: the write reply `{to, reason}` tells the returner who reworks it and why; prime's feedback
+  `{by, at}` tells the holder who returned it and when (the reason is its `comment`).
+  Checks: test/cli/s7a.test.ts (U1 r1: setup refuses `--as` for every harness, with `--remove` and empty, nothing written, usage
+  without it; setup writes no name; the hook of an unnamed main session: the hint, no "not you", no orch queue; another window: hint,
+  writes under its own default name; `prime --as orch`: queue, create, no hint; named sessions: no hint, "not you" kept; no hint on a
+  board without named roles or with checks by anybody; reviewers or creators alone; no name at all: hint; a default name inside the
+  roles: no hint; long name lists within PRIME_MAX_CHARS. U6 on two and one check: the refusal's fix run as printed, JSON reply, no
+  reason, new holder and unassigned, later moves of a returned task, author's move and close by update keep A17, no checks), test/mcp/s7a.test.ts.
+  Expectations rewritten: s6j (6) (the return now has no warning and `returned`), s6w R3 (A17's hand-in is run after the author's own
+  move; rev's return has `returned`), prime.test.ts (the keep-the-name line names LANEBOARD_AGENT's condition). Golden files:
+  error-ACTOR_REQUIRED.txt and prime-no-agent.txt (LANEBOARD_AGENT with its condition); help.txt as before S7a.

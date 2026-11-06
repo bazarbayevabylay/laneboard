@@ -31,6 +31,15 @@ export const setup: CommandDef = {
   options: { remove: { type: 'boolean' }, global: { type: 'boolean' }, 'dry-run': { type: 'boolean' } },
   args: { min: 1, max: 1 },
   async run(c) {
+    // No name goes into the project's files (ADR §55): every session that reads them would get it (a colleague's clone, a second
+    // window, a worker in a linked worktree), so --as is refused here, never ignored; the orchestrator names itself with prime --as.
+    if (typeof c.values.as === 'string') {
+      throw new LaneboardError(
+        'USAGE',
+        "setup takes no --as: a name in the project's files reaches every session that reads them (a colleague's clone, another window, a worker in a linked worktree); after a restart an orchestrator runs laneboard prime --as <name> and passes --as <name> on every command",
+        { edit: { drop: [{ name: 'as' }] } },
+      );
+    }
     // The pin walks up only inside one git repository (a package of a monorepo, a linked worktree): elsewhere a store in a parent
     // directory may be another project's unless --dir names it.
     const target = setupTarget(c.discovery);

@@ -47,7 +47,7 @@ import {
   unique,
   workStartedAt,
 } from './common.ts';
-import type { LastComment, OpContext, OpResult, TaskView } from './common.ts';
+import type { LastComment, OpContext, OpResult, TaskView, WriteFacts } from './common.ts';
 import { checkForeignTaskLinks, missingTask } from './links.ts';
 
 // Longest replaced description an `updated` event keeps (code points): a replace must not lose the text, but an event stays small.
@@ -117,6 +117,7 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
   const warnings: string[] = [];
   // Links to other boards: checked there before this board's lock is taken (ADR §30).
   const checked = await checkForeignTaskLinks(ctx, addLinks, warnings);
+  let returned: WriteFacts['returned'];
   const data = await transact(
     ctx.store,
     { files: ['active', 'archive'] },
@@ -190,7 +191,9 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       const assignee = p.assignee === undefined ? task.assignee : p.assignee;
       const assignChange = assignee !== task.assignee ? { from: task.assignee, to: assignee } : undefined;
-      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, assignee, warnings, ctx.sessionBase);
+      const handInLost = statusChange ? checkReviewMove(s.config, task, actor, statusChange.to, assignChange?.to === actor, assignee, ctx.sessionBase) : undefined;
+      // The A17 warning keeps its place among the warnings; it is added after the write, unless this write is a return for rework (U6).
+      const lostAt = warnings.length;
       // A checker that gets a task waiting for its check stops being one (S6x B-U2): told after the write (checkerHoldsWarning).
       const checkerTakes = assignChange?.to != null && mayCheck(s.config, task, assignChange.to, assignChange.to === actor ? ctx.sessionBase : undefined);
 
@@ -211,14 +214,18 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
         addEvent(task, s.config, s.now, actor, 'assigned', assignChange, actorSourceOf(ctx));
         if (checkerTakes) checkerHoldsWarning(s.config, task, actor, warnings);
       }
-      // After the assignee is set, so the warning names who reads the reason.
-      const noReason = statusChange ? noReasonWarning(s.config, task, actor, s.now) : undefined;
+      // After the assignee is set, so the reply and the warning name who reads the reason. A return for rework (the documented comment,
+      // then update into work; S7a U6 run 8) is confirmed in the reply (`returned`), not by A17, whose hand-in is the holder's command.
+      const back = statusChange ? returnByThisWrite(s.config, task, actor, s.now) : undefined;
+      if (back !== undefined) returned = { to: task.assignee, reason: back.reason?.text ?? null };
+      else if (handInLost !== undefined) warnings.splice(lostAt, 0, handInLost);
+      const noReason = back === undefined ? undefined : noReasonWarning(task, actor, back);
       if (noReason) warnings.push(noReason);
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),
   );
-  return { data, warnings };
+  return returned === undefined ? { data, warnings } : { data, warnings, reply: { returned } };
 }
 
 export const ClaimInput = z.strictObject({
@@ -297,7 +304,8 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
       const assignChange = holder !== actor ? { from: holder, to: actor, ...(resumed ? { resumed: true } : {}) } : undefined;
       const statusChange = p.status !== undefined && p.status !== task.status ? { from: task.status, to: p.status } : undefined;
       // The same checks as update (review r1): claim --status is no way around them; the actor holds the task after the claim.
-      if (statusChange) checkReviewMove(s.config, task, actor, statusChange.to, true, actor, warnings, ctx.sessionBase);
+      const handInLost = statusChange ? checkReviewMove(s.config, task, actor, statusChange.to, true, actor, ctx.sessionBase) : undefined;
+      if (handInLost !== undefined) warnings.push(handInLost);
       if (!assignChange && !statusChange) {
         warnings.push(`no changes: ${id} is already claimed by ${actor}`);
         return toTaskView(task, false);
@@ -439,18 +447,18 @@ function workedOnAs(task: TaskT, name: string): boolean {
 
 // One rule for a status move by update or claim on a board with checks (P1, review r1): the author of the work (workedOn) never sets
 // a later check or the final status, nor another check while the task waits in one (checkAuthorMove, shared with a checker's finish), only review.by (when set) set the final one,
-// and an actor that holds the task after this write (`takes`: claim, or update with --assignee itself) does not close it either; a move of a handed-in task warns that the hand-in is lost (A17;
-// `holder`: who holds the task after the write, named in the warning's hand-in). Without checks nothing here applies (0.3.1, ADR §22).
-function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, holder: string | null, warnings: string[], sessionBase: string | undefined): void {
+// and an actor that holds the task after this write (`takes`: claim, or update with --assignee itself) does not close it either; a move of a handed-in task returns the warning that the hand-in is lost (A17;
+// `holder`: who holds the task after the write, named in the warning's hand-in), which the caller adds unless the write is a return for rework (S7a U6). Without checks nothing here applies (0.3.1, ADR §22).
+function checkReviewMove(config: ConfigT, task: TaskT, actor: string, to: string, takes: boolean, holder: string | null, sessionBase: string | undefined): string | undefined {
   const review = reviewStatuses(config);
-  if (review.length === 0) return;
+  if (review.length === 0) return undefined;
   const final = finalStatuses(config.statuses)[0] ?? '';
   const refusal = reviewMoveRefusal(config, task, actor, to, takes, sessionBase);
   if (refusal === 'author') throw authorRefusal(config, task, to, actor, 'update');
   if (refusal === 'check') throw checkEntryRefusal(config, task, actor, to, sessionBase);
   if (refusal === 'not-checker') throw notChecker(task.id, task.assignee, actor, reviewers(config));
   if (refusal === 'holder') throw handInToFirstCheck(config, task, final, actor, 'update');
-  if (handedIn(task, config)) warnings.push(handInLostWarning(config, task, to, holder));
+  return handedIn(task, config) ? handInLostWarning(config, task, to, holder) : undefined;
 }
 
 // Why a board with checks refuses to put `task` into `to` by `actor` (P1, P2): 'author' - the author of the work (authorMoves);
@@ -798,14 +806,20 @@ function returnedForRework(code: 'ALREADY_CLAIMED' | 'INVALID_VALUE', task: Task
   );
 }
 
-// The warning of a return for rework with no reason (S6z U1 run 7), on a board with checks: `actor` just moved the handed-in task back
-// (this write is the return, reworkReturn) and wrote no comment since the hand-in, so the holder's prime says "returned with no reason".
-// Only the warning names a placeholder; a comment written now becomes the reason (reworkReturn reads the returner's comments since the
-// hand-in, before or after the move). undefined: no return by this write, or it has a reason.
-function noReasonWarning(config: ConfigT, task: TaskT, actor: string, now: string): string | undefined {
+// The return for rework this write made (reworkReturn by `actor` at `now`), on a board with checks: `actor` just moved the handed-in
+// task out of its check and is no author of the work. One test for the reply's confirmation (S7a U6 run 8) and noReasonWarning.
+function returnByThisWrite(config: ConfigT, task: TaskT, actor: string, now: string): ReworkReturn | undefined {
   if (reviewStatuses(config).length === 0) return undefined;
   const back = reworkReturn(config, task);
-  if (back === undefined || back.actor !== actor || back.at !== now || back.reason !== undefined) return undefined;
+  return back !== undefined && back.actor === actor && back.at === now ? back : undefined;
+}
+
+// The warning of a return for rework with no reason (S6z U1 run 7): `back` is the return this write made (returnByThisWrite) and
+// `actor` wrote no comment since the hand-in, so the holder's prime says "returned with no reason". Only the warning names a
+// placeholder; a comment written now becomes the reason (reworkReturn reads the returner's comments since the hand-in, before or after
+// the move). undefined: the return has a reason.
+function noReasonWarning(task: TaskT, actor: string, back: ReworkReturn): string | undefined {
+  if (back.reason !== undefined) return undefined;
   const holder = task.assignee ?? 'its next holder';
   return `${task.id} went back for rework with no reason from you: ${holder}'s prime says it was returned with no reason; add the reason (shown to ${holder} until the next hand-in): laneboard comment ${task.id} --as ${actor} -- '<why it goes back>'`;
 }

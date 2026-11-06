@@ -9,10 +9,11 @@ import type { SetupResult } from '../setup/index.ts';
 export { shellQuote };
 
 
-// The message a CLI user sees: ACTOR_REQUIRED also names the environment variable (the fix holds only the command).
+// The message a CLI user sees: ACTOR_REQUIRED also names the environment variable (the fix holds only the command), with its condition:
+// subagents inherit it, so it fits a single agent only, never an orchestrator with subagents (ADR §55).
 export function cliMessage(err: LaneboardError): LaneboardError {
   if (err.code !== 'ACTOR_REQUIRED') return err;
-  return new LaneboardError(err.code, `${err.message}: pass --as <your-name>, or export LANEBOARD_AGENT=<your-name> once for the session`, { fix: err.fix });
+  return new LaneboardError(err.code, `${err.message}: pass --as <your-name> (export LANEBOARD_AGENT=<your-name> once only if no subagent runs under you: they inherit it)`, { fix: err.fix });
 }
 
 // Success envelope (one JSON document on stdout): the store and its id prefix say whose store was used.
@@ -267,6 +268,25 @@ function sessionLine(agent: string): string {
   );
 }
 
+// Longest list of names in the hint line about named roles (the roles line above lists them in full, up to NAMES_MAX).
+const HINT_NAMES_MAX = 80;
+
+// For a session with no name of its own (the default name, or none) on a board with named roles that do not include it (ADR §55): the
+// names, and how to take one. No project file carries a name, so an orchestrator after a restart names itself; any other session reads
+// that these roles are not its own until it names itself. Empty for a named session (--as, LANEBOARD_AGENT) and for a board without them.
+function namedRolesLine(d: PrimeData): string {
+  const r = d.roles;
+  if (r === undefined || d.agent_source === 'explicit') return '';
+  const creators = r.creators ?? [];
+  if (d.agent !== null && (r.checkers.includes(d.agent) || creators.includes(d.agent))) return '';
+  const parts = [
+    r.checkers.length > 0 ? `reviewers ${fit(r.checkers.join(', '), HINT_NAMES_MAX)}` : '',
+    creators.length > 0 ? `creators ${fit(creators.join(', '), HINT_NAMES_MAX)}` : '',
+  ].filter(Boolean);
+  if (parts.length === 0) return '';
+  return `Named roles here: ${parts.join('; ')}. If you are one of them: \`laneboard prime --as <name>\`, then --as <name> on every command.`;
+}
+
 // `line` cut to `room` characters, marked with an ellipsis when cut.
 function fit(line: string, room: number): string {
   return line.length <= room ? line : `${line.slice(0, Math.max(0, room - 1))}…`;
@@ -349,7 +369,9 @@ function rolesLine(d: PrimeData): string {
       `Checks: ${[...r.checks, d.final_status ?? '-'].join(' -> ')}, by ${by}. The author's finish hands in to ${r.checks[0] ?? '-'}; a checker's finish passes on or accepts, never its own work${back}.`,
     );
   }
-  if (r.creators !== null) parts.push(`Only ${fit(r.creators.join(', '), NAMES_MAX)} create tasks here${r.can_create ? '' : ' (not you)'}.`);
+  // "not you" only to a session that named itself: an unnamed one may be a creator yet to name itself (namedRolesLine, ADR §55).
+  const notYou = d.agent_source === 'explicit' ? ' (not you)' : d.agent === null ? ' (not without a name)' : ' (not under the default name)';
+  if (r.creators !== null) parts.push(`Only ${fit(r.creators.join(', '), NAMES_MAX)} create tasks here${r.can_create ? '' : notYou}.`);
   return [fit(parts.join(' '), ROLES_LINE_MAX), noCheckerLine(r)].filter(Boolean).join('\n');
 }
 
@@ -377,13 +399,14 @@ function noTaskText(d: PrimeData, dir: string, choices: Choices): string {
   const as = d.agent_source === 'default' ? '' : ` --as ${name}`;
   const create = `  laneboard create "<short title of your work>" --status ${shellQuote(d.first_status ?? '<status>')} --assignee ${name}${as}${dir} --json`;
   const claim = claimCommand(d, dir);
-  const keepName = 'Then pass the same --as <your-name> on every command (or export LANEBOARD_AGENT=<your-name>).';
+  // LANEBOARD_AGENT only with its condition: subagents inherit it (ADR §55).
+  const keepName = 'Then pass the same --as <your-name> on every command (export LANEBOARD_AGENT=<your-name> only if no subagent runs under you: they inherit it).';
   // create_by without this name (P2): no create command, the way to get a task instead.
   const creators = d.roles?.creators ?? null;
   const ask =
     creators === null || d.roles?.can_create !== false
       ? undefined
-      : `Only ${fit(creators.join(', '), NAMES_MAX)} create tasks on this board: ask whoever started you for a task id (never create it under another name), then: ${claim}`;
+      : `Only ${fit(creators.join(', '), NAMES_MAX)} create tasks on this board: ${d.agent_source === 'explicit' ? '' : 'not one of them? '}ask whoever started you for a task id (never create it under another name), then: ${claim}`;
   if (!choices.resume && !choices.free && !choices.check) {
     if (ask !== undefined) return [d.agent === null ? 'You have no task in progress (your name is not set).' : 'You have no task in progress.', ask, ...(d.agent === null ? [keepName] : [])].join('\n');
     if (d.agent === null) return ['You have no task in progress (your name is not set). Create one now, with a name you keep for the whole session:', create, keepName].join('\n');
@@ -513,6 +536,7 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   // Without a name the agent's own tasks are unknown, so the ways to start one are always shown.
   const closing = [
     d.agent !== null && d.agent_source === 'default' ? sessionLine(d.agent) : '',
+    namedRolesLine(d),
     dirLine,
     noTask ? noTaskText(d, dir, { resume, free, check: waits }) : '',
     listed ? `Your active tasks (${d.agent}), newest update first:` : '',

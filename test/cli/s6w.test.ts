@@ -403,9 +403,15 @@ describe('S6w review r1', () => {
   };
 
   for (const l of WITH_CHECKS) {
-    it(`${l.name}: R3 the A17 warning names commands that run: the holder's hand-in after a return, the comment after a close by update`, async () => {
+    it(`${l.name}: R3 the A17 warning names commands that run: the holder's hand-in after its own move back, the comment after a close by update`, async () => {
       const s = await waiting(l);
-      const back = await run(s, 'rev', ['update', 'API-1', '--status', l.work]);
+      // S7a U6 (run 8): rev's return gets no A17 (its hand-in is dev-1's command), only the reply's confirmation; A17 stays for the
+      // author's own move out of the check, so dev-1 hands in again and moves it back itself.
+      const returned = await run(s, 'rev', ['update', 'API-1', '--status', l.work]);
+      expect(returned.doc.data.returned).toEqual({ to: 'dev-1', reason: null });
+      expect(returned.doc.warnings.filter((w: string) => w.includes('was handed in'))).toEqual([]);
+      expect((await run(s, 'dev-1', ['finish', 'API-1', '--result', 'work again', '--no-commit'])).doc.data.status).toBe(l.checks[0]);
+      const back = await run(s, 'dev-1', ['update', 'API-1', '--status', l.work]);
       expect(back.code).toBe(0);
       const warning = back.doc.warnings[0] as string;
       expect(warning).not.toMatch(/laneboard finish API-1 --result/);

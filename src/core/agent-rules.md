@@ -1,7 +1,7 @@
 laneboard agent rules (task board & CLI for AI coding agents):
 1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`laneboard prime` says how, or whom to ask); comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
 2. Use only `laneboard` commands (or the task_* MCP tools). Never edit .laneboard/*.json by hand.
-3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command or LANEBOARD_AGENT (MCP: `actor`); each subagent or parallel worker needs one.
+3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command (MCP: `actor`), one per subagent or worker; LANEBOARD_AGENT only if none (inherited).
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name; add `--as <name>` only for a name of your own.
 5. `--expected-rev` is optional: only for edits on top of what you read (`--description` replaces the whole text; `--field`), pass the rev from your last read or write. Status, comment, claim, finish, `--append-description`: without it, and no `get` for it.
 6. REV_CONFLICT: re-apply your change on `error.details.task` (keep others' edits, merge the description) with its rev. Never retry blindly.
@@ -18,7 +18,7 @@ laneboard agent rules (task board & CLI for AI coding agents):
 (src/cli/format.ts). Line: `short <n> <first 8 hex of the sha256 of rule n>: <text>`. Changed rule n? Re-read its short form so it says
 the same, then put the new hash (the test in test/cli/s3c.test.ts prints it). -->
 short 1 17e2d88d: MANDATORY for every request, even with an empty board: claim or create your task before your first file change (commands below); comment each step; when done: commit, then `laneboard finish <ID> --result "<result>" --json`.
-short 3 2340b5f8: Always pass `--json`. Name: without `--as`, the session default (prime shows it); own name: `--as <name>` on every command (or LANEBOARD_AGENT; MCP: `actor`), one per subagent or worker.
+short 3 73302aa1: Always pass `--json`. Name: without `--as`, the session default (prime shows it); your own: `--as <name>` on every command (MCP: `actor`), one per subagent/worker; LANEBOARD_AGENT only if none.
 short 4 1fa716f3: New task, start: the create and claim commands below (`--status`, `--assignee`, `--json` set; subtask: `--parent <ID>`; `--as` only for your own name, rule 3).
 short 5 75e18f80: `--expected-rev` only for edits on top of what you read (`--description`, `--field`): your last rev. Not for status, comment, claim, finish, `--append-description`.
 short 6 1573e298: REV_CONFLICT: re-apply your change on `error.details.task` with its rev (keep others' edits); never retry blindly.

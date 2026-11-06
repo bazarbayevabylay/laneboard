@@ -204,11 +204,12 @@ describe('S6z U5: the SessionStart hook shows the reason of a return under an ea
 
   // A board with checks where session 1 claimed and handed in `n` tasks; rev commented `reason(i)` (none when it returns undefined) and
   // returned each; session 1 then ended.
-  async function returned(n: number, reason: (i: number) => string | undefined): Promise<TestStore> {
+  // `title`: characters of the t's in each title (the budget test keeps 150; the repro leaves room for S7a r1's named-roles line).
+  async function returned(n: number, reason: (i: number) => string | undefined, title = 150): Promise<TestStore> {
     const s = await newStore({ prefix: 'API', statuses: ONE.statuses });
     expect((await run(s, 'orch', ['config', '--review-statuses', 'review', '--reviewers', 'rev'])).code).toBe(0);
     for (let i = 1; i <= n; i++) {
-      expect((await run(s, 'orch', ['create', `Task ${i} ${'t'.repeat(150)}`, '--status', 'todo'])).code).toBe(0);
+      expect((await run(s, 'orch', ['create', `Task ${i} ${'t'.repeat(title)}`, '--status', 'todo'])).code).toBe(0);
       expect((await run(s, '', ['claim', `API-${i}`, '--status', 'in_progress'], SESSION_1)).code).toBe(0);
       expect((await run(s, '', ['finish', `API-${i}`, '--result', 'work', '--no-commit'], SESSION_1)).code).toBe(0);
       const why = reason(i);
@@ -224,7 +225,7 @@ describe('S6z U5: the SessionStart hook shows the reason of a return under an ea
   }
 
   it('the repro: the resumable task carries rev\'s reason; a return with no reason says so; JSON feedback has both', async () => {
-    const s = await returned(2, (i) => (i === 1 ? 'Empty state text missing i18n' : undefined));
+    const s = await returned(2, (i) => (i === 1 ? 'Empty state text missing i18n' : undefined), 80);
     const out = await hook(s);
     expect(out).toContain('Your earlier sessions, unfinished');
     expect(out).toMatch(/\n {2}API-1 {2}\[in_progress\] {2}\S+ ago {2}session 11111111 {2}Task 1 t+\n {4}last comment by rev: > Empty state text missing i18n\n/);

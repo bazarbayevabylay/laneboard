@@ -36,7 +36,7 @@ const TASK_RULE =
   'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); ' +
   'comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json` (one write: the result, the commit link, the status). No untracked work.';
 
-const NAME_LINE = 'Writes need your name: pass `--as <your-name>` on every command (or `export LANEBOARD_AGENT=<your-name>`).';
+const NAME_LINE = 'Writes need your name: pass `--as <your-name>` on every command (or `export LANEBOARD_AGENT=<your-name>` only if no subagent runs under you: they inherit it).';
 
 // Claude Code sets a default name per session (LANEBOARD_DEFAULT_AGENT plus the session id), so an agent without a name still writes as itself.
 const DEFAULT_NAME_LINE =

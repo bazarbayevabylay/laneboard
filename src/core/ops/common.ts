@@ -690,6 +690,9 @@ export interface WriteFacts {
   // On a board with checks (P1): finish by a checker passed the task on to the next check, and the status it came from (also of an acceptance).
   passed?: true;
   from?: string;
+  // On a board with checks: this update returned a handed-in task for rework (S7a U6 run 8): who holds it now, and the reason its
+  // prime shows (the returner's comment since the hand-in, as lastComment shows it; null: none, see the warning).
+  returned?: { to: string | null; reason: string | null };
 }
 
 // Explicit mapping of a task view to the short write reply; `attached`: the write added an attachment (attach appends it last).
@@ -702,6 +705,7 @@ export function writeReply(task: TaskView, attached = false, facts: WriteFacts =
   if (facts.accepted === true) reply.accepted = true;
   if (facts.passed === true) reply.passed = true;
   if (facts.from !== undefined) reply.from = facts.from;
+  if (facts.returned !== undefined) reply.returned = { to: facts.returned.to, reason: facts.returned.reason };
   return reply;
 }
 

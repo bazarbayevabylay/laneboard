@@ -103,6 +103,8 @@ laneboard setup codex
   `MultiEdit` or `NotebookEdit` without a task in progress, one reminder line. Edits made through Bash are not seen.
 - Under the default name the edit reminder stays silent while any open task of the board has an assignee (anybody's: subagents
   share the default name). For reminders about your own tasks only, set `LANEBOARD_AGENT=<your name>`.
+- On a board with `--reviewers` or `--creators`, a session with no name of its own reads one line with those names and
+  `laneboard prime --as <name>` (Orchestrators, "Your name after a restart"). No file setup writes carries a name.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
 - Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
   `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks.
@@ -230,8 +232,9 @@ laneboard config --review-statuses none --reviewers none --json
 - `config --review-statuses` that turns a status with tasks in work into a check warns with each task and its holder's
   `finish <ID> --status <check> ...`; until then `doctor` reports them (check `checks`, exit 6).
 - `--creators orch`: only these names create tasks, subtasks and imports; others get `INVALID_VALUE` with a fix that asks for a task.
-- Return for rework: the checker comments why, then `update <ID> --status <work status>`; the assignee's `prime` (and the SessionStart
-  hook, for a task of an earlier session) shows that comment: only the returner's comment since the last hand-in, never one from an
+- Return for rework: the checker comments why, then `update <ID> --status <work status>`. The reply confirms it with no warning:
+  `returned for rework to <assignee>`, the reason, and that the assignee hands it in again with `finish` (JSON and MCP:
+  `returned {to, reason}`). The assignee's `prime` (and the SessionStart hook, for a task of an earlier session) shows that comment: only the returner's comment since the last hand-in, never one from an
   earlier round. A return with no comment warns the returner with `laneboard comment <ID> --as <checker> -- '<why it goes back>'`, and
   the assignee's `prime` says "returned for rework by <checker> at <time> with no reason - ask them or see laneboard get <ID>".
   Another checker's stale `finish` (or `update` into a check) of the returned task gets the fix `laneboard get <ID>`, the message names
@@ -243,6 +246,28 @@ laneboard config --review-statuses none --reviewers none --json
 - Subagents learn their part from `laneboard prime`: the checks, the checkers, "Waiting for your check" with the ready
   `pass: laneboard finish <ID> --status <next> ...` under each task (MCP `task_prime`: `roles.waiting[].next_status`).
 - Boards created before 0.4.0 keep working as they were; checks are turned on only by hand with `laneboard config`.
+
+### Your name after a restart
+
+The orchestrator's name is in `--reviewers` or `--creators` (say `orch`), but after a restart or `/clear` a Claude Code session gets
+a new default name. So the orchestrator's first command after a restart is:
+
+```sh
+laneboard prime --as orch
+```
+
+- Then it passes `--as orch` on every command (MCP: `actor`). Its `prime` shows "Waiting for your check" with the pass commands and
+  the create command.
+- Keep the name in the orchestrator's own instructions (its prompt, or the note it reads after a restart), never in a shared file.
+- Why not a shared file: `.claude/settings.json`, `.claude/settings.local.json`, `CLAUDE.md` and the env reach every session that
+  reads them: a colleague's clone, a second window, a worker in a linked worktree (Claude Code shares the local file with them too).
+  Such a worker would write as `orch`, and the real `orch` could not check its task: the author never checks its own work.
+  So `setup` takes no `--as` (`USAGE`).
+- Until a session names itself, the SessionStart hook and `prime` print one line on such a board: "Named roles here: reviewers rev,
+  orch; creators orch. If you are one of them: `laneboard prime --as <name>`, then --as <name> on every command."
+  A named session (`--as`, `LANEBOARD_AGENT`) does not see it.
+- `export LANEBOARD_AGENT=<name>` suits a single agent with no subagents (say in Codex or a script). Never in an orchestrator's
+  session: its subagents inherit it, and one without `--as` would write as `orch`.
 
 ### Taking over a claimed task
 

@@ -80,7 +80,7 @@ What `setup` writes:
 | opencode | `opencode.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 
 The PostToolUse hook reminds after an edit without a task in progress. Under the default name it stays silent while any open task of the
-board has an assignee (anybody's: subagents share the default name); set `LANEBOARD_AGENT=<your name>` for reminders about your own tasks.
+board has an assignee (anybody's: subagents share the default name); set `LANEBOARD_AGENT=<your name>` for reminders about your own tasks (a single agent with no subagents: they inherit it).
 
 Claude Code also has a plugin (`/plugin marketplace add bazarbayevabylay/laneboard`, then `/plugin install laneboard@laneboard`).
 Use the plugin or `setup claude-code`, not both: they register the same server and hooks. The SessionStart hook shows the board only
@@ -142,7 +142,7 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 - Before your first file change: claim your task or create one. Comment each meaningful step. When done: commit, then `laneboard finish <ID> --result "<result>"`.
 - `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`). Status changes, comments, `claim` and `finish` need none, so no `get` for a rev.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
-- Always pass `--json`. Your name: `--as <name>` or `export LANEBOARD_AGENT=<name>` (MCP: `actor`); without them Claude Code sessions write under their default name (2.5).
+- Always pass `--json`. Your name: `--as <name>` (MCP: `actor`; `export LANEBOARD_AGENT=<name>` only for a single agent with no subagents: they inherit it); without them Claude Code sessions write under their default name (2.5).
 - `laneboard prime` prints the full rules, the statuses in order (the last one is final) with the counts, the declared fields, your tasks
   not in the final status and the free ones (no assignee, not final) with the claim command.
 - A board with checks or `create_by` (3.7): `prime` names the checks, who makes them and who creates tasks. Your `finish` hands your work in
@@ -179,7 +179,7 @@ the text; no `--expected-rev`, nothing you read is overwritten); `--description`
 the old one as `previous` (up to 10 000 characters; longer: cut, with `previous_cut: true`).
 
 ```sh
-export LANEBOARD_AGENT=dev-1
+export LANEBOARD_AGENT=dev-1  # a single agent with no subagents (they inherit it); else --as
 laneboard create "Fix login redirect" --status todo --assignee dev-1 --json
 laneboard claim DEMO-1 --status in_progress --json
 laneboard comment DEMO-1 "Cause: the redirect drops the query string" --json
@@ -289,6 +289,12 @@ by <checker> ... with no reason"). A task handed in and waiting for a check is n
 under its default name) is its author: it never passes it on or accepts it, and its queue "Waiting for your check" skips it.
 The SessionStart hook (`prime --hook`) shows the section on every start but resume and compaction, which keep the id; `claim --resume`
 of a subtask names a parent held by the same session. The MCP server keeps the id it started with.
+
+An orchestrator named in `--reviewers` or `--creators` (say `orch`) runs `laneboard prime --as orch` first after a restart and passes
+`--as orch` on every command; it keeps that name in its own instructions, never in a shared file (settings, `CLAUDE.md`, env): those reach
+every session that reads them (a colleague's clone, another window, a worker in a linked worktree), so `setup` takes no `--as`.
+Until a session names itself, `prime` and the SessionStart hook on such a board print `Named roles here: ...` with the names and that
+command; a named session does not see it. Never `export LANEBOARD_AGENT=orch` there: subagents inherit it.
 
 Copying the default name into `--as` changes nothing: a name equal to the session's default is recorded as `default`. Subagents of one session share its default name: give each its own `--as`.
 So under the default name `prime` starts by saying that a subagent or parallel worker runs `prime --as <its own name>` and passes that `--as` everywhere. Codex, Cursor, Gemini CLI and OpenCode get no default name
@@ -542,8 +548,9 @@ against an agent's mistake, not against a hostile agent.
 - A task waiting in a check (handed in, or passed on) is handed in already: the author's `finish`, `update` or `claim` into another check
   or the final status gets `INVALID_VALUE` "handed in already, waits in <check> for the check of <checkers>", its fix a comment; it never
   goes back to an earlier check. `finish` without `--status` there records a new result after rework, the status stays.
-- Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone, with a warning); the
-  assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. The reason is
+- Return for rework: the checker comments why, then `update <ID> --status <work status>` (the hand-in is gone; the reply confirms
+  `returned for rework to <assignee>` with the reason and that the assignee hands it in again, JSON and MCP `returned {to, reason}`,
+  no warning; the author's own move out of a check still warns with its hand-in); the assignee's `prime` shows that comment under its task (`last comment by <checker>`) and hands in again with `finish`. The reason is
   only the returner's newest comment since the last hand-in (before or after its move): a comment from an earlier round is never shown.
   A return with none warns the returner with `laneboard comment <ID> --as <checker> -- '<why it goes back>'` (a comment written then
   becomes the reason), and the assignee's `prime` says `returned for rework by <checker> at <time> with no reason - ask them or see

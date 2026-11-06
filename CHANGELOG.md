@@ -45,6 +45,8 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   is only the returner's comment since the last hand-in; a return with none says "returned for rework by <name> at <time> with no
   reason" (`comment: null`, `returned: {by, at}`) and warns the returner with the comment command; the return named in a stale
   check's message carries `'<why it goes back>'`, never the refused command's result (ADR §54).
+  The documented return (the checker's comment, then `update --status <work status>`) is confirmed in the reply, `returned for rework
+  to <assignee>` with the reason (JSON and MCP `returned {to, reason}`), with no warning naming the assignee's hand-in (ADR §55).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming
@@ -58,6 +60,9 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
 - `setup claude-code` warns in one line when the board path and your name go into the committed `.claude/settings.json` (ADR §49).
 - `finish --commit <sha>`; MCP `task_finish` takes `cwd` (your worktree) or `commit` (ADR §41).
 - `setup codex --remove --global` removes the global Codex entry even while other projects use it (ADR §39).
+- On a board with `--reviewers` or `--creators`, `prime` and the SessionStart hook of a session with no name of its own print one line
+  with those names and `laneboard prime --as <name>`; "not you" is said only to a named session. An orchestrator runs
+  `laneboard prime --as orch` first after a restart; no project file carries a name, so `setup` refuses `--as` (ADR §55).
 - `list` items carry `handed_in`, `in_work` and `stale`; `laneboard` with no arguments prints the help; `-v` is `--version`.
 - One warning line when the CLI runs on Node.js older than 22 (`warnings` with `--json`) (ADR §50).
 - `CHANGELOG.md`; `README.md` in English (sections for any MCP client, monorepos and orchestrators); the package metadata

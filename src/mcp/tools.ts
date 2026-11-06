@@ -112,7 +112,7 @@ export const TOOLS: Record<OpName, ToolDef | 'cli-only'> = {
   updateTask: {
     name: 'task_update',
     description:
-      'Change a task (at least one change). assignee null unassigns. description replaces the whole text; append_description adds to it after a blank line and needs no expected_rev. parent: id of a task on this board (a subtask), null: a top-level task. expected_rev is optional: pass it (the rev of your last read or write) only for edits on top of what you read (description, fields); a status change needs none. Closing a task: task_finish. On a board with checks no update sets a check (INVALID_VALUE): a task enters one only by task_finish.',
+      'Change a task (at least one change). assignee null unassigns. description replaces the whole text; append_description adds to it after a blank line and needs no expected_rev. parent: id of a task on this board (a subtask), null: a top-level task. expected_rev is optional: pass it (the rev of your last read or write) only for edits on top of what you read (description, fields); a status change needs none. Closing a task: task_finish. On a board with checks no update sets a check (INVALID_VALUE): a task enters one only by task_finish; a checker\'s move of a handed-in task into a work status (after task_comment with why) returns it for rework: reply returned {to, reason} (reason null: a warning asks for that comment).',
     params: taskWriteParams(UpdateInput.omit({ field_args: true })),
     write: true,
     taskReply: true,

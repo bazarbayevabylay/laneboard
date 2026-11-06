@@ -10,7 +10,7 @@ export const update: CommandDef = {
     'update <id> [--title T] [--description T | --description-file P|- | --append-description T | --append-description-file P|-] [--status S] [--assignee A | --unassign] [--parent ID | --no-parent] [--add-label L]... [--remove-label L]... [--add-link kind=ref]... [--remove-link kind=ref]... [--field k=v]... [--unset-field k]... [--expected-rev N] [--full]',
   summary:
     'Change a task (at least one change). --description replaces the whole text; --append-description adds to it (after a blank line, no --expected-rev needed). --parent makes it a subtask of a task on this board, --no-parent a top-level task. --expected-rev is optional: only for edits on top of what you read (description, fields). Closing a task: laneboard finish. ' +
-    'On a board with checks (laneboard config --review-statuses) no update sets a check (a task enters one only with finish), the assignee never sets the final status, only review.by (when set) do; moving a handed-in task takes the hand-in away (a warning): the way to return it for rework, with a comment.',
+    'On a board with checks (laneboard config --review-statuses) no update sets a check (a task enters one only with finish), the assignee never sets the final status, only review.by (when set) do; moving a handed-in task takes the hand-in away: by a checker that is the return for rework (comment why first; the reply says returned for rework to <holder>), by its author a warning with the hand-in again.',
   options: {
     title: { type: 'string' },
     description: { type: 'string' },
@@ -54,6 +54,12 @@ export const update: CommandDef = {
       expected_rev: int(c.values, 'expected-rev'),
     });
     const verb = r.warnings.some((w) => w.startsWith('no changes')) ? 'unchanged' : 'updated';
-    return taskReply(c, r, verb);
+    const back = r.reply?.returned;
+    if (back === undefined) return taskReply(c, r, verb);
+    // A return for rework (S7a U6 run 8): who has it now and what happens next, never a command under another name.
+    const holder = back.to ?? 'whoever takes it';
+    const reason = back.reason === null ? 'no reason yet' : `reason: ${JSON.stringify(back.reason)}`;
+    const out = taskReply(c, r, `returned for rework to ${back.to ?? 'nobody (unassigned)'}`);
+    return flag(c.values, 'full') ? out : { ...out, human: `${out.human}; ${reason}; ${holder} reworks it and hands it in again with finish, then it is back in the checkers' queue` };
   },
 };
