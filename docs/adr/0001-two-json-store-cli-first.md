@@ -142,7 +142,7 @@ A concrete value is suggested only for an obvious typo (`in-progress` → `in_pr
 laneboard agent rules (task board & CLI for AI coding agents):
 1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`laneboard prime` says how, or whom to ask); comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
 2. Use only `laneboard` commands (or the task_* MCP tools). Never edit .laneboard/*.json by hand.
-3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command or LANEBOARD_AGENT (MCP: `actor`); each subagent or parallel worker needs one.
+3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command (MCP: `actor`), one per subagent or worker; LANEBOARD_AGENT only if none (inherited).
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name; add `--as <name>` only for a name of your own.
 5. `--expected-rev` is optional: only for edits on top of what you read (`--description` replaces the whole text; `--field`), pass the rev from your last read or write. Status, comment, claim, finish, `--append-description`: without it, and no `get` for it.
 6. REV_CONFLICT: re-apply your change on `error.details.task` (keep others' edits, merge the description) with its rev. Never retry blindly.
@@ -791,12 +791,12 @@ Checks
   (the default name, or none) on a board with named roles (`review.by` non-empty, or `create_by`) that do not include its name, prime
   and the hook print one line after the session line (`namedRolesLine`, closing block, so PRIME_MAX_CHARS counts it; each list cut at
   80 characters, the full lists are in the roles line): "Named roles here: reviewers rev, orch; creators orch. If you are one of
-  them, run `laneboard prime --as <name>` and pass --as <name> to every command." A named session (`--as`, `LANEBOARD_AGENT`) gets
+  them: `laneboard prime --as <name>`, then --as <name> on every command." (r2: shortened, same meaning) A named session (`--as`, `LANEBOARD_AGENT`) gets
   none. "(not you)" after the creators is said only to a named session; an unnamed one reads "(not under the default name)" or
   "(not without a name)", and the way to get a task starts "not one of them? ask whoever started you ...". The orchestrator runs
   `laneboard prime --as orch` first after a restart and keeps its name in its own instructions (README "Your name after a restart").
   `setup --as` is `USAGE` for every harness (fix drops it), never ignored: the orchestrator would believe its name is set.
-  `LANEBOARD_AGENT` is advised only with its condition (ACTOR_REQUIRED message, the keep-the-name line of prime): a single agent with
+  `LANEBOARD_AGENT` is advised only with its condition (ACTOR_REQUIRED message and fix, the keep-the-name line of prime; r2: rule 3 and its short form, the setup name line, guide 2.1): a single agent with
   no subagents; subagents inherit it.
   Rejected: (1) the name in the SessionStart hook of the committed `.claude/settings.json` (`setup claude-code --as orch`, S7a before
   r1): every main session that reads the file got it, a colleague's clone, a second window, a worker started as its own session in a
@@ -808,6 +808,8 @@ Checks
   Residual: an unnamed session that is not the orchestrator reads the hint too (it says "if you are one of them"); the orchestrator
   depends on its own instructions to name itself after a restart; MCP `task_prime` has no hint (its `roles` carry the names, the
   server's actor is set by `mcp --as`).
+  Budget: the hint counts in PRIME_MAX_CHARS, so it can push tasks of earlier sessions into "… N more" (the oldest one and the
+  `list --sessions-of` footer stay); for that the S6z repro fixture in test/cli/s6z.test.ts has 80-character titles, not 150.
 - U6 (MINOR): rev ran the documented return (`comment <ID> -- '<why>' && update <ID> --status <work>`, the fix of its own refused
   finish) and got the A17 warning "was handed in; after this move it is not ... laneboard finish <ID> --status <check> ... --as dev-3",
   as if it erred, with a command under the author's name. Decision: an update that is a return for rework (`returnByThisWrite`:

@@ -264,7 +264,7 @@ laneboard prime --as orch
   Such a worker would write as `orch`, and the real `orch` could not check its task: the author never checks its own work.
   So `setup` takes no `--as` (`USAGE`).
 - Until a session names itself, the SessionStart hook and `prime` print one line on such a board: "Named roles here: reviewers rev,
-  orch; creators orch. If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command."
+  orch; creators orch. If you are one of them: `laneboard prime --as <name>`, then --as <name> on every command."
   A named session (`--as`, `LANEBOARD_AGENT`) does not see it.
 - `export LANEBOARD_AGENT=<name>` suits a single agent with no subagents (say in Codex or a script). Never in an orchestrator's
   session: its subagents inherit it, and one without `--as` would write as `orch`.

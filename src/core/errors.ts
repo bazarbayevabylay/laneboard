@@ -42,7 +42,7 @@ export const ERRORS: Record<ErrorCode, ErrorSpec> = {
   INVALID_VALUE: { exit: 2, http: 400, fix: 'pass the value in the format the message states' },
   UNKNOWN_STATUS: { exit: 2, http: 400, fix: 'use a status from `allowed` (config.statuses)' },
   UNKNOWN_FIELD: { exit: 2, http: 400, fix: 'use a field from `allowed`, or ask the board owner to declare it: laneboard config --field <key>:<type>' },
-  ACTOR_REQUIRED: { exit: 2, http: 400, fix: 'pass --as <your-name> or export LANEBOARD_AGENT=<your-name>' },
+  ACTOR_REQUIRED: { exit: 2, http: 400, fix: 'pass --as <your-name> (or export LANEBOARD_AGENT=<your-name> only if no subagent runs under you)' },
   TASK_NOT_FOUND: { exit: 3, http: 404, fix: 'find the task: laneboard list --scope all --text "<words from the title>"' },
   ATTACHMENT_NOT_FOUND: { exit: 3, http: 404, fix: 'see attachment names: laneboard get <id>' },
   REV_CONFLICT: { exit: 4, http: 409, fix: 'read the task again (laneboard get <id> --json) and re-apply your change with the new --expected-rev' },

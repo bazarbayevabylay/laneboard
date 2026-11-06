@@ -20,7 +20,7 @@ afterAll(cleanupTemp);
 const SESSION = '0rch0002-bbbb-4bbb-8bbb-000000000002';
 const OTHER_SESSION = '0the0003-cccc-4ccc-8ccc-000000000003';
 const HINT =
-  'Named roles here: reviewers rev, orch; creators orch. If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command.';
+  'Named roles here: reviewers rev, orch; creators orch. If you are one of them: `laneboard prime --as <name>`, then --as <name> on every command.';
 
 interface Project {
   cwd: string;
@@ -172,10 +172,10 @@ describe('S7a U1 r1: no project file names a session; an unnamed session reads t
     }
     const reviewers = await project(['--review-statuses', 'code_review,qa', '--reviewers', 'rev,orch']);
     expect((await reviewers.run(['setup', 'claude-code'])).code).toBe(0);
-    expect(runHook(reviewers)).toContain('\nNamed roles here: reviewers rev, orch. If you are one of them, run `laneboard prime --as <name>`');
+    expect(runHook(reviewers)).toContain('\nNamed roles here: reviewers rev, orch. If you are one of them: `laneboard prime --as <name>`');
     const creators = await project(['--creators', 'orch']);
     expect((await creators.run(['setup', 'claude-code'])).code).toBe(0);
-    expect(runHook(creators)).toContain('\nNamed roles here: creators orch. If you are one of them, run `laneboard prime --as <name>`');
+    expect(runHook(creators)).toContain('\nNamed roles here: creators orch. If you are one of them: `laneboard prime --as <name>`');
   });
 
   it('a session with no name at all (outside Claude Code) gets the hint; a default name that is in the roles gets none', async () => {
@@ -191,6 +191,16 @@ describe('S7a U1 r1: no project file names a session; an unnamed session reads t
     expect(runHook(p)).not.toContain('Named roles here');
   });
 
+  it('a default name only among the creators counts as named: no hint', async () => {
+    const p = await project();
+    expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
+    const own = JSON.parse((await cli(['prime', '--json'], { cwd: p.cwd, env: sessionEnv(p) })).stdout).data.agent as string;
+    expect((await p.run(['config', '--creators', `orch,${own}`])).code).toBe(0);
+    const out = runHook(p);
+    expect(out).toContain(own); // in the creators, not in the reviewers rev, orch
+    expect(out).not.toContain('Named roles here');
+  });
+
   it('the hint fits PRIME_MAX_CHARS with long name lists and a long queue; the lists are cut, the command never', async () => {
     const p = await project();
     expect((await p.run(['setup', 'claude-code'])).code).toBe(0);
@@ -203,7 +213,7 @@ describe('S7a U1 r1: no project file names a session; an unnamed session reads t
     const hint = out.split('\n').find((l) => l.startsWith('Named roles here: reviewers '));
     expect(hint).toBeDefined();
     expect(hint).toContain('…; creators ');
-    expect(hint).toMatch(/If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command\.$/);
+    expect(hint).toMatch(/If you are one of them: `laneboard prime --as <name>`, then --as <name> on every command\.$/);
     expect(out.length).toBeLessThanOrEqual(PRIME_MAX_CHARS + 1);
   });
 });

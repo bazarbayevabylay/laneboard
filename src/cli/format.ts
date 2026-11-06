@@ -284,7 +284,7 @@ function namedRolesLine(d: PrimeData): string {
     creators.length > 0 ? `creators ${fit(creators.join(', '), HINT_NAMES_MAX)}` : '',
   ].filter(Boolean);
   if (parts.length === 0) return '';
-  return `Named roles here: ${parts.join('; ')}. If you are one of them, run \`laneboard prime --as <name>\` and pass --as <name> to every command.`;
+  return `Named roles here: ${parts.join('; ')}. If you are one of them: \`laneboard prime --as <name>\`, then --as <name> on every command.`;
 }
 
 // `line` cut to `room` characters, marked with an ellipsis when cut.

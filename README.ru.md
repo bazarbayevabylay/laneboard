@@ -264,7 +264,7 @@ laneboard prime --as orch
   Такой воркер писал бы как `orch`, и настоящий `orch` не смог бы проверить его задачу: автор свою работу не проверяет.
   Поэтому `setup` не принимает `--as` (`USAGE`).
 - Пока сессия не назвалась, хук SessionStart и `prime` на такой доске печатают одну строку: «Named roles here: reviewers rev, orch;
-  creators orch. If you are one of them, run `laneboard prime --as <name>` and pass --as <name> to every command.»
+  creators orch. If you are one of them: `laneboard prime --as <name>`, then --as <name> on every command.»
   Названная сессия (`--as`, `LANEBOARD_AGENT`) её не видит.
 - `export LANEBOARD_AGENT=<имя>` подходит одиночному агенту без сабагентов (например, в Codex или скрипте). В сессии оркестратора —
   никогда: сабагенты наследуют переменную, и сабагент без `--as` запишет как `orch`.
