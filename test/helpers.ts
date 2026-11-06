@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { afterAll } from 'vitest';
 import { RULES_MAX_CHARS, SHORT_RULES_MAX_CHARS, shortRules } from '../src/cli/format.ts';
 import { runCli } from '../src/cli/run.ts';
 import { agentRules, initStore, LaneboardError } from '../src/core/index.ts';
@@ -17,13 +18,16 @@ const made: string[] = [];
 // Isolation guard (incident 06.11: a spawn without `env` inherited the session's LANEBOARD_DIR and created tasks on a live board).
 // Every test file that runs the CLI imports this module, so its worker drops the variables that pick a board, a name or a config
 // folder, and points LANEBOARD_DIR at a path no board can be at: a child process started without its own `env` fails (STORE_NOT_FOUND
-// or ENOTDIR) instead of reaching the runner's board. HOME becomes an empty folder of this worker: no ~/.laneboard registry, ~/.claude
+// or ENOTDIR) instead of reaching the runner's board. HOME becomes an empty folder of this test file: no ~/.laneboard registry, ~/.claude
 // or ~/.gitconfig of the machine is read or written. test/isolation.test.ts checks the guard.
 export const LEAKED_BOARD = '/dev/null/laneboard-test-guard';
 export const GUARD_DROPPED_ENV = ['LANEBOARD_AGENT', 'LANEBOARD_DEFAULT_AGENT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PLUGIN_CACHE_DIR', 'CODEX_HOME', 'XDG_CONFIG_HOME'] as const;
 for (const key of GUARD_DROPPED_ENV) delete process.env[key];
 process.env.LANEBOARD_DIR = LEAKED_BOARD;
-process.env.HOME = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lb-test-home-')));
+const guardHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lb-test-home-')));
+process.env.HOME = guardHome;
+// Each test file imports this module anew (vitest isolates files), so its HOME goes with the file.
+afterAll(() => fs.rmSync(guardHome, { recursive: true, force: true }));
 
 // Fresh temp directory (realpath, so it matches process.cwd() on macOS).
 export function tempDir(): string {

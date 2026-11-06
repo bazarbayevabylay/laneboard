@@ -321,6 +321,18 @@ describe('another board appears in the repository after setup in a package', () 
   const leftWarning = (m: Mono): string =>
     `${m.rootLocal} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code there pins it again`;
 
+  it('review C2: --dry-run says it would take the left pin out and leaves the root local file as it is', async () => {
+    const m = await withLaterBoard();
+    const before = fs.readFileSync(m.rootLocal, 'utf8');
+    const r = await json(m.web, ['setup', 'claude-code', '--dry-run'], m.env);
+    expect(r.code, JSON.stringify(r.doc)).toBe(0);
+    expect(r.doc.warnings).toContain(
+      `${m.rootLocal} holds the store pin of an earlier laneboard setup (LANEBOARD_DIR=${m.store}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup would take it out. Folders pinned to ${m.store} find it by walking up; laneboard setup claude-code there pins it again`,
+    );
+    expect(r.doc.warnings.join('\n')).not.toContain('setup took it out');
+    expect(fs.readFileSync(m.rootLocal, 'utf8')).toBe(before);
+  });
+
   it('setup again in the package takes the pin out of the root local file and keeps its env in its settings.json; then setup in b works', async () => {
     const m = await withLaterBoard();
     const r = await json(m.web, ['setup', 'claude-code'], m.env);

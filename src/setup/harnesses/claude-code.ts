@@ -305,15 +305,16 @@ function movedPinWarnings(c: HarnessContext): string[] {
 }
 
 // A pin an earlier setup left in the repository root's local file that this run takes out (leftRootPin): say so, and how the folders
-// that relied on it get their pin back.
+// that relied on it get their pin back. A --dry-run takes nothing out, so it says what setup would do (review C2).
 function leftPinWarnings(c: HarnessContext): string[] {
   const file = rootLocalFile(c);
   if (file === undefined) return [];
   const text = readText(file);
   if (!leftRootPin(text, c)) return [];
   const dir = envString(text, ENV_DIR) ?? '';
+  const [held, took] = c.dryRun ? ['holds', 'would take it out'] : ['held', 'took it out'];
   return [
-    `${file} held the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup took it out. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code there pins it again`,
+    `${file} ${held} the store pin of an earlier laneboard setup (LANEBOARD_DIR=${dir}) that no longer applies there: another board lies in this repository and Claude Code would give that pin to its sessions too; setup ${took}. Folders pinned to ${dir} find it by walking up; laneboard setup claude-code there pins it again`,
   ];
 }
 
