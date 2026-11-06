@@ -299,6 +299,35 @@ describe('S6y r1: a return for rework since the last hand-in, whatever the autho
     expect(r.doc.error.message).not.toContain('with no comment');
   });
 
+  for (const moved of ['backlog', 'blocked']) {
+    it(`r2: rev returned it with a reason, orch moves it to ${moved}: the stale pass still reads it, the author keeps rev's reason`, async () => {
+      const s = await waiting(TWO);
+      await returned(s, TWO);
+      expect((await run(s, 'orch', ['update', 'API-1', '--status', moved])).code).toBe(0);
+      const r = await run(s, 'orch', ['finish', 'API-1', '--status', 'qa', '--result', 'CR ok']);
+      expect(r.doc.error).toMatchObject({ code: 'ALREADY_CLAIMED', fix: 'laneboard get API-1' });
+      expect(r.doc.error.message).toMatch(new RegExp(`^API-1 was returned for rework by rev at \\S+ \\(code_review -> dev\\), reason: "Empty state text missing i18n"; it is ${moved} with dev-1`));
+      expect(sh(s, r.doc.error.fix)).toBe(0);
+      expect(await primeText(s, 'dev-1')).toContain('last comment by rev: > Empty state text missing i18n');
+    });
+  }
+
+  it('r2: a return with no reason ends with a later move by another name; orch moving it back into a check ends one with a reason too', async () => {
+    const s = await waiting(TWO);
+    expect((await run(s, 'rev', ['update', 'API-1', '--status', 'dev'])).code).toBe(0);
+    expect((await run(s, 'orch', ['update', 'API-1', '--status', 'blocked'])).code).toBe(0);
+    const r = await run(s, 'rev', ['finish', 'API-1', '--status', 'qa', '--result', 'ok']);
+    expect(r.doc.error.message).not.toContain('returned for rework');
+    expect(r.doc.error.fix).toContain('hand it in:');
+    const t = await board(ONE, false);
+    expect((await run(t, 'dev-1', ['finish', 'API-1', '--status', 'review', '--result', 'r', '--no-commit'])).code).toBe(0);
+    await returned(t, ONE, 'missing test');
+    expect((await run(t, 'orch', ['update', 'API-1', '--status', 'review'])).code).toBe(0);
+    const u = await run(t, 'orch', ['finish', 'API-1', '--result', 'ok']);
+    expect(u.doc.error.message).not.toContain('returned for rework');
+    expect(u.doc.error.fix).toContain('hand it in:');
+  });
+
   it('an acceptance after the last hand-in, then the author reopens it: no return for rework (the comment to hand it in, A14)', async () => {
     const s = await waiting(ONE);
     expect((await run(s, 'rev', ['finish', 'API-1', '--status', 'done', '--result', 'ok'])).doc.data.status).toBe('done');

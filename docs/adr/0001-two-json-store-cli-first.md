@@ -730,8 +730,9 @@ Checks
   fix `comment <ID> "hand it in: ..."`, whose run made that comment the newest by another name, so the author's `prime` (feedback) and
   MCP `roles.feedback` showed it instead of the reason. Decision: a task returned for rework (`reworkReturn`, review r1: after the newest
   status event that handed it in or passed it on, the first status event is a move without a mark by a name that is no author of the
-  work; later moves by the author keep it, a new hand-in or pass, an acceptance, or a later move by another name end it) gets
-  `returnedForRework`:
+  work; later moves by the author keep it, and by another name into a work or the first status while the return has a reason (review
+  r2: orch parking it in todo or blocked); a new hand-in or pass, an acceptance, or a later move by another name back into a check
+  (without checks: the status it was handed in to, s4 LB-9) or after a return with no reason end it) gets `returnedForRework`:
   the refusal's own code (ALREADY_CLAIMED for a check or an acceptance, INVALID_VALUE for update/claim into a check), fix `laneboard
   get <ID>`, message "<ID> was returned for rework by <name|you> at <time> (<from> -> <to>), reason: "<first line of that name's newest
   comment since the hand-in>" (or "with no comment"); it is <status> with <holder> and not handed in, so there is nothing to check".
@@ -739,7 +740,7 @@ Checks
   Same class, found and fixed (fixes that write a comment to the author on behalf of a checker or third party): `notHandedInForCheck`
   (checker's finish), `notHandedIn` (somebody else's acceptance on a board without checks: a stale acceptance after a return there too),
   `checkEntryRefusal` for anybody else (update/claim into a check). Unchanged, as their state has no reason to bury: the same three on a
-  task never handed in, moved out of the check by its author, or moved on by another name since the return (A14: the comment asks the
+  task never handed in, moved out of the check by its author, or ended as above since the return (A14: the comment asks the
   holder to hand it in, ADR §43); placeholder comments (`claimedBy`, `notChecker`, `notFinalTarget`, `waitingClaimRefusal`,
   `alreadyHandedIn`: "<note for ...>", the caller writes the note).
   Checks: test/cli/s6y.test.ts (layouts two checks, a work status between them, one check, none; every fix and the named hand-in run in

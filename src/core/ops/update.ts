@@ -730,14 +730,14 @@ function handInOutsideCheck(config: ConfigT, task: TaskT, target: string, text: 
   );
 }
 
-// The return for rework of `task` since its last hand-in (S6y U2 run 6, review r1): the newest status event that handed the task in or
-// passed it on (handed_in, passed), and the first status event after it is a move (update or claim, no mark) by a name that is no author
-// of the work (workedOn: a checker or a third party; the author's own move out of the check is no return). Later moves by the author
-// (update to blocked, back to work) keep it; a new hand-in or pass, or a later move by a name that is no author, ends it. Who returned it,
-// when, from where to where, and the reason: the first line of the returner's newest comment after the hand-in (before or after the
-// move, as lastComment shows it). undefined when the task is closed, never was handed in, is handed in again since, was accepted in
-// between, its first move after the hand-in is the author's, a name that is no author moved it after the return, or the events limit
-// dropped the hand-in.
+// The return for rework of `task` since its last hand-in (S6y U2 run 6, review r1, r2): the newest status event that handed the task in
+// or passed it on (handed_in, passed), and the first status event after it is a move (update or claim, no mark) by a name that is no
+// author of the work (workedOn: a checker or a third party; the author's own move out of the check is no return). Later moves by the
+// author (update to blocked, back to work) keep it, and so do later moves by another name into a work status or the first status while
+// the return has a reason; a new hand-in or pass, an acceptance, or a later move by another name back into a check (without checks: into
+// the status it was handed in to) or with no reason ends it. Who returned it, when, from where to where, and the reason: the first line
+// of the returner's newest comment after the hand-in (before or after the move, as lastComment shows it). undefined when it ended, the
+// task is closed, never was handed in, its first move after the hand-in is the author's, or the events limit dropped the hand-in.
 interface ReworkReturn {
   actor: string;
   at: string;
@@ -757,10 +757,16 @@ function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undefined {
   if (moves.some((e) => e.data.accepted === true)) return undefined;
   const move = moves[0];
   if (move === undefined || workedOn(task, move.actor)) return undefined;
-  // Later moves by another name that is no author (the task moved on by a third party, ADR §43 A14) end what the return means.
-  if (moves.slice(1).some((e) => !workedOn(task, e.actor))) return undefined;
   const comments = since.filter((e) => e.type === 'commented' && e.actor === move.actor);
-  return { actor: move.actor, at: move.at, from: String(move.data.from), to: String(move.data.to), reason: lastComment({ ...task, events: comments })?.text };
+  const reason = lastComment({ ...task, events: comments })?.text;
+  // A later move by a name that is no author ends the return only when it put the task back into a check (or, without checks, into the
+  // status it was handed in to: ADR §43 A14, s4 LB-9) or the return has no reason to bury (review r2); a move into work or the first
+  // status by the orchestrator keeps it, so a stale check never gets the "hand it in" comment that would push the reason out of prime.
+  const handedTo = events[handIn]?.data.to;
+  const intoCheck = (to: unknown): boolean => reviewStatuses(config).includes(String(to)) || to === handedTo;
+  const later = moves.slice(1).filter((e) => !workedOn(task, e.actor));
+  if (later.length > 0 && (reason === undefined || later.some((e) => intoCheck(e.data.to)))) return undefined;
+  return { actor: move.actor, at: move.at, from: String(move.data.from), to: String(move.data.to), reason };
 }
 
 // The refusal of somebody else's check, acceptance or move into a check of a task returned for rework (reworkReturn, S6y U2 run 6): its
