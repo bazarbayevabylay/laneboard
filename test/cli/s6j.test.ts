@@ -458,3 +458,58 @@ describe('A-U5: init names setup before prime and the command that turns checks 
     expect(small.stdout).not.toContain('checks:');
   });
 });
+
+describe('LB-62 (0.4.1): config of the checks says what it keeps, in which order and whom it never matches', () => {
+  it('62.1: a typo in --review-statuses is refused with its status in the fix, never dropped', async () => {
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    const r = await run(s, 'orch', ['config', '--review-statuses', 'code_reviw,qa']);
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses code_review,qa' });
+    expect(r.doc.error.message).toContain('review status "code_reviw" is not a status of this board');
+  });
+
+  it('62.2: checks in another order than the statuses are refused with the order of the statuses as the fix', async () => {
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    const before = configText(s);
+    const r = await run(s, 'orch', ['config', '--review-statuses', 'qa,code_review']);
+    expect(r.code).toBe(2);
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses code_review,qa' });
+    expect(r.doc.error.message).toContain('the checks qa, code_review are not in the order of the statuses');
+    expect(configText(s)).toBe(before);
+    const fixed = await run(s, 'orch', ['config', '--review-statuses', 'code_review,qa']);
+    expect(fixed.doc.data.review).toEqual({ statuses: ['code_review', 'qa'], by: [], work_status: 'dev' });
+  });
+
+  it('62.3: a reviewer of the form <harness>@<user> gets a warning: sessions write as <base>:<session>', async () => {
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    const r = await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'claude-code@tester,rev']);
+    expect(r.code).toBe(0);
+    expect(r.doc.warnings.filter((w: string) => w.startsWith('reviewer '))).toEqual([
+      'reviewer "claude-code@tester" looks like the base of a session default name: each session writes as claude-code@tester:<session>, never as claude-code@tester, so no session checks as it; a checker passes its own name (--as <name>) and --reviewers lists that name',
+    ]);
+    const plain = await run(s, 'orch', ['config', '--reviewers', 'rev,orch']);
+    expect(plain.doc.warnings).toEqual([]);
+  });
+
+  it('62.4: --review-statuses none with --reviewers names is refused, the checkers are never dropped silently', async () => {
+    const s = await newStore({ prefix: 'API', statuses: FLOW });
+    await run(s, 'orch', ['config', '--review-statuses', 'code_review', '--reviewers', 'rev']);
+    const before = configText(s);
+    const r = await run(s, 'orch', ['config', '--review-statuses', 'none', '--reviewers', 'rev']);
+    expect(r.doc.error).toMatchObject({ code: 'INVALID_VALUE', fix: 'laneboard config --review-statuses none' });
+    expect(configText(s)).toBe(before);
+    expect((await run(s, 'orch', ['config', '--review-statuses', 'none', '--reviewers', 'none'])).code).toBe(0);
+  });
+});
+
+describe('LB-58 (0.4.1): init names the declared fields and the setup command (also in --json)', () => {
+  it('58.1, 58.2: the fields line with priority; data.setup next to data.next', async () => {
+    const root = tempDir();
+    const r = await cli(['init', '--name', 'web', '--description', 'web shop'], { cwd: root });
+    expect(r.stdout).toContain('fields: priority (number, 0 = highest); another: laneboard config --field <key>:<type>, drop one: laneboard config --drop-field <key>\n');
+    const other = tempDir();
+    const j = await cli(['init', '--name', 'web2', '--description', 'web shop', '--json'], { cwd: other });
+    const data = JSON.parse(j.stdout).data;
+    expect(data.setup).toBe('laneboard setup <claude-code|codex|cursor|gemini|opencode>');
+    expect(data.next).toBe('laneboard prime');
+  });
+});

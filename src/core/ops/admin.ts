@@ -436,6 +436,13 @@ function archivedFieldWarnings(uses: readonly FieldUse[]): string[] {
 
 // The checks after `config --review-statuses` / `--reviewers`: null statuses turn them off; reviewers need checks (now or already on).
 function nextReview(current: ReviewConfigT | undefined, statuses: string[] | null | undefined, by: string[] | null | undefined): ReviewConfigT | undefined {
+  // Checks off and checkers named in one call (LB-62.4): the names would be dropped with the checks, so the call is refused.
+  if (statuses === null && by !== null && by !== undefined) {
+    throw new LaneboardError('INVALID_VALUE', '--review-statuses none turns the checks off, and --reviewers names checkers for them', {
+      input: { field: 'reviewers', value: by.join(',') },
+      fix: 'laneboard config --review-statuses none',
+    });
+  }
   if (statuses === null) return undefined;
   const base = statuses === undefined ? current : { ...current, statuses: [...statuses], by: current?.by ?? [] };
   if (base === undefined) {
@@ -449,18 +456,37 @@ function nextReview(current: ReviewConfigT | undefined, statuses: string[] | nul
   return by === undefined ? { ...base, statuses: base.statuses, by: base.by ?? [] } : { ...base, statuses: base.statuses, by: by === null ? [] : unique(by) };
 }
 
-// INVALID_VALUE when the checks do not fit the statuses (a status missing, the first or the final one, listed twice); the fix keeps
-// the checks that still fit, or turns them off.
-function checkReview(config: ConfigT, statusesGiven: boolean): void {
-  const problem = reviewProblem(config);
+// The checks that fit the statuses, in the order of the statuses: a typo becomes its status (LB-62.1: `reviw` -> `review`, never
+// dropped), a status that is no check is left out, each one once.
+function fittingChecks(config: ConfigT): string[] {
+  const middle = middleStatuses(config.statuses);
+  const fit = (config.review?.statuses ?? []).map((st) => (middle.includes(st) ? st : config.statuses.includes(st) ? undefined : suggestClosest(st, middle)));
+  return middle.filter((st) => fit.includes(st));
+}
+
+// INVALID_VALUE when the checks do not fit the statuses (a status missing, the first or the final one, listed twice) or, when the call
+// sets them (`ordered`), follow another order than the statuses (LB-62.2: qa,review on todo,..,review,qa,done would make the check
+// review the work status); the fix keeps the checks that still fit, in the order of the statuses, or turns them off.
+function checkReview(config: ConfigT, statusesGiven: boolean, ordered: boolean): void {
+  const kept = fittingChecks(config);
+  const given = config.review?.statuses ?? [];
+  const outOfOrder = ordered && reviewProblem(config) === undefined && given.join(',') !== kept.join(',');
+  const problem = reviewProblem(config) ?? (outOfOrder ? `the checks ${given.join(', ')} are not in the order of the statuses (${config.statuses.join(', ')}): a task passes them in that order` : undefined);
   if (problem === undefined) return;
   const middle = middleStatuses(config.statuses);
-  const kept = unique((config.review?.statuses ?? []).filter((st) => middle.includes(st)));
   const statusesPart = statusesGiven ? ` --statuses ${config.statuses.join(',')}` : '';
   throw new LaneboardError('INVALID_VALUE', `${problem}; a check is a status between the first and the final one${middle.length ? ` (${middle.join(', ')})` : ''}`, {
-    input: { field: 'review_statuses', value: (config.review?.statuses ?? []).join(',') },
+    input: { field: 'review_statuses', value: given.join(',') },
     fix: `laneboard config${statusesPart} --review-statuses ${kept.length ? kept.join(',') : 'none'}`,
   });
+}
+
+// Checkers that no session matches (LB-62.3): a name of the form <harness>@<user> without `:<session>` is the base of a session
+// default name (claude-code@<user>), and every session writes as <base>:<session>, so review.by never matches it.
+function sessionBaseWarnings(by: readonly string[] | null | undefined): string[] {
+  return (by ?? [])
+    .filter((name) => name.includes('@') && !name.includes(':'))
+    .map((name) => `reviewer "${name}" looks like the base of a session default name: each session writes as ${name}:<session>, never as ${name}, so no session checks as it; a checker passes its own name (--as <name>) and --reviewers lists that name`);
 }
 
 // The warning of a config that changed its schema version: config@2 is not readable by laneboard 0.3.1 (STORE_TOO_NEW there).
@@ -552,7 +578,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
       }
       if (p.creators === null) delete merged.create_by;
       else if (p.creators !== undefined) merged.create_by = unique(p.creators);
-      checkReview(merged, p.statuses !== undefined);
+      checkReview(merged, p.statuses !== undefined, p.statuses !== undefined || (p.review_statuses !== undefined && p.review_statuses !== null));
       // config@2 only while a config@2 key is on (owner TG 8723); turning them off writes config@1 again, which 0.3.1 reads.
       const next = validateConfig({ ...merged, schema: configSchemaFor(merged) }, 'config.json');
       if (serializeConfig(next) === serializeConfig(before)) return result(before, false);
@@ -570,6 +596,7 @@ export async function configureStore(ctx: OpContext, input: ConfigureInputT): Pr
       // review.by now names only authors of a waiting task (S6w r3): nobody may check it until the owner adds a checker.
       const stuck = reviewChange ? stuckInChecks(next, active) : undefined;
       if (stuck !== undefined) warnings.push(stuck);
+      warnings.push(...sessionBaseWarnings(p.reviewers));
       return result(next, true);
     });
   // The registry holds no statuses: a status change alone leaves it alone.

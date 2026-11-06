@@ -298,9 +298,10 @@ laneboard prime --all-boards --as lead
 - Statuses are the board's columns, in order; the last one is final. `init --statuses todo,in_progress,review,done` (the default) sets
   them, `laneboard config --statuses a,b,c` changes the whole list later (at least 2). A status that active tasks are in is dropped only
   after they move. Agents never change statuses.
-- Fields are typed extra keys: `laneboard config --field <key>:<type>[:<description>]` declares or changes one (`string`, `number`,
-  `boolean`, `string[]`, `json`), `--drop-field <key>` removes it once no active task holds a value. Number fields take decimal
-  notation only (`-?digits[.digits]`): `0x10`, `1e3` and `Infinity` are refused.
+- Fields are typed extra keys. `init` declares one, `priority` (number, 0 = highest), and prints it;
+  `laneboard config --field <key>:<type>[:<description>]` declares or changes one (`string`, `number`, `boolean`, `string[]`, `json`),
+  `--drop-field <key>` removes it once no active task holds a value. Number fields take decimal notation only (`-?digits[.digits]`):
+  `0x10`, `1e3` and `Infinity` are refused.
 - Labels: lowercase Latin letters, digits and `. _ -`, starting with a letter or a digit, up to 40 (`ui-bug`, `zone-api`).
   `zone:api` is refused with a fix that holds the normalized label.
 
@@ -359,8 +360,9 @@ prints `http://127.0.0.1:7420/` and serves until Ctrl+C.
 | Live | a write shows within 1-2 s; the page reloads data every minute |
 
 Read the same data over HTTP (a check script, a test): take the token from `<meta name="laneboard-token" content="...">` of the page
-`/`, send it as the header `X-Laneboard-Token`. Read-only `GET` routes: `/api/boards`, `/api/board` (`?board=`, `assignee`, `label`,
-`text`), `/api/tasks` (`scope`, `status`, `limit`, `offset`), `/api/tasks/<id>`; `/api/events` streams changes (token as `?token=`).
+`/`, send it as the header `X-Laneboard-Token`. Read-only `GET` routes: `/api/boards`, `/api/board` (`assignee`, `label`, `text`),
+`/api/tasks` (`scope`, `status`, `assignee`, `label`, `text`, `limit`, `offset`), `/api/tasks/<id>`; `/api/events` streams changes
+(token as `?token=`). Every route but `/api/boards` takes `?board=<key>` (a key from `/api/boards`); without it, the board opened first.
 
 ## Storage and safety
 
