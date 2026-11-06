@@ -748,3 +748,37 @@ Checks
   after the move or before the hand-in, an acceptance in between, the waiting task's U1 message), test/mcp/s6y.test.ts. s6j "a task
   handed in to a status outside the checks" now builds that record before the checks are on.
   Golden files: none changed.
+
+## 54. UX run 7 before publication (S6z, LB-52; UX run 7 persona B U1, U2, U5; supersedes §43 "under each own task the newest comment of another name", §53 "Feedback needed no change", §51 I3 "the return: the caller's text, after `--`")
+- U1 (MAJOR): rev returned a task with a reason, the author fixed it and handed it in, orch returned it with no comment; the author's
+  `prime`, `task_prime` `roles.feedback` and the SessionStart hook showed rev's old reason (the newest comment of another name) as the
+  current one, so the author redid fixed work. Decision: the author's feedback comes from `reworkReturn` (§53, now exported; its
+  `reason` is the returner's newest comment since the last hand-in as `lastComment` shows it), one definition for the stale-check
+  refusals and prime. A returned task: `roles.feedback[] {id, comment: <that comment> | null, returned: {by, at}}`; `prime` prints
+  `last comment by <by>: > <reason>`, or with no reason `returned for rework by <by> at <at> with no reason - ask them or see laneboard
+  get <ID>` (`--dir` when prime was named by it). Any other task: the newest comment of another name since its last hand-in or pass
+  (all of them for a task never handed in), `returned: null`; a comment from before the last hand-in is never shown (a no-reason
+  return that ended, say orch parked it in `blocked`, shows nothing). The returner of a task with no reason (`update` on a board with
+  checks, this write is the return, no comment of its own since the hand-in) gets a warning `<ID> went back for rework with no reason
+  from you: ... laneboard comment <ID> --as <a> -- '<why it goes back>'`; a placeholder only in a warning, never in a `fix`; a comment
+  written then becomes the reason. Rejected: refusing a return without a reason (the orchestrator may move a task back to talk first).
+  `roles.feedback[].comment` may be null and `returned` is a new key (optional reading; the shape stays an array keyed by id).
+- U2 (MINOR): the message of `unclearCheck` (a stale checker's `finish`, e.g. `--status qa --result "Code ok"` after the task reached
+  qa) named the return as `comment <ID> -- 'Code ok' && update ...`: copied from the message, the result of the check became the reason
+  of a return. Decision: the return named there carries `'<why it goes back>'`; the fix stays `laneboard get <ID>`. An explicit return
+  (`finish --status <work status>` or an earlier check, `returnForRework`) keeps the caller's text: there it is the reason.
+- U5 (MINOR): the hook listed a returned task of an earlier session without its reason (seen only after `claim --resume`). Decision:
+  `roles.feedback` covers the listed `resumable` tasks too (the reader's names: the summary's assignee and the task's holder), and the
+  resume line carries the same second line as an own task; the PRIME_MAX_CHARS budget counts it (the oldest line keeps its reason).
+  Checks: test/cli/s6z.test.ts (two and one check: repro, warning run as printed, new round's reason, rev's note and pass result before
+  orch's return, another name's comment, ended return, never handed in control, no-checks control, --dir, U2 repro, U5 hook with a
+  reason and none, 7 resumable within PRIME_MAX_CHARS), test/mcp/s6z.test.ts; updated: s6w I3 (the return in the message has the
+  placeholder, run with a reason in its place), s6m and mcp/s6y feedback (`returned`). Golden files: none changed.
+- Review r1 (supersedes §53 "a comment would bury the reason" as the ground of `returnedForRework`'s read-only fix): since U1 a note of
+  another name never reaches the author's feedback under a returned task, so the refusal no longer says it would. The refusal stays: the
+  task is not handed in, so a pass, an acceptance or a move into a check would break I1/I2 (nothing to check); its fix stays `laneboard
+  get <ID>` (I3): a "hand it in" comment asks for unfinished rework, and the returner's own comment would become the reason. The message
+  now says what reaches the holder's prime: from another name "under it <holder>'s prime shows only what <returner> commented since the
+  hand-in, never a note from you"; from the returner "a comment from you now would become the reason in <holder>'s prime". README, README.ru
+  (the unclearCheck placeholder line under the checker's finish in both) and the agent guide follow. Checks: s6z "S6z r1" block, U5 own
+  note of an earlier session (task.assignee is the reader's name), 7 resumable give 5 feedback entries. Golden files: none changed.

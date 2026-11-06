@@ -252,8 +252,9 @@ export interface PrimeData {
   resumable_total?: number;
   // Only with --all-boards: every board of the machine (ADR §29), the current one first.
   boards?: OverviewBoard[];
-  // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, the newest
-  // comment of another name on each own task.
+  // Only on a board with checks or create_by (S6m): who checks and who creates, the tasks waiting for the agent's check, and the feedback
+  // under each own and listed resumable task (S6z): the reason of a return for rework (null with `returned`: none given), else the newest
+  // comment of another name since the last hand-in (SummaryRoles.feedback in core/ops/read.ts).
   roles?: SummaryRoles;
 }
 
@@ -524,12 +525,17 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
     : '';
   const titleMax = squeeze.shortTitles ? SHORT_TITLE : Infinity;
   const line = (t: ListItem): string => taskLine(t, titleMax);
-  // An own task on a board with checks: the newest comment of another name under it (a checker's reason to return it, B-U6).
-  const feedback = new Map((d.roles?.feedback ?? []).map((f) => [f.id, f.comment]));
-  const ownLine = (t: ListItem): string => {
-    const c = feedback.get(t.id);
-    return c === undefined ? line(t) : `${line(t)}\n    last comment by ${c.actor}: ${fit(commentLine(c), titleMax)}`;
+  // An own or earlier-session task on a board with checks (B-U6, S6z U1/U5 run 7): under it the reason of its return for rework, or
+  // the newest comment of another name since its last hand-in; a return with no reason says so and how to learn more.
+  const feedback = new Map((d.roles?.feedback ?? []).map((f) => [f.id, f]));
+  const feedbackLine = (t: ListItem): string => {
+    const f = feedback.get(t.id);
+    if (f === undefined) return '';
+    if (f.comment !== null) return `\n    last comment by ${f.comment.actor}: ${fit(commentLine(f.comment), titleMax)}`;
+    if (f.returned === null) return '';
+    return `\n    returned for rework by ${f.returned.by} at ${f.returned.at} with no reason - ask them or see laneboard get ${t.id}${dir}`;
   };
+  const ownLine = (t: ListItem): string => `${line(t)}${feedbackLine(t)}`;
   const waitHead = !waits ? '' : noTask ? '\nWaiting for your check:' : '\nWaiting for your check; check one with the pass command under it:';
   // Each waiting task with its ready pass command (S6w I2): the next status after its check, or the final one from the last check.
   const nextOf = new Map((d.roles?.waiting ?? []).map((w) => [w.id, w.next_status]));
@@ -541,7 +547,8 @@ function primeLayout(d: PrimeData, storeDir: string | undefined, now: Date, sque
   const waitMore = (n: number): string => `\n... ${n} more (rows with handed_in): laneboard list${d.roles?.checks.map((st) => ` --status ${shellQuote(st)}`).join('') ?? ''}${dir} --json`;
   const roles = rolesLine(d);
   // The holder differs only in its session part: `<base>:<session>`.
-  const resumeLine = (t: ListItem): string => `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${fit(t.title, titleMax)}`;
+  const resumeLine = (t: ListItem): string =>
+    `\n  ${t.id}  [${t.status}]  ${age(t.updated_at, now)} ago  session ${(t.assignee ?? '').slice((d.session_base ?? '').length + 1)}  ${fit(t.title, titleMax)}${feedbackLine(t)}`;
   // Without a task in progress the numbered ways above carry the claim command, so the header gives no second order.
   const freeHead = !free ? '' : noTask ? '\nFree tasks (no assignee):' : `\nFree tasks (no assignee); take one: ${claimCommand(d, dir)}`;
   const storeHead = storeDir !== undefined && squeeze.dirOnce ? `Store: --dir ${named} (prefix ${d.prefix ?? '-'})` : `Store: ${d.store ?? '-'} (prefix ${d.prefix ?? '-'})`;

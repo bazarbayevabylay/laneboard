@@ -47,7 +47,7 @@ import {
   unique,
   workStartedAt,
 } from './common.ts';
-import type { OpContext, OpResult, TaskView } from './common.ts';
+import type { LastComment, OpContext, OpResult, TaskView } from './common.ts';
 import { checkForeignTaskLinks, missingTask } from './links.ts';
 
 // Longest replaced description an `updated` event keeps (code points): a replace must not lose the text, but an event stays small.
@@ -211,6 +211,9 @@ export async function updateTask(ctx: OpContext, input: UpdateInputT): Promise<O
         addEvent(task, s.config, s.now, actor, 'assigned', assignChange, actorSourceOf(ctx));
         if (checkerTakes) checkerHoldsWarning(s.config, task, actor, warnings);
       }
+      // After the assignee is set, so the warning names who reads the reason.
+      const noReason = statusChange ? noReasonWarning(s.config, task, actor, s.now) : undefined;
+      if (noReason) warnings.push(noReason);
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),
@@ -637,7 +640,7 @@ function waitingClaimRefusal(config: ConfigT, task: TaskT, actor: string, sessio
   if (workedOn(task, actor, sessionBase)) return alreadyHandedIn(config, task, actor);
   const by = reviewers(config);
   if (by.length === 0 || by.includes(actor)) {
-    return unclearCheck(config, task, actor, 'claim never takes a task that waits for a check: a check needs no claim, and holding the task would make you an author of the work, who never checks it', undefined);
+    return unclearCheck(config, task, actor, 'claim never takes a task that waits for a check: a check needs no claim, and holding the task would make you an author of the work, who never checks it');
   }
   const final = finalStatuses(config.statuses)[0] ?? '';
   const message =
@@ -738,19 +741,28 @@ function handInOutsideCheck(config: ConfigT, task: TaskT, target: string, text: 
 // the status it was handed in to) or with no reason ends it. Who returned it, when, from where to where, and the reason: the first line
 // of the returner's newest comment after the hand-in (before or after the move, as lastComment shows it). undefined when it ended, the
 // task is closed, never was handed in, its first move after the hand-in is the author's, or the events limit dropped the hand-in.
-interface ReworkReturn {
+// One definition for the refusals of a stale check (returnedForRework), the returner's warning (noReasonWarning) and the author's
+// feedback in prime and task_prime (S6z U1 run 7: a comment from before the last hand-in is never shown as the reason).
+export interface ReworkReturn {
   actor: string;
   at: string;
   from: string;
   to: string;
-  reason: string | undefined;
+  // The returner's newest comment since the hand-in, as lastComment shows it; undefined: returned with no reason.
+  reason: LastComment | undefined;
 }
 
-// The ReworkReturn of `task`, or undefined (see ReworkReturn).
-function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undefined {
+// The index in `task.events` of its newest status event that handed it in or passed it on (handed_in, passed); -1 without one.
+// Exported for prime's feedback: comments before it belong to an earlier round (S6z U1).
+export function lastHandInIndex(task: TaskT): number {
+  return task.events.findLastIndex((e) => e.type === 'status' && (e.data.handed_in === true || e.data.passed === true));
+}
+
+// The ReworkReturn of `task`, or undefined (see ReworkReturn). Exported for prime's feedback (summaryRoles).
+export function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undefined {
   if (finalStatuses(config.statuses).includes(task.status)) return undefined;
   const events = task.events;
-  const handIn = events.findLastIndex((e) => e.type === 'status' && (e.data.handed_in === true || e.data.passed === true));
+  const handIn = lastHandInIndex(task);
   if (handIn < 0) return undefined;
   const since = events.slice(handIn + 1);
   const moves = since.filter((e) => e.type === 'status');
@@ -758,10 +770,10 @@ function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undefined {
   const move = moves[0];
   if (move === undefined || workedOn(task, move.actor)) return undefined;
   const comments = since.filter((e) => e.type === 'commented' && e.actor === move.actor);
-  const reason = lastComment({ ...task, events: comments })?.text;
+  const reason = lastComment({ ...task, events: comments }) ?? undefined;
   // A later move by a name that is no author ends the return only when it put the task back into a check (or, without checks, into the
-  // status it was handed in to: ADR §43 A14, s4 LB-9) or the return has no reason to bury (review r2); a move into work or the first
-  // status by the orchestrator keeps it, so a stale check never gets the "hand it in" comment that would push the reason out of prime.
+  // status it was handed in to: ADR §43 A14, s4 LB-9) or the return has no reason (review r2); a move into work or the first status by
+  // the orchestrator keeps it, so a stale check still gets the refusal that names the reason, never a "hand it in" comment (§54 r1).
   const handedTo = events[handIn]?.data.to;
   const intoCheck = (to: unknown): boolean => reviewStatuses(config).includes(String(to)) || to === handedTo;
   const later = moves.slice(1).filter((e) => !workedOn(task, e.actor));
@@ -770,18 +782,32 @@ function reworkReturn(config: ConfigT, task: TaskT): ReworkReturn | undefined {
 }
 
 // The refusal of somebody else's check, acceptance or move into a check of a task returned for rework (reworkReturn, S6y U2 run 6): its
-// holder works on it, nothing is to check. The fix only reads the task (I3): a comment asking the holder to hand it in would be the newest
-// comment of another name, so the holder's prime (feedback) would show it instead of the reason of the return. `code`: the refusal's own.
+// holder works on it, nothing is to check. The fix only reads the task (I3), never a comment asking to hand it in: the rework is not
+// done, and under a returned task the holder's prime shows only the returner's comment since the hand-in (S6z, feedbackOf), so a note of
+// another name never reaches it there and one of the returner itself would become the reason (ADR §54 r1). `code`: the refusal's own.
 function returnedForRework(code: 'ALREADY_CLAIMED' | 'INVALID_VALUE', task: TaskT, r: ReworkReturn, actor: string): LaneboardError {
   const holder = task.assignee ?? 'its next holder';
-  const why = r.reason === undefined ? 'with no comment' : `reason: ${JSON.stringify(r.reason)}`;
+  const why = r.reason === undefined ? 'with no comment' : `reason: ${JSON.stringify(r.reason.text)}`;
   const mover = r.actor === actor ? 'you' : r.actor;
+  const note = r.actor === actor ? `a comment from you now would become the reason in ${holder}'s prime` : `under it ${holder}'s prime shows only what ${r.actor} commented since the hand-in, never a note from you`;
   return new LaneboardError(
     code,
     `${task.id} was returned for rework by ${mover} at ${r.at} (${r.from} -> ${r.to}), ${why}; it is ${task.status} with ${holder} and not handed in, so there is nothing to check: ` +
-      `it comes back to the checkers' queue (laneboard prime) when ${holder} hands it in again; a note now would bury that reason in ${holder}'s prime, so the fix only reads the task`,
+      `it comes back to the checkers' queue (laneboard prime) when ${holder} hands it in again; ${note}, so the fix only reads the task`,
     code === 'ALREADY_CLAIMED' ? { details: { assignee: task.assignee }, fix: `laneboard get ${task.id}` } : { fix: `laneboard get ${task.id}` },
   );
+}
+
+// The warning of a return for rework with no reason (S6z U1 run 7), on a board with checks: `actor` just moved the handed-in task back
+// (this write is the return, reworkReturn) and wrote no comment since the hand-in, so the holder's prime says "returned with no reason".
+// Only the warning names a placeholder; a comment written now becomes the reason (reworkReturn reads the returner's comments since the
+// hand-in, before or after the move). undefined: no return by this write, or it has a reason.
+function noReasonWarning(config: ConfigT, task: TaskT, actor: string, now: string): string | undefined {
+  if (reviewStatuses(config).length === 0) return undefined;
+  const back = reworkReturn(config, task);
+  if (back === undefined || back.actor !== actor || back.at !== now || back.reason !== undefined) return undefined;
+  const holder = task.assignee ?? 'its next holder';
+  return `${task.id} went back for rework with no reason from you: ${holder}'s prime says it was returned with no reason; add the reason (shown to ${holder} until the next hand-in): laneboard comment ${task.id} --as ${actor} -- '<why it goes back>'`;
 }
 
 // The return for rework as one command line, run as printed (rule 13): the comment with the caller's text, then the move into `to`.
@@ -831,13 +857,14 @@ export function reworkStatus(config: ConfigT): string {
 // INVALID_VALUE of a checker's write whose meaning is not clear (S6w I2, I3): finish without --status, or naming the check the task is
 // in, or a later status than the next one (a stale read: the task moved on since), and update or claim of a waiting task into a check.
 // The fix is a read (`laneboard get`), which changes nothing: run blindly it never passes the task on, accepts it or returns it. The
-// message names both exact commands, to pass the check (finish --status <next>) and to return the task for rework (comment && update);
-// `text`: the caller's result, kept in the return command (after --, rule 13), never put into the pass.
-function unclearCheck(config: ConfigT, task: TaskT, actor: string, why: string, text: string | undefined): LaneboardError {
+// message names both exact commands, to pass the check (finish --status <next>) and to return the task for rework (comment && update).
+// The return carries a placeholder for its reason, never the caller's result (S6z U2 run 7: a stale "Code ok" copied from the message
+// became the reason the author read); the caller's result goes into neither command.
+function unclearCheck(config: ConfigT, task: TaskT, actor: string, why: string): LaneboardError {
   const final = finalStatuses(config.statuses)[0] ?? '';
   const next = nextAfterCheck(config, task.status);
   const pass = `laneboard finish ${task.id} --status ${next} --result "<result of your check>" --as ${actor}`;
-  const back = reworkFix(task.id, text ?? '<why it goes back>', reworkStatus(config), actor);
+  const back = reworkFix(task.id, '<why it goes back>', reworkStatus(config), actor);
   const passWhat = next === final ? `accept it into ${final}` : `pass it on to ${next}`;
   return new LaneboardError(
     'INVALID_VALUE',
@@ -858,7 +885,7 @@ function checkEntryRefusal(config: ConfigT, task: TaskT, actor: string, to: stri
   if (review.includes(task.status) && handedIn(task, config) && !workedOn(task, actor, sessionBase)) {
     const by = reviewers(config);
     if (by.length > 0 && !by.includes(actor)) return notChecker(task.id, task.assignee, actor, by);
-    return unclearCheck(config, task, actor, `update or claim never moves it to ${to}: a check passes it on with finish`, undefined);
+    return unclearCheck(config, task, actor, `update or claim never moves it to ${to}: a check passes it on with finish`);
   }
   const message = `on this board ${to} is a check (${checksLine(review, final)}): a task enters it only handed in with finish (the result, the commit), so the checkers see it`;
   // A closed task is reopened into the work status first: finish never reopens it (S6w r1).
@@ -933,7 +960,7 @@ function handInStatuses(statuses: readonly string[]): string {
 
 // ALREADY_CLAIMED of an acceptance of a task its assignee did not hand in with finish (in work, or moved by update). The fix is one
 // command run as is (rule 13): the comment asking the holder to hand it in; the message names the orchestrator's update (LB-11 d). A task
-// returned for rework gets returnedForRework instead (S6y U2: the comment would bury the reason).
+// returned for rework gets returnedForRework instead (S6y U2, ADR §54 r1: its holder reworks it, nothing to hand in yet).
 function notHandedIn(id: string, holder: string, current: string, actor: string, final: string, statuses: readonly string[]): LaneboardError {
   const handIn = handInStatuses(statuses);
   return new LaneboardError(
@@ -1106,7 +1133,7 @@ function checkerFinish(
           : later.includes(p.status)
             ? `--status ${p.status} skips ${later.slice(0, later.indexOf(p.status)).join(', ')}; a checker's finish names the next status (--status ${next})`
             : `--status ${p.status} is not where it goes next; a checker's finish names the next status (--status ${next})`;
-    throw unclearCheck(s.config, task, actor, why, p.result);
+    throw unclearCheck(s.config, task, actor, why);
   }
   const target = next;
   const from = task.status;

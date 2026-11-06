@@ -41,6 +41,10 @@ The audit release: data safety, setup safety, orchestrator workflows, any MCP cl
   update <ID> --status <that status>` (no hand-in), the message names `finish <ID> --status <check>`; older such hand-ins are named by
   `config` and `doctor` (check `checks`). A stale check of a task returned for rework gets the fix `laneboard get <ID>` and a message
   with who returned it, when and why, no longer a "hand it in" comment that replaced the reason in the assignee's `prime` (ADR §53).
+  The reason the assignee sees (`prime`, `task_prime` `roles.feedback`, the SessionStart hook also under a task of an earlier session)
+  is only the returner's comment since the last hand-in; a return with none says "returned for rework by <name> at <time> with no
+  reason" (`comment: null`, `returned: {by, at}`) and warns the returner with the comment command; the return named in a stale
+  check's message carries `'<why it goes back>'`, never the refused command's result (ADR §54).
 - MCP tool `task_prime` (read-only; call it first) and `laneboard mcp --as <name>` as the server's default actor; the server's
   instructions start with an MCP preamble; `STORE_NOT_FOUND` from the server lists the boards and says how to start your client for the
   project (its folder or `LANEBOARD_DIR`, by the client's name; never `--dir` in a global config like Codex's); `mcp --dir` naming
