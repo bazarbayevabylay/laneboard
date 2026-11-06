@@ -5,6 +5,7 @@ exit 0
 initialized <ROOT>/.laneboard (web-app, prefix WA; statuses: todo, in_progress, review, done)
   Web shop of ACME: checkout and cart work
 ids: WA-1, WA-2, ...; another prefix while the board has no task: laneboard config --prefix <PREFIX>
+fields: priority (number, 0 = highest); another: laneboard config --field <key>:<type>, drop one: laneboard config --drop-field <key>
 checks: none, an assignee's finish closes its task; to hand in for a check first: laneboard config --review-statuses review [--reviewers <names>]
 setup: laneboard setup <claude-code|codex|cursor|gemini|opencode> connects your agent (hooks, MCP), once per project
 next: laneboard prime (agent rules, this board and the command that creates your task)
@@ -14,6 +15,6 @@ warning: HOME is not set, so this board is not in the machine registry (laneboar
 $ laneboard init --description 'Web shop of ACME: checkout and cart work' --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WA","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WA","name":"web-app","description":"Web shop of ACME: checkout and cart work","statuses":["todo","in_progress","review","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_dsa*","id_ecdsa*","id_ed25519*","id_xmss*","*credentials*",".netrc",".npmrc","*.p12","*.pfx","*.kdbx"]},"board":{"port":7420}},"registered":false,"next":"laneboard prime"},"warnings":["HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards"]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"WA","data":{"store":"<ROOT>/.laneboard","config":{"schema":"laneboard/config@1","prefix":"WA","name":"web-app","description":"Web shop of ACME: checkout and cart work","statuses":["todo","in_progress","review","done"],"fields":{"priority":{"type":"number","description":"0 = highest"}},"limits":{"events_per_task":500,"attachment_bytes":26214400,"list_limit_max":200},"attachments":{"deny_names":[".env*","*.pem","*.key","id_rsa*","id_dsa*","id_ecdsa*","id_ed25519*","id_xmss*","*credentials*",".netrc",".npmrc","*.p12","*.pfx","*.kdbx"]},"board":{"port":7420}},"registered":false,"setup":"laneboard setup <claude-code|codex|cursor|gemini|opencode>","next":"laneboard prime"},"warnings":["HOME is not set, so this board is not in the machine registry (laneboard boards) and its prefix was not checked against other boards"]}
 --- stderr
 

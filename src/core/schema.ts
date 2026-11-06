@@ -153,11 +153,28 @@ export type FieldDefT = z.infer<typeof FieldDef>;
 export type ConfigT = z.infer<typeof ConfigV2>;
 export type ReviewConfigT = z.infer<typeof ReviewConfig>;
 
+// JSON Schema of config.json as laneboard reads it (LB-62.7): config@2 keeps keys of a newer laneboard at the top level and inside
+// review (validateConfig), so those two objects allow more properties; a config@1 file holds only the 0.3.1 keys (`if`/`then`).
+function configJsonSchema(): Record<string, unknown> {
+  const schema = z.toJSONSchema(ConfigV2, { target: 'draft-2020-12' }) as Record<string, unknown> & { properties: Record<string, Record<string, unknown>> };
+  const review = schema.properties.review;
+  if (review !== undefined) review.additionalProperties = {};
+  const title = schema.title;
+  delete schema.title;
+  return {
+    ...schema,
+    additionalProperties: {},
+    if: { properties: { schema: { const: CONFIG_SCHEMA } }, required: ['schema'] },
+    then: { propertyNames: { enum: Object.keys(Config.shape) } },
+    title,
+  };
+}
+
 // JSON Schema documents generated from the zod schemas, keyed by output file name.
 export function jsonSchemas(): Record<string, unknown> {
   return {
     'task.json': z.toJSONSchema(Task, { target: 'draft-2020-12' }),
     'store.json': z.toJSONSchema(StoreFile, { target: 'draft-2020-12' }),
-    'config.json': z.toJSONSchema(ConfigV2, { target: 'draft-2020-12' }),
+    'config.json': configJsonSchema(),
   };
 }

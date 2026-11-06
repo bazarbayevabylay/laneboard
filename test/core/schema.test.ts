@@ -33,8 +33,17 @@ describe('generated JSON Schema (C8)', () => {
     expect(s['task.json']?.required).toEqual([
       'id', 'rev', 'title', 'description', 'status', 'assignee', 'labels', 'links', 'fields', 'attachments', 'events', 'events_dropped', 'created_at', 'created_by', 'updated_at', 'updated_by',
     ]);
-    expect(s['config.json']?.additionalProperties).toBe(false);
     expect(s['task.json']?.additionalProperties).toEqual({});
+  });
+
+  it('LB-62.7: config.json allows the keys config@2 keeps (top level, review), a config@1 file only the 0.3.1 keys', () => {
+    type Obj = { additionalProperties?: unknown; properties: Record<string, Obj>; if?: unknown; then?: { propertyNames?: { enum?: string[] } } };
+    const config = jsonSchemas()['config.json'] as Obj;
+    expect(config.additionalProperties).toEqual({});
+    expect(config.properties.review?.additionalProperties).toEqual({});
+    expect(config.properties.limits?.additionalProperties).toBe(false);
+    expect(config.if).toEqual({ properties: { schema: { const: 'laneboard/config@1' } }, required: ['schema'] });
+    expect(config.then?.propertyNames?.enum?.slice().sort()).toEqual(Object.keys(Config.shape).sort());
   });
 });
 

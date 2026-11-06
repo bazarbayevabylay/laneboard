@@ -215,31 +215,33 @@ interface Keepers {
 }
 
 // Warnings about backups (written or left behind) and files kept for another harness or project. `exclude`: the exclude file setup
-// keeps its block in (backups stay out of git), when it does.
-function planWarnings(harness: string, plan: readonly PlannedFile[], keepers: Keepers, exclude: string | undefined): string[] {
+// keeps its block in (backups stay out of git), when it does. A dry run says what setup would do, never that it wrote (LB-59.2).
+function planWarnings(harness: string, plan: readonly PlannedFile[], keepers: Keepers, exclude: string | undefined, dryRun: boolean): string[] {
   const out: string[] = [];
+  const wrote = dryRun ? 'would write' : 'wrote';
+  const kept = dryRun ? 'would keep' : 'kept';
   for (const p of plan) {
     const bak = backupShown(p);
     if (p.backup !== undefined) {
       const git = p.scope !== 'project' || inGitDir(p.file) ? '' : exclude !== undefined ? `; ${exclude} keeps it out of git` : '; do not commit it: add *.laneboard.bak to .gitignore';
-      out.push(`wrote ${bak} (your file before setup; setup --remove restores it)${git}`);
+      out.push(`${wrote} ${bak} (your file before setup; setup --remove restores it)${git}`);
     }
     const projects = keepers.projects.get(p.file);
     const checkouts = keepers.checkouts.get(p.file);
     const folders = keepers.folders.get(p.file);
     if (p.result === 'kept' && folders !== undefined) {
-      out.push(`kept the laneboard entry in ${p.shown}: setup in ${someOf(folders)} still uses it (laneboard setup <harness> --remove there removes it)`);
+      out.push(`${kept} the laneboard entry in ${p.shown}: setup in ${someOf(folders)} still uses it (laneboard setup <harness> --remove there removes it)`);
     } else if (p.result === 'kept' && checkouts !== undefined) {
-      out.push(`kept the laneboard block in ${p.shown}: setup in another checkout of this repository still uses it (${someOf(checkouts)}); laneboard setup <harness> --remove there removes it`);
+      out.push(`${kept} the laneboard block in ${p.shown}: setup in another checkout of this repository still uses it (${someOf(checkouts)}); laneboard setup <harness> --remove there removes it`);
     } else if (p.result === 'kept' && projects !== undefined) {
       out.push(
-        `kept the laneboard entry in ${p.shown} (a global file, other projects may use it: ${someOf(projects)}); laneboard setup ${harness} --remove --global removes it`,
+        `${kept} the laneboard entry in ${p.shown} (a global file, other projects may use it: ${someOf(projects)}); laneboard setup ${harness} --remove --global removes it`,
       );
     } else if (p.result === 'kept') {
       const names = keepers.harnesses.get(p.file) ?? [];
-      out.push(`kept the laneboard block in ${p.shown}: ${names.join(', ')} still use${names.length === 1 ? 's' : ''} it (laneboard setup ${names[0] ?? '<harness>'} --remove removes it)`);
+      out.push(`${kept} the laneboard block in ${p.shown}: ${names.join(', ')} still use${names.length === 1 ? 's' : ''} it (laneboard setup ${names[0] ?? '<harness>'} --remove removes it)`);
     }
-    if (p.keptBackup) out.push(`kept ${bak} (your file before setup; not restored because the file changed since): delete it when not needed`);
+    if (p.keptBackup) out.push(`${kept} ${bak} (your file before setup; not restored because the file changed since): delete it when not needed`);
   }
   return out;
 }
@@ -310,7 +312,7 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
   const registered = !input.dryRun && !input.remove && isLiveBoard(context.storeDir);
   const excludeAt = files.findIndex((f) => f === gitExclude && applies(f));
   const exclude = input.remove || excludeAt < 0 ? undefined : plan[excludeAt]?.shown;
-  const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects, checkouts, folders }, exclude), ...harnessWarnings];
+  const warnings = [...planWarnings(harness.name, plan, { harnesses: users, projects, checkouts, folders }, exclude, input.dryRun), ...harnessWarnings];
   // A package of a monorepo shares the repository's board (P3): say which one, and how a separate project gets its own.
   if (!input.remove && input.storeAbove) {
     const prefix = storePrefix(context.storeDir);

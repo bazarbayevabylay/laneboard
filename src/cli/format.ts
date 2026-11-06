@@ -792,13 +792,22 @@ export function overviewText(rawBoards: readonly OverviewBoard[], now = new Date
   return overviewClassText(boards, budget);
 }
 
-// Human setup report: one line per file, diffs of replaced values, notes.
+// Human setup report: one line per file, diffs of replaced values, notes. A dry run says what it would do (LB-59.1): `would create`.
 export function setupText(r: SetupResult): string {
+  const dryVerbs: Record<SetupResult['files'][number]['result'], string> = {
+    created: 'would create',
+    updated: 'would update',
+    unchanged: 'unchanged',
+    removed: 'would remove',
+    restored: 'would restore',
+    deleted: 'would delete',
+    kept: 'would keep',
+  };
   const lines: string[] = [];
   if (r.dry_run) lines.push('dry run: nothing was written');
   if (r.mode === 'install') lines.push(`store: ${r.store}`);
   for (const f of r.files) {
-    lines.push(`${f.result} ${f.path}${f.scope === 'global' ? ' (global file)' : ''}`);
+    lines.push(`${r.dry_run ? dryVerbs[f.result] : f.result} ${f.path}${f.scope === 'global' ? ' (global file)' : ''}`);
     for (const d of f.diff ?? []) lines.push(`    ${d}`);
   }
   for (const n of r.notes) lines.push(`next: ${n}`);

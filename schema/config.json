@@ -138,7 +138,7 @@
       "required": [
         "statuses"
       ],
-      "additionalProperties": false
+      "additionalProperties": {}
     },
     "create_by": {
       "minItems": 1,
@@ -158,6 +158,31 @@
     "attachments",
     "board"
   ],
-  "additionalProperties": false,
+  "additionalProperties": {},
+  "if": {
+    "properties": {
+      "schema": {
+        "const": "laneboard/config@1"
+      }
+    },
+    "required": [
+      "schema"
+    ]
+  },
+  "then": {
+    "propertyNames": {
+      "enum": [
+        "schema",
+        "prefix",
+        "name",
+        "description",
+        "statuses",
+        "fields",
+        "limits",
+        "attachments",
+        "board"
+      ]
+    }
+  },
   "title": "laneboard config (.laneboard/config.json)"
 }

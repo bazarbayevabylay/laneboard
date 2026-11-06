@@ -4,8 +4,8 @@ exit 0
 --- stdout
 dry run: nothing was written
 store: <ROOT>/.laneboard
-created opencode.json
-created AGENTS.md
+would create opencode.json
+would create AGENTS.md
 --- stderr
 
 

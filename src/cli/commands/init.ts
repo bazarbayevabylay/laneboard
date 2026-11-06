@@ -27,6 +27,14 @@ function checksHint(config: ConfigT, target: string, byDir: boolean): string {
   return `checks: none, an assignee's finish closes its task; to hand in for a check first: laneboard config --review-statuses ${status} [--reviewers <names>]${byDir ? ` --dir ${shellQuote(target)}` : ''}\n`;
 }
 
+// The fields line of a new board (LB-58.1): init declares priority by default, so the owner sees it and how to change the fields.
+function fieldsHint(config: ConfigT, target: string, byDir: boolean): string {
+  const fields = Object.entries(config.fields).map(([key, f]) => `${key} (${[f.type, f.description].filter(Boolean).join(', ')})`);
+  if (fields.length === 0) return '';
+  const dir = byDir ? ` --dir ${shellQuote(target)}` : '';
+  return `fields: ${fields.join(', ')}; another: laneboard config --field <key>:<type>${dir}, drop one: laneboard config --drop-field <key>${dir}\n`;
+}
+
 // The command that changes the prefix of the new (still empty) board, with --dir when the board was made by --dir.
 function prefixCommand(target: string, byDir: boolean): string {
   return `laneboard config --prefix <PREFIX>${byDir ? ` --dir ${shellQuote(target)}` : ''}`;
@@ -52,7 +60,9 @@ export const init: CommandDef = {
     c.setStore(target);
     // A target from LANEBOARD_DIR may be another project's pin: STORE_EXISTS then offers this folder's own board.
     const envCwd = c.discovery.dir === undefined && c.discovery.envDir ? c.io.cwd : undefined;
-    const next = nextStep(target, c.discovery.dir !== undefined);
+    const byDir = c.discovery.dir !== undefined;
+    const next = nextStep(target, byDir);
+    const setup = setupCommand(target, byDir);
     const r = await initStore(
       target,
       {
@@ -65,15 +75,16 @@ export const init: CommandDef = {
       { lockWaitMs: c.io.lockWaitMs, home: c.io.env.HOME || undefined, envCwd },
     );
     const cfg = r.data.config;
-    // An agent that just created the board has not seen the rules yet: name the next command (also in --json).
+    // An agent that just created the board has not seen the rules yet: name the setup and the next command (also in --json, LB-58.2).
     return {
-      data: { ...r.data, next },
+      data: { ...r.data, setup, next },
       warnings: r.warnings,
       human:
         `initialized ${r.data.store} (${cfg.name ?? '-'}, prefix ${cfg.prefix}; statuses: ${cfg.statuses.join(', ')})\n  ${cfg.description ?? ''}\n` +
-        `ids: ${cfg.prefix}-1, ${cfg.prefix}-2, ...; another prefix while the board has no task: ${prefixCommand(target, c.discovery.dir !== undefined)}\n` +
-        checksHint(cfg, target, c.discovery.dir !== undefined) +
-        `setup: ${setupCommand(target, c.discovery.dir !== undefined)} connects your agent (hooks, MCP), once per project\n` +
+        `ids: ${cfg.prefix}-1, ${cfg.prefix}-2, ...; another prefix while the board has no task: ${prefixCommand(target, byDir)}\n` +
+        fieldsHint(cfg, target, byDir) +
+        checksHint(cfg, target, byDir) +
+        `setup: ${setup} connects your agent (hooks, MCP), once per project\n` +
         `next: ${next} (agent rules, this board and the command that creates your task)`,
     };
   },

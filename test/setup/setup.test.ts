@@ -792,3 +792,46 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect(JSON.parse(fs.readFileSync(path.join(s.cwd, '.claude', 'settings.local.json'), 'utf8')).env.LANEBOARD_DEFAULT_AGENT).toBe('claude-code@me');
   });
 });
+
+describe('LB-59 (0.4.1): a dry run says what it would do; setup codex below the repository root warns', () => {
+  it('59.1: the human dry run reads "would create", never "created"', async () => {
+    const s = sandbox();
+    const r = await s.run(['setup', 'opencode', '--dry-run']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('dry run: nothing was written\n');
+    expect(r.stdout).toContain('would create opencode.json\nwould create AGENTS.md');
+    expect(r.stdout).not.toMatch(/^created /m);
+  });
+
+  it('59.2: a dry run over an existing file warns "would write" its backup, and writes none', async () => {
+    const s = sandbox();
+    plant(s, { 'p:CLAUDE.md': 'Be brief.\n' });
+    const before = snapshot(s);
+    const r = JSON.parse((await s.run(['setup', 'claude-code', '--dry-run', '--json'])).stdout);
+    const backup = r.warnings.filter((w: string) => w.includes('CLAUDE.md.laneboard.bak'));
+    expect(backup.length).toBe(1);
+    expect(backup[0]).toMatch(/^would write CLAUDE\.md\.laneboard\.bak \(your file before setup/);
+    expect(snapshot(s)).toEqual(before);
+    const real = JSON.parse((await s.run(['setup', 'claude-code', '--json'])).stdout);
+    expect(real.warnings.some((w: string) => w.startsWith('wrote CLAUDE.md.laneboard.bak'))).toBe(true);
+  });
+
+  it('59.3: setup codex in a package of a git repository warns that a Codex started at the root never sees its AGENTS.md; at the root it does not', async () => {
+    const root = fs.realpathSync(tempDir());
+    const home = tempDir();
+    const gitEnv = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+    fs.writeFileSync(gitEnv.GIT_CONFIG_GLOBAL, '');
+    execFileSync('git', ['init', '-q'], { cwd: root, env: gitEnv });
+    const pkg = path.join(root, 'packages', 'foo');
+    fs.mkdirSync(pkg, { recursive: true });
+    const env = { HOME: home, USER: 'tester' };
+    const inPkg = JSON.parse((await cli(['setup', 'codex', '--json'], { cwd: pkg, env })).stdout);
+    expect(inPkg.ok).toBe(true);
+    expect(fs.existsSync(path.join(pkg, 'AGENTS.md'))).toBe(true);
+    expect(inPkg.warnings).toContain(
+      `the AGENTS.md block of setup codex goes to ${pkg}, below the root of its git repository ${root}: Codex reads AGENTS.md from the repository root down to the folder it starts in, so a Codex started at the root never sees this block; start Codex in ${pkg}, or run laneboard setup codex in ${root} for the whole repository`,
+    );
+    const atRoot = JSON.parse((await cli(['setup', 'codex', '--json'], { cwd: root, env })).stdout);
+    expect(atRoot.warnings.filter((w: string) => w.includes('below the root'))).toEqual([]);
+  });
+});

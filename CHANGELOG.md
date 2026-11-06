@@ -3,6 +3,22 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
+## Unreleased
+
+### C
+
+- `init` prints the declared fields (`priority` by default) and how to add or drop one (LB-58.1).
+- `init --json` names the setup command in `data.setup` next to `data.next` (LB-58.2).
+- `setup --dry-run` says `would create` / `would update`, never `created` (LB-59.1).
+- `setup --dry-run` warns `would write <file>.laneboard.bak`, never `wrote` (LB-59.2).
+- `setup codex` below the root of a git repository warns that a Codex started at the root never sees that AGENTS.md (LB-59.3).
+- `config --review-statuses` with a typo keeps the meant status in the fix, never drops it (LB-62.1).
+- `config --review-statuses` in another order than the statuses is refused with the right order as the fix (LB-62.2).
+- `config --reviewers <harness>@<user>` warns: sessions write as `<base>:<session>`, so that name never checks (LB-62.3).
+- `config --review-statuses none --reviewers <names>` is refused instead of dropping the names (LB-62.4).
+- `schema/config.json` allows the keys config@2 keeps from a newer laneboard (top level, `review`); config@1 stays closed (LB-62.7).
+- README: `?board=` of every HTTP route but `/api/boards`, and the `assignee`, `label`, `text` filters of `/api/tasks` (LB-65.1).
+
 ## 0.4.0
 
 The audit release: data safety, setup safety, orchestrator workflows, any MCP client, monorepos, and English docs.
