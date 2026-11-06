@@ -3,7 +3,7 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
-## Unreleased
+## 0.4.1
 
 The 0.4.1 patch: fixes from dogfooding 0.4.0 (LB-54..LB-66; ADR §56).
 
