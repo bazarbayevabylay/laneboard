@@ -3,6 +3,12 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
+## Unreleased
+
+### Fixed
+
+- Web board: a sideways scroll (trackpad, Shift+wheel) over a column moves the board, an up-down one scrolls the column's cards; a label of up to 40 characters wraps inside its card instead of making the column scroll sideways (AB-180).
+
 ## 0.4.2
 
 The 0.4.2 patch: documentation only, no change in behavior (ADR §57).
