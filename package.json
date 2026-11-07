@@ -1,6 +1,6 @@
 {
   "name": "laneboard",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Task board & CLI for AI coding agents",
   "keywords": [
     "tasks",
