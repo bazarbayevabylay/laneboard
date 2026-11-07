@@ -1,4 +1,4 @@
-English | [Русский](https://github.com/bazarbayevabylay/laneboard/blob/main/README.ru.md)
+English | [Русский](https://github.com/bazarbayevabylay/laneboard/blob/main/README-ru.md)
 
 # laneboard
 

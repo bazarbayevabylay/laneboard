@@ -1,7 +1,6 @@
-// The docs are executable: every ```sh block of docs/agent-guide.md, the other docs/*.md listed in FILES, README.md (and README.ru.md once
-// it exists) runs, in order, in one
-// bash session in a fresh temp project and temp HOME, through the CLI compiled from src/ (tsc, as `npm run build` does: one node start
-// per command, without type stripping). A command must exit 0, or the code named by a trailing `# exit <n>`.
+// The docs are executable: every ```sh block of docs/agent-guide.md, the other docs/*.md listed in FILES, README.md and README-ru.md
+// runs, in order, in one bash session in a fresh temp project and temp HOME, through the CLI compiled from src/ (tsc, as `npm run build`
+// does: one node start per command, without type stripping). A command must exit 0, or the code named by a trailing `# exit <n>`.
 // ```json file=<path> blocks are written to that path at their place. Only blocks marked <!-- guide:skip <reason> --> do not run
 // (global installs); the test lists them, so nothing else is skipped silently.
 // Bounds (guide-hang, RC check): every laneboard command is killed after STEP_LIMIT_S (SIGALRM, exit 142), the whole session after
@@ -134,8 +133,8 @@ function run(steps: readonly Step[]): { failed?: Step; code?: number; log: strin
   return { failed: steps[Number(fail[1])], code: Number(fail[2]), log: text };
 }
 
-// README.ru.md mirrors README.md (ADR-0001 §10); until it exists only the English one runs.
-const RU_README = path.join(REPO, 'README.ru.md');
+// README-ru.md mirrors README.md (ADR-0001 §10, §57: not README.ru.md, which npm would show as the package page).
+const RU_README = path.join(REPO, 'README-ru.md');
 const FILES: Array<[string, number]> = [
   ['docs/agent-guide.md', 40],
   // The pages the README links to for details; each starts with its own `init`, so it runs on its own.
@@ -148,7 +147,7 @@ const FILES: Array<[string, number]> = [
   ['docs/board-http-api.md', 3],
   ['docs/storage.md', 4],
   ['README.md', 8],
-  ...(fs.existsSync(RU_README) ? [['README.ru.md', 8] as [string, number]] : []),
+  ['README-ru.md', 8],
 ];
 
 // The Markdown headings of a file (outside code blocks), as their levels in order.
@@ -163,8 +162,8 @@ function headingLevels(file: string): number[] {
   return levels;
 }
 
-describe('README.ru.md mirrors README.md', () => {
-  it.skipIf(!fs.existsSync(RU_README))('the same headings, level by level, and the same number of sh blocks', () => {
+describe('README-ru.md mirrors README.md', () => {
+  it('the same headings, level by level, and the same number of sh blocks', () => {
     const en = path.join(REPO, 'README.md');
     expect(headingLevels(RU_README)).toEqual(headingLevels(en));
     expect(parse(RU_README).steps.length).toBe(parse(en).steps.length);

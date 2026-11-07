@@ -91,7 +91,10 @@ describe('A33: version 0.4.1 everywhere', () => {
     expect(pkg.version).toBe('0.4.1');
     expect((read('package-lock.json') as { version: string }).version).toBe('0.4.1');
     expect((read('plugins/claude-code/.claude-plugin/plugin.json') as { version: string }).version).toBe('0.4.1');
-    expect(pkg.files).toEqual(expect.arrayContaining(['dist', 'schema', 'README.md', 'README.ru.md', 'CHANGELOG.md', 'docs/agent-guide.md', 'LICENSE']));
+    expect(pkg.files).toEqual(expect.arrayContaining(['dist', 'schema', 'README.md', 'CHANGELOG.md', 'docs/agent-guide.md', 'LICENSE']));
+    // npm takes the first README.* of the folder as the package page (README.ru.md won over README.md in 0.4.1): README.md is the only one.
+    expect(pkg.files).not.toContain('README-ru.md');
+    expect(fs.readdirSync(REPO).filter((f) => /^readme(\..*)?$/i.test(f))).toEqual(['README.md']);
     expect(pkg.os).toEqual(['darwin', 'linux']);
     expect(pkg.engines.node).toBe('>=22');
   });
