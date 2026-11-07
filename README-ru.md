@@ -2,7 +2,9 @@
 
 # laneboard
 
-**Доска задач и CLI для AI-агентов.** Агенты сами заводят, берут, комментируют и закрывают свои задачи, а вы смотрите на доску вживую.
+**Доска задач и CLI для AI-агентов.** Память задач для агентов и их оркестратора, которая переживает сессию:
+задачи, исполнители, история и итоги лежат в папке проекта, поэтому не теряются после `/clear`, сжатия контекста и перезапуска.
+Вы смотрите на них на живой локальной доске, а параллельные агенты на одной машине пишут в неё без потерь.
 
 [![npm version](https://img.shields.io/npm/v/laneboard)](https://www.npmjs.com/package/laneboard) [![license](https://img.shields.io/npm/l/laneboard)](https://github.com/bazarbayevabylay/laneboard/blob/main/LICENSE) [![node](https://img.shields.io/node/v/laneboard)](https://nodejs.org/)
 
@@ -17,21 +19,32 @@ npm i -g laneboard
 </picture>
 
 Работает с Claude Code, Codex, Cursor, Gemini CLI, OpenCode и любым другим MCP-клиентом.
-Ни сервера, ни базы данных: доска — это два JSON-файла в папке проекта.
+Ни базы данных, ни аккаунта, ни сети: доска — два JSON-файла в папке проекта; веб-доска — локальный сервер, который вы запускаете сами.
+
+## Подойдёт ли вам
+
+- **Да, если** у вас несколько агентов работают параллельно на одной машине (сессии, субагенты, git worktree), нужен журнал, кто что
+  взял и с каким итогом, и проверки, где автор не принимает свою работу, а у вашего оркестратора нет своего хранилища задач и доски.
+- **Нет, если** нужна одна доска на несколько машин или в облаке, задачи должны жить в git, команда уже работает в
+  Linear, GitHub Issues или Jira (laneboard с ними не синхронизируется), у вас Windows или нужны зависимости между задачами
+  (в laneboard нет «blocked by» и очереди готовых задач). Рядом с альтернативами: [Сравнение](#сравнение).
 
 ## Зачем laneboard
 
-- **Агенты ведут доску сами.** `laneboard setup` даёт агенту правила и MCP-инструменты; в Claude Code хук печатает их
-  в начале каждой сессии и напоминает агенту, если тот правит файлы без задачи.
-- **Видно, кто чем занят.** По каждой задаче ясно, кто над ней работает, что с ней происходило и чем всё закончилось;
+- **Память вне контекстного окна.** Новая, сжатая или перезапущенная сессия выполняет `laneboard prime` и видит число задач
+  по статусам, свои открытые задачи и свободные (в Claude Code это печатает хук при старте, после `/clear` и после сжатия контекста);
+  `laneboard get <ID>` показывает историю и итог задачи.
+- **Видно, кто чем занят.** По каждой задаче ясно, кто её держит, что с ней происходило и чем всё закончилось (с git-коммитом);
   доска в браузере показывает изменение через 1–2 с.
-- **Несколько агентов не мешают друг другу.** Каждая запись берёт блокировку и атомарно заменяет файл; задачу, которую взял
-  один агент, другой взять не сможет (`ALREADY_CLAIMED`).
+- **Надёжная параллельная запись на одной машине.** Каждая запись берёт блокировку и атомарно заменяет файл; задачу, взятую под
+  одним именем, под другим взять нельзя (`ALREADY_CLAIMED`). Защита работает по имени: субагенты одной сессии Claude Code делят её имя
+  по умолчанию, поэтому каждому нужен свой `--as` ([субагенты](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/orchestrators.md#subagents-a-name-for-each), на английском).
+- **Проверки для оркестратора.** Ревьюеры и шаги проверки по желанию; автор никогда не принимает свою работу
+  ([docs/orchestrators.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/orchestrators.md), на английском).
 - **Ошибка подсказывает агенту, что делать.** В каждой ошибке есть `fix` — готовая команда: выполнить как есть или поправить под себя.
 
-`TODO.md` — просто текст: по нему не понять, кто над каким пунктом работает,
-а два агента, правящие его одновременно, затирают друг друга.
-Трекер задач живёт на сервере, за аккаунтом и сетью. laneboard лежит рядом с кодом и работает без интернета.
+`laneboard setup` добавляет в ваш `CLAUDE.md` или `AGENTS.md` короткий блок правил (вести каждый запрос на доске), а в Claude Code —
+хуки, которые печатают правила при старте сессии и напоминают агенту, если он правит файлы без задачи.
 
 ## Быстрый старт
 
@@ -70,53 +83,10 @@ https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/agent-gui
 
 ## Подключение агента
 
-Одна команда в корне проекта. Она регистрирует MCP-сервер `laneboard`, добавляет блок инструкций из трёх строк и привязывает проект к его доске.
-
-| Агент | Команда | Что она пишет |
-|---|---|---|
-| Claude Code | `laneboard setup claude-code` | `.mcp.json`, `CLAUDE.md`, хуки в `.claude/settings.json`, привязку к доске в `.claude/settings.local.json` |
-| Codex | `laneboard setup codex` | `~/.codex/config.toml` (глобальный: запускайте Codex в папке проекта), `AGENTS.md` |
-| Cursor | `laneboard setup cursor` | `.cursor/mcp.json`, `AGENTS.md` |
-| Gemini CLI | `laneboard setup gemini` | `.gemini/settings.json`, `GEMINI.md` |
-| OpenCode | `laneboard setup opencode` | `opencode.json`, `AGENTS.md` |
-
-В один проект можно подключить несколько агентов. Повторный запуск отвечает `unchanged`, `--dry-run` ничего не пишет, `--remove`
-убирает только то, что записал setup. Все файлы и хуки, которые он трогает: [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md).
-
-В git-репозитории setup ещё добавляет блок в `.git/info/exclude`, поэтому `.claude/settings.local.json` (путь к доске на этой машине
-и ваше имя) и резервные копии setup не попадают в git. Для Claude Code закоммитьте `.mcp.json`, `CLAUDE.md`
-и `.claude/settings.json`: путей машины в них нет.
-
-```sh
-laneboard setup codex
-```
-
-### Claude Code: плагин или setup
-
-Вместо `setup claude-code` можно поставить плагин прямо из Claude Code: тот же MCP-сервер и те же хуки, плюс скилл с правилами агента.
-
-```text
-/plugin marketplace add bazarbayevabylay/laneboard
-/plugin install laneboard@laneboard
-```
-
-Плагин не ставит CLI и не создаёт доску: сначала выполните `npm i -g laneboard` и `laneboard init`.
-Выберите что-то одно — плагин или `setup claude-code`: оба регистрируют тот же сервер и те же хуки.
-
-### Любой MCP-клиент
-
-Подойдёт любой клиент, который запускает stdio MCP-серверы. Добавьте эту запись сервера в конфиг проекта, с доской и именем
-по умолчанию (глобальный конфиг привязал бы к этой доске все проекты машины):
-
-```json
-{ "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
-```
-
-Первым агент вызывает `task_prime`: правила, статусы, поля, свои и свободные задачи. Проверить, что сервер запускается:
-
-```sh
-laneboard mcp --dir .laneboard --as codex-1 < /dev/null
-```
+Одна команда в корне проекта: `laneboard setup claude-code` (или `codex`, `cursor`, `gemini`, `opencode`). Она регистрирует MCP-сервер
+`laneboard`, добавляет блок инструкций из трёх строк и привязывает проект к его доске; `--dry-run` ничего не пишет, `--remove` убирает
+только то, что записал setup. Что пишет каждая команда и что коммитить, плагин Claude Code вместо setup, любой другой MCP-клиент:
+[docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md) (на английском).
 
 ## Что делает агент
 
@@ -187,7 +157,23 @@ flowchart LR
 laneboard doctor
 ```
 
-Резервные копии, удаление и вычистка секретов, импорт из `TODO.md` и других трекеров: [docs/storage.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/storage.md).
+Резервные копии, удаление и вычистка секретов, импорт из Markdown-файлов с frontmatter, JSON-файлов задач и чеклиста `TODO.md` (импорта и синхронизации с Linear, GitHub и Jira нет): [docs/storage.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/storage.md).
+
+## Сравнение
+
+Что обычно сравнивает разработчик со своим оркестратором. Сверено с документацией каждого проекта 2026-11-07; источники и цитаты:
+[docs/comparison.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/comparison.md) (на английском). «—»: в их документации не нашли.
+
+| | laneboard | Claude Code Tasks | beads | Backlog.md | GitHub Issues (MCP) | `TODO.md` |
+|---|---|---|---|---|---|---|
+| Где живут задачи | два JSON-файла в `.laneboard/` | `~/.claude/tasks/` | база Dolt в `.beads/` | Markdown-файл на задачу в репозитории | GitHub | один файл в репозитории |
+| Между машинами | нет, одна машина | нет, локальная папка | да, `bd dolt push` / `pull` | да, через git | да | через git, слияние руками |
+| Агенты | 5 через `setup`, любой MCP-клиент | только Claude Code | любой с shell; setup для нескольких | любой MCP- или CLI-агент | любой MCP-клиент | любой |
+| Два агента, одна задача | блокировка + `ALREADY_CLAIMED`, если у каждого агента своё имя | claim с блокировкой файла в agent teams (экспериментально, выключено по умолчанию) | атомарный `bd update --claim` | — | исполнители (assignees) | правки затирают друг друга |
+| Зависимости | только ссылка, ничего не блокирует | да | да, `bd ready` | да | да, «blocked by» | нет |
+| Доска для вас | локальная веб-доска (только просмотр, живая), вид в терминале | чеклист в терминале | доски от сообщества | доска в терминале, редактируемая веб-доска | GitHub Projects | ваш редактор |
+| Роли проверки | да, автор не принимает свою работу | хук может не дать закрыть задачу (`TaskCompleted`, agent teams); разделения «автор / проверяющий» нет | — | — | — | нет |
+| Что нужно | macOS или Linux, Node.js 22 | Task-инструменты по умолчанию только на части моделей | macOS, Linux, Windows, FreeBSD | macOS, Linux, Windows | аккаунт (OAuth или токен), сеть | ничего |
 
 ## Ограничения
 
@@ -210,10 +196,11 @@ laneboard doctor
 | Что пишет setup, подробности MCP, префикс, статусы, поля, метки | [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md) |
 | Цикл задачи: создание, закрытие, подзадачи, git worktree | [docs/task-cycle.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/task-cycle.md) |
 | Имена агентов, сессии, `/clear` и продолжение работы | [docs/agent-names.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/agent-names.md) |
-| Оркестраторам: проверки в N шагов, проверяющие, авторы задач, передача задачи | [docs/orchestrators.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/orchestrators.md) |
+| Оркестраторам: проверки в N шагов, проверяющие, авторы задач, субагенты, передача задачи | [docs/orchestrators.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/orchestrators.md) |
 | Монорепозиторий и несколько досок | [docs/monorepo.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/monorepo.md) |
 | Доска в терминале и браузере, HTTP API | [docs/board-http-api.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/board-http-api.md) |
 | Хранилище, безопасность, удаление и redact, импорт | [docs/storage.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/storage.md) |
+| laneboard рядом с Claude Code Tasks, beads, Backlog.md, GitHub Issues, `TODO.md`: источники | [docs/comparison.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/comparison.md) |
 | Что изменилось в каждой версии | [CHANGELOG.md](https://github.com/bazarbayevabylay/laneboard/blob/main/CHANGELOG.md) |
 | Архитектурное решение и спецификация | [ADR-0001](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) |
 

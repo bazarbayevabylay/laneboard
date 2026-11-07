@@ -113,6 +113,19 @@ laneboard prime --as orch
 - `export LANEBOARD_AGENT=<name>` suits a single agent with no subagents (say in Codex or a script). Never in an orchestrator's
   session: its subagents inherit it, and one without `--as` would write as `orch`.
 
+## Subagents: a name for each
+
+laneboard tells agents apart only by name. Subagents of one Claude Code session get the session's default name
+(`claude-code@<you>:<session>`), so to laneboard they are one agent.
+
+- A second subagent's `claim` of a task the first one holds is no `ALREADY_CLAIMED`: it exits 0 with the warning
+  "no changes: <ID> is already claimed by" that same name. The board cannot show which subagent did what.
+- So give each subagent its own name in its prompt (`dev-1`, `dev-2`) and have it pass `--as <name>` on every command (MCP: `actor`).
+  Then a second claim is `ALREADY_CLAIMED`, exit 4, as in [Taking over a claimed task](#taking-over-a-claimed-task).
+- Codex, Cursor, Gemini CLI and OpenCode have no default name: a write without `--as` fails with `ACTOR_REQUIRED`, exit 2.
+- laneboard has no mode where only the orchestrator writes: the rules `setup` puts in `CLAUDE.md` / `AGENTS.md` ask every agent that
+  reads them to track its work on the board.
+
 ## Taking over a claimed task
 
 `claim` never takes a task from another name. The orchestrator reassigns it and says why:
