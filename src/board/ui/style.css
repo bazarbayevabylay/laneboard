@@ -188,6 +188,8 @@ h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; letter-spa
 .c-last.is-result .c-last-t { color: var(--text); }
 .badge { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; background: var(--accent-bg); color: var(--accent-ink); font-size: 12px; font-weight: 600; line-height: 18px; white-space: nowrap; }
 .c-top { display: flex; align-items: center; gap: 8px; height: 18px; color: var(--muted); }
+/* the head fits the card at the longest prefix (AB-180): the own id stays whole (a flex item does not shrink below its text), the parent mark gives way with an ellipsis (its title keeps the id) */
+.c-top .mark.mono { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .c-title { display: -webkit-box; margin: 4px 0 8px; font-weight: 500; line-height: 18px; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: -2px 0 8px; }
 /* a label up to 40 characters wraps inside the card instead of making the column wider */

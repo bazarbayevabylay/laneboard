@@ -7,7 +7,7 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 
 ### Fixed
 
-- Web board: a sideways scroll (trackpad, Shift+wheel) over a column moves the board, an up-down one scrolls the column's cards; a label of up to 40 characters wraps inside its card instead of making the column scroll sideways (AB-180).
+- Web board: a sideways scroll (trackpad, Shift+wheel) over a column moves the board, an up-down one scrolls the column's cards; a label of up to 40 characters wraps inside its card and a parent mark of a long id prefix ends with an ellipsis instead of making the column scroll sideways (AB-180).
 
 ## 0.4.2
 
