@@ -151,7 +151,8 @@ h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; letter-spa
 .inline-error { margin: 4px 8px; color: var(--neg-ink); font-size: 12px; }
 
 /* ---------- lanes ---------- */
-.lanes { position: relative; flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 24px 20px; overflow-x: auto; }
+/* sideways scrolling belongs to the board: a column keeps only up-down to itself (AB-180), the board does not pass sideways on to the page (no swipe back) */
+.lanes { position: relative; flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 24px 20px; overflow-x: auto; overscroll-behavior-x: contain; }
 .lane { flex: 1 1 0; min-width: 220px; display: flex; flex-direction: column; min-height: 0; background: var(--lane); border-radius: 10px; }
 .lane.is-collapsed { flex: 0 0 200px; min-width: 200px; }
 .lane-h { flex: none; display: flex; align-items: center; gap: 8px; height: 40px; margin: 0; padding: 0 12px 0 14px; font-size: 13px; line-height: 20px; font-weight: 600; }
@@ -161,7 +162,7 @@ h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; letter-spa
 .lane-toggle { margin-left: auto; height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
 .lane-toggle:hover { background: var(--chip); color: var(--text); }
 .st { color: var(--muted); }
-.lane-b { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; }
+.lane-b { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: auto contain; display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; }
 .lane-empty { margin: 4px 8px; color: var(--muted); font-size: 12px; }
 .lane-open { display: flex; align-items: center; justify-content: center; height: 36px; border: 1px dashed var(--control); border-radius: 8px; background: transparent; color: var(--accent-ink); font-weight: 500; cursor: pointer; }
 .lane-open:hover { background: var(--raised); }
@@ -187,9 +188,12 @@ h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; letter-spa
 .c-last.is-result .c-last-t { color: var(--text); }
 .badge { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; background: var(--accent-bg); color: var(--accent-ink); font-size: 12px; font-weight: 600; line-height: 18px; white-space: nowrap; }
 .c-top { display: flex; align-items: center; gap: 8px; height: 18px; color: var(--muted); }
+/* the head fits the card at the longest prefix (AB-180): the own id stays whole (a flex item does not shrink below its text), the parent mark gives way with an ellipsis (its title keeps the id) */
+.c-top .mark.mono { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .c-title { display: -webkit-box; margin: 4px 0 8px; font-weight: 500; line-height: 18px; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: -2px 0 8px; }
-.chip { flex: none; white-space: nowrap; padding: 0 6px; border-radius: 4px; background: var(--chip); color: var(--muted); font-size: 12px; line-height: 18px; }
+/* a label up to 40 characters wraps inside the card instead of making the column wider */
+.chip { flex: none; max-width: 100%; overflow-wrap: anywhere; padding: 0 6px; border-radius: 4px; background: var(--chip); color: var(--muted); font-size: 12px; line-height: 18px; }
 .who { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; line-height: 18px; }
 .who .age { margin-left: auto; flex: none; padding-left: 8px; }
 .who-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
