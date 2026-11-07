@@ -31,8 +31,9 @@ No database, no account, no network: the board is two JSON files in your project
 
 ## Why laneboard
 
-- **Memory outside the context window.** A new, compacted or restarted session runs `laneboard prime` and sees its open tasks,
-  the free ones and what was done; in Claude Code a hook prints this at start, after `/clear` and after compaction.
+- **Memory outside the context window.** A new, compacted or restarted session runs `laneboard prime` and sees the board's counts by status,
+  its own open tasks and the free ones (in Claude Code a hook prints this at start, after `/clear` and after compaction);
+  `laneboard get <ID>` shows a task's history and result.
 - **You see who does what.** Each task shows who holds it, its history and its result (with the git commit);
   the browser board shows a write within 1-2 s.
 - **Safe parallel writes on one machine.** Each write takes a lock and replaces the file atomically; a task claimed under one
@@ -82,52 +83,10 @@ install, the task cycle, errors, configuration, import. It ships in the npm pack
 
 ## Connect your agent
 
-One command in the project root. It registers the MCP server `laneboard`, adds a 3-line instruction block and pins the project to its board.
-
-| Agent | Command | What it writes |
-|---|---|---|
-| Claude Code | `laneboard setup claude-code` | `.mcp.json`, `CLAUDE.md`, hooks in `.claude/settings.json`, the board pin in `.claude/settings.local.json` |
-| Codex | `laneboard setup codex` | `~/.codex/config.toml` (global: start Codex in the project folder), `AGENTS.md` |
-| Cursor | `laneboard setup cursor` | `.cursor/mcp.json`, `AGENTS.md` |
-| Gemini CLI | `laneboard setup gemini` | `.gemini/settings.json`, `GEMINI.md` |
-| OpenCode | `laneboard setup opencode` | `opencode.json`, `AGENTS.md` |
-
-Several agents per project are fine. A second run reports `unchanged`, `--dry-run` writes nothing, `--remove` takes out only what
-setup wrote. Every file and hook it touches: [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md).
-
-In a git repository setup also adds a block to `.git/info/exclude`, so `.claude/settings.local.json` (this machine's board path and
-your name) and setup's backups stay out of git. For Claude Code, commit `.mcp.json`, `CLAUDE.md` and `.claude/settings.json`: they hold no machine path.
-
-```sh
-laneboard setup codex
-```
-
-### Claude Code: plugin or setup
-
-Instead of `setup claude-code` you can install the plugin from Claude Code: the same MCP server and hooks, plus the agent-rules skill.
-
-```text
-/plugin marketplace add bazarbayevabylay/laneboard
-/plugin install laneboard@laneboard
-```
-
-The plugin does not install the CLI and does not create a board: run `npm i -g laneboard` and `laneboard init` first.
-Use the plugin or `setup claude-code`, not both: they register the same server and hooks.
-
-### Any MCP client
-
-Any client that starts stdio MCP servers works. Add this server entry to a config file of the project, with the board and a default name
-(a global config would pin every project of the machine to this one board):
-
-```json
-{ "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
-```
-
-The agent calls `task_prime` first: the rules, the statuses, the fields, its tasks and the free ones. To check the server starts:
-
-```sh
-laneboard mcp --dir .laneboard --as codex-1 < /dev/null
-```
+One command in the project root: `laneboard setup claude-code` (or `codex`, `cursor`, `gemini`, `opencode`). It registers the MCP server
+`laneboard`, adds a 3-line instruction block and pins the project to its board; `--dry-run` writes nothing, `--remove` takes out only
+what setup wrote. What each one writes and what to commit, the Claude Code plugin instead of setup, any other MCP client:
+[docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md).
 
 ## What the agent does
 
@@ -210,11 +169,11 @@ What a developer with an orchestrator usually weighs. Checked against each proje
 | Where tasks live | two JSON files in `.laneboard/` | `~/.claude/tasks/` | Dolt database in `.beads/` | a Markdown file per task in the repo | GitHub | one file in the repo |
 | Across machines | no, one machine | no, a local folder | yes, `bd dolt push` / `pull` | yes, through git | yes | through git, merged by hand |
 | Agents | 5 via `setup`, any MCP client | Claude Code only | any with a shell; setup for several | any MCP or CLI agent | any MCP client | any |
-| Two agents, one task | lock + `ALREADY_CLAIMED` (one name per agent) | file-locked claim in agent teams (experimental, off by default) | atomic `bd update --claim` | — | assignees | edits overwrite each other |
+| Two agents, one task | lock + `ALREADY_CLAIMED`, if each agent has its own name | file-locked claim in agent teams (experimental, off by default) | atomic `bd update --claim` | — | assignees | edits overwrite each other |
 | Dependencies | a link only, blocks nothing | yes | yes, `bd ready` | yes | yes, "blocked by" | no |
 | Board for you | local web board (read-only, live), terminal view | checklist in the terminal | community UIs | terminal board, editable web board | GitHub Projects | your editor |
-| Checker roles | yes, the author cannot accept its own work | — | — | — | — | no |
-| Needs | macOS or Linux, Node.js 22 | Task tools on by default on some models | macOS, Linux, Windows, FreeBSD | macOS, Linux, Windows | account, token, network | nothing |
+| Checker roles | yes, the author cannot accept its own work | a hook can block completion (`TaskCompleted`, agent teams); no author/checker split | — | — | — | no |
+| Needs | macOS or Linux, Node.js 22 | Task tools on by default on some models | macOS, Linux, Windows, FreeBSD | macOS, Linux, Windows | account (OAuth or token), network | nothing |
 
 ## Limits
 

@@ -47,7 +47,9 @@ Built into Claude Code (official docs, code.claude.com):
 - [Agent teams](https://code.claude.com/docs/en/agent-teams): "Agent teams are experimental and disabled by default"; "Task claiming uses
   file locking to prevent race conditions"; "A task can also depend on other tasks and shows as blocked"; the task list is stored
   under `~/.claude/tasks/{team-name}/`.
-- We found no checker role (an author that may not accept its own task) in these pages.
+- [Agent teams, quality gates](https://code.claude.com/docs/en/agent-teams#enforce-quality-gates-with-hooks): "`TaskCompleted`: runs when a task
+  is being marked complete. Exit with code 2 to prevent completion and send feedback." So a check can be a hook you write; we found no
+  role that keeps the author of a task from accepting it.
 
 ## beads
 
@@ -74,12 +76,13 @@ Built into Claude Code (official docs, code.claude.com):
 ## GitHub Issues through the GitHub MCP server
 
 - [github/github-mcp-server](https://github.com/github/github-mcp-server) (v2.1.0, 2026-11-03): "Create, update, and manage issues and pull
-  requests"; the remote server at `https://api.githubcopilot.com/mcp/`, OAuth or a personal access token; `issue_write` takes `assignees`.
+  requests"; the remote server at `https://api.githubcopilot.com/mcp/`; "Log in with OAuth (no token to create or store)" or a personal access token; `issue_write` takes `assignees`.
 - [Issue dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies):
   "see which issues are blocked by, or blocking, other work".
 - [Projects](https://docs.github.com/en/issues/planning-and-tracking-with-projects/learning-about-projects/about-projects): "an adaptable
   table, board, and roadmap that integrates with your issues and pull requests".
-- We did not check whether the MCP server sets dependencies or locks an issue against a second agent.
+- The server lists `issue_dependency_read` and `issue_dependency_write`, and "Dependency and duplicate-detection tools retain their existing
+  feature gates". We found no lock of an issue against a second agent.
 
 ## `TODO.md`
 

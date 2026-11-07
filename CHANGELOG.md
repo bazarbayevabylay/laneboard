@@ -10,7 +10,8 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 - README: what laneboard gives on the first screen (task memory that survives `/clear`, compaction and restarts, a live local board,
   safe parallel writes on one machine), "Is it for you?" with who it does not suit (several machines, tasks in git, Linear/GitHub/Jira,
   Windows, task dependencies), a table next to Claude Code Tasks, beads, Backlog.md, GitHub Issues and `TODO.md` with laneboard's minuses,
-  sources in the new `docs/comparison.md`; import lists its real sources instead of "other trackers" (AB-183).
+  sources in the new `docs/comparison.md`; import lists its real sources instead of "other trackers"; "Connect your agent"
+  is a short pointer, the details stay in `docs/configuration.md` (AB-183).
 - `docs/orchestrators.md`: subagents of one Claude Code session share a default name, so each needs its own `--as`; laneboard has no
   orchestrator-only mode (AB-183).
 
