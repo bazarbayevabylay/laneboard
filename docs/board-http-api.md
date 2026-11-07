@@ -42,3 +42,10 @@ Read the same data over HTTP (a check script, a test): take the token from `<met
 `/`, send it as the header `X-Laneboard-Token`. Read-only `GET` routes: `/api/boards`, `/api/board` (`assignee`, `label`, `text`),
 `/api/tasks` (`scope`, `status`, `assignee`, `label`, `text`, `limit`, `offset`), `/api/tasks/<id>`; `/api/events` streams changes
 (token as `?token=`). Every route but `/api/boards` takes `?board=<key>` (a key from `/api/boards`); without it, the board opened first.
+
+With the board running on port 7491 (`laneboard board --port 7491` in another terminal), all tasks of the board:
+
+```text
+TOKEN=$(curl -s http://127.0.0.1:7491/ | sed -n 's/.*name="laneboard-token" content="\([^"]*\)".*/\1/p')
+curl -s -H "X-Laneboard-Token: $TOKEN" "http://127.0.0.1:7491/api/tasks?scope=all"
+```

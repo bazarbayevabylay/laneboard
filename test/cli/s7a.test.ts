@@ -3,7 +3,7 @@
 // --creators (orch): "Only orch create tasks (not you)" and no queue of its checks. r1: no project file carries a name (a name there
 // reaches every session that reads it: a colleague's clone, another window, a worker in a linked worktree), so `setup --as` is refused.
 // An unnamed session on a board with named roles reads one line with the names and `laneboard prime --as <name>`; "not you" is said
-// only to a session that named itself. The orchestrator runs `laneboard prime --as orch` first after a restart (README).
+// only to a session that named itself. The orchestrator runs `laneboard prime --as orch` first after a restart (docs/orchestrators.md "Your name after a restart").
 // U6: the documented return for rework (comment, then update into the work status) warned the checker as if it erred, with the
 // author's hand-in under the author's --as; now the reply confirms the return (to whom, the reason, the author hands it in again).
 import { execFileSync } from 'node:child_process';

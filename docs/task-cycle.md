@@ -36,7 +36,7 @@ laneboard create --title "No title argument" --status todo --as dev-1 --json  # 
 ## Finishing work
 
 `finish` is one write: the result comment (`result: true` in its event), a link to the current git commit (`commit=<HEAD>`;
-`--no-commit` skips it, outside git there is none), then the status. Commit first: uncommitted changes or a HEAD older than the claim
+`--no-commit` skips it; outside git or before the first commit there is none: `"commit": null`, `no commit linked`), then the status. Commit first: uncommitted changes or a HEAD older than the claim
 give a warning; git is asked with a 2-second limit, and without git the task is still finished.
 
 ```sh

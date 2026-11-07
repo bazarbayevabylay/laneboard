@@ -73,7 +73,7 @@ One command in the project root. It registers the MCP server `laneboard`, adds a
 
 | Agent | Command | What it writes |
 |---|---|---|
-| Claude Code | `laneboard setup claude-code` | `.mcp.json`, `CLAUDE.md`, hooks and the board pin in `.claude/` |
+| Claude Code | `laneboard setup claude-code` | `.mcp.json`, `CLAUDE.md`, hooks in `.claude/settings.json`, the board pin in `.claude/settings.local.json` |
 | Codex | `laneboard setup codex` | `~/.codex/config.toml` (global: start Codex in the project folder), `AGENTS.md` |
 | Cursor | `laneboard setup cursor` | `.cursor/mcp.json`, `AGENTS.md` |
 | Gemini CLI | `laneboard setup gemini` | `.gemini/settings.json`, `GEMINI.md` |
@@ -81,6 +81,9 @@ One command in the project root. It registers the MCP server `laneboard`, adds a
 
 Several agents per project are fine. A second run reports `unchanged`, `--dry-run` writes nothing, `--remove` takes out only what
 setup wrote. Every file and hook it touches: [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md).
+
+In a git repository setup also adds a block to `.git/info/exclude`, so `.claude/settings.local.json` (this machine's board path and
+your name) and setup's backups stay out of git. For Claude Code, commit `.mcp.json`, `CLAUDE.md` and `.claude/settings.json`: they hold no machine path.
 
 ```sh
 laneboard setup codex
@@ -115,8 +118,9 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 
 ## What the agent does
 
-The agent runs these commands itself (or the same `task_*` MCP tools). `dev-1` is the agent's name: Claude Code sessions have
-a default name, other agents pass `--as` ([docs/agent-names.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/agent-names.md)).
+The agent runs these commands itself (or the same `task_*` MCP tools). `dev-1` is a name the agent picks. Without `--as` a Claude Code
+session signs as `claude-code@<you>:<session>`; other agents, and you in a shell, have no default name (`prime` says "your name is
+not set") and pass `--as <any name>` ([docs/agent-names.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/agent-names.md)).
 
 ```sh
 laneboard create "Fix the redirect after login" --status todo --assignee dev-1 --as dev-1 --json
@@ -131,22 +135,24 @@ laneboard list --scope all --json
 The third line is a second agent trying to take the same task. It gets an error with the command to run instead (exit code 4):
 
 ```json
-{"ok": false, "store": "/path/to/my-app/.laneboard", "prefix": "WEB",
+{"ok": false, "store": "/path/to/project/.laneboard", "prefix": "WEB",
  "error": {"code": "ALREADY_CLAIMED",
   "message": "task WEB-1 is already claimed by dev-1; do not take it over: reassignment is the orchestrator's decision",
   "fix": "laneboard comment WEB-1 \"<note for dev-1>\" --as codex-1 --json", "details": {"assignee": "dev-1"}}}
 ```
 
-`finish` records the result, links the current git commit and closes the task. More: [docs/task-cycle.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/task-cycle.md).
+`finish` records the result, links the current git commit (none outside git or before the first commit: `"commit": null`) and closes the task.
+More: [docs/task-cycle.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/task-cycle.md).
 
 ## Watch the board
 
-`laneboard board` in the project folder prints `http://127.0.0.1:7420/` and serves the board until Ctrl+C. It is read-only and live:
+`laneboard board` in the project folder prints `http://127.0.0.1:7420/` and serves the board until Ctrl+C; port taken (`PORT_IN_USE`):
+`laneboard board --port 0` picks a free one, `--port N` a given one. It is read-only and live:
 tasks change through agents, the CLI and MCP; every board of this machine is a tab. Click a task for its fields and history.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/task-dark.png">
-  <img alt="Task panel of the web board: status, assignee, fields and the history of created, claimed, commented and finished" src="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/task-light.png">
+  <img alt="Task panel of the web board: status, assignee, fields and the history of created, claimed, commented and handed in" src="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/task-light.png">
 </picture>
 
 `laneboard view` draws the same board in the terminal; `view --watch` redraws after every write.
@@ -157,7 +163,7 @@ laneboard view
 
 <img alt="laneboard view in a dark terminal: a column per status with task cards, assignees and time in status" src="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/cli-view.png">
 
-Ports, filters and the read-only HTTP API: [docs/board-http-api.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/board-http-api.md).
+Ports, filters and the read-only HTTP API (token, a `curl` example): [docs/board-http-api.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/board-http-api.md).
 
 ## How it works
 

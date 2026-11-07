@@ -48,6 +48,9 @@ laneboard setup cursor --dry-run
   project, a dangling one or one into `.git` is refused (`SETUP_CONFLICT`), nothing written.
 - Text you put between `<!-- laneboard:start -->` and `<!-- laneboard:end -->` is never deleted: setup refuses and names the lines.
 - `.git/info/exclude` gets a laneboard block: the local settings, `*.laneboard.bak` backups and `.laneboard-created` markers stay out of git.
+- What to commit for Claude Code: `.mcp.json` (`laneboard mcp`, no path), `CLAUDE.md` and `.claude/settings.json` (the hooks), so the
+  team shares the server, rules and hooks; each machine runs `setup claude-code` once for its own `.claude/settings.local.json`.
+  The other harnesses put `--dir <board>`, a path of this machine, into their MCP entry or instructions.
 
 ## Any MCP client
 

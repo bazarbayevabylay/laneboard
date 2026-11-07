@@ -978,7 +978,7 @@ function isReworkTarget(config: ConfigT, current: string, target: string): boole
 
 // INVALID_VALUE of a checker's finish into a work status (any status that is neither a check nor final, wherever it lies: also one
 // between two checks) or into an earlier check (B-U1 run 3, review r1): that is a return for rework, so the fix is the documented one
-// (README "Return for rework"): the comment, then update into `target` when it is a work status, or into the work status before the
+// (docs/orchestrators.md "Return for rework"): the comment, then update into `target` when it is a work status, or into the work status before the
 // checks when it is an earlier check (the first status when none lies between). A fix of a refusal never changes what the caller
 // meant: never a finish that passes the task on or accepts it.
 function returnForRework(config: ConfigT, id: string, current: string, target: string, text: string, actor: string): LaneboardError {
@@ -999,7 +999,7 @@ export function nextAfterCheck(config: ConfigT, status: string): string {
   return [...review.slice(review.indexOf(status) + 1), final][0] ?? final;
 }
 
-// The work status a return for rework from a check goes to (README "Return for rework"): the one before the checks, else the first.
+// The work status a return for rework from a check goes to (docs/orchestrators.md "Return for rework"): the one before the checks, else the first.
 // Exported for config, which names it (S6x B-U1: claims and returns go there, set by the order of the statuses).
 export function reworkStatus(config: ConfigT): string {
   return workStatusBeforeChecks(config) ?? config.statuses[0] ?? '';

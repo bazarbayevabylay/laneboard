@@ -74,7 +74,7 @@ https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/agent-gui
 
 | Агент | Команда | Что она пишет |
 |---|---|---|
-| Claude Code | `laneboard setup claude-code` | `.mcp.json`, `CLAUDE.md`, хуки и привязку к доске в `.claude/` |
+| Claude Code | `laneboard setup claude-code` | `.mcp.json`, `CLAUDE.md`, хуки в `.claude/settings.json`, привязку к доске в `.claude/settings.local.json` |
 | Codex | `laneboard setup codex` | `~/.codex/config.toml` (глобальный: запускайте Codex в папке проекта), `AGENTS.md` |
 | Cursor | `laneboard setup cursor` | `.cursor/mcp.json`, `AGENTS.md` |
 | Gemini CLI | `laneboard setup gemini` | `.gemini/settings.json`, `GEMINI.md` |
@@ -82,6 +82,10 @@ https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/agent-gui
 
 В один проект можно подключить несколько агентов. Повторный запуск отвечает `unchanged`, `--dry-run` ничего не пишет, `--remove`
 убирает только то, что записал setup. Все файлы и хуки, которые он трогает: [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md).
+
+В git-репозитории setup ещё добавляет блок в `.git/info/exclude`, поэтому `.claude/settings.local.json` (путь к доске на этой машине
+и ваше имя) и резервные копии setup не попадают в git. Для Claude Code закоммитьте `.mcp.json`, `CLAUDE.md`
+и `.claude/settings.json`: путей машины в них нет.
 
 ```sh
 laneboard setup codex
@@ -116,8 +120,9 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 
 ## Что делает агент
 
-Эти команды агент выполняет сам (или те же MCP-инструменты `task_*`). `dev-1` — имя агента: у сессий Claude Code есть
-имя по умолчанию, остальные агенты передают `--as` ([docs/agent-names.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/agent-names.md)).
+Эти команды агент выполняет сам (или те же MCP-инструменты `task_*`). `dev-1` — имя, которое выбирает агент. Без `--as` сессия
+Claude Code подписывается как `claude-code@<вы>:<сессия>`; у остальных агентов и у вас в терминале имени по умолчанию нет (`prime`
+пишет "your name is not set"), они передают `--as <любое имя>` ([docs/agent-names.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/agent-names.md)).
 
 ```sh
 laneboard create "Починить редирект после входа" --status todo --assignee dev-1 --as dev-1 --json
@@ -132,22 +137,24 @@ laneboard list --scope all --json
 В третьей строке второй агент пытается взять ту же задачу. Он получает ошибку с командой, которую нужно выполнить вместо этого (код выхода 4):
 
 ```json
-{"ok": false, "store": "/path/to/my-app/.laneboard", "prefix": "WEB",
+{"ok": false, "store": "/path/to/project/.laneboard", "prefix": "WEB",
  "error": {"code": "ALREADY_CLAIMED",
   "message": "task WEB-1 is already claimed by dev-1; do not take it over: reassignment is the orchestrator's decision",
   "fix": "laneboard comment WEB-1 \"<note for dev-1>\" --as codex-1 --json", "details": {"assignee": "dev-1"}}}
 ```
 
-`finish` записывает итог, привязывает текущий git-коммит и закрывает задачу. Подробнее: [docs/task-cycle.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/task-cycle.md).
+`finish` записывает итог, привязывает текущий git-коммит (вне git или до первого коммита — никакого: `"commit": null`) и закрывает задачу.
+Подробнее: [docs/task-cycle.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/task-cycle.md).
 
 ## Как смотреть доску
 
-`laneboard board` в папке проекта печатает `http://127.0.0.1:7420/` и показывает доску до Ctrl+C. Она только для просмотра
+`laneboard board` в папке проекта печатает `http://127.0.0.1:7420/` и показывает доску до Ctrl+C; порт занят (`PORT_IN_USE`):
+`laneboard board --port 0` возьмёт свободный, `--port N` — заданный. Она только для просмотра
 и обновляется сама: задачи меняют агенты, CLI и MCP; каждая доска машины — отдельная вкладка. Клик по задаче открывает её поля и историю.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/task-dark.png">
-  <img alt="Панель задачи на веб-доске: статус, исполнитель, поля и история — создана, взята, прокомментирована, закрыта" src="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/task-light.png">
+  <img alt="Панель задачи на веб-доске: статус, исполнитель, поля и история — создана, взята, прокомментирована, сдана на проверку" src="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/task-light.png">
 </picture>
 
 `laneboard view` рисует ту же доску в терминале; `view --watch` перерисовывает её после каждой записи.
@@ -158,7 +165,7 @@ laneboard view
 
 <img alt="laneboard view в тёмном терминале: колонка на каждый статус, карточки задач, исполнители и время в статусе" src="https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/assets/cli-view.png">
 
-Порты, фильтры и HTTP API только для чтения: [docs/board-http-api.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/board-http-api.md).
+Порты, фильтры и HTTP API только для чтения (токен, пример `curl`): [docs/board-http-api.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/board-http-api.md).
 
 ## Как это устроено
 

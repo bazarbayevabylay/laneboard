@@ -26,6 +26,7 @@ mistake, not against a hostile agent.
 | Where a name came from | every event has `actor_source`: `explicit` or `default`; `get` marks `(default name)` |
 | Subagents of one session | share its default name, so each passes its own `--as`; `prime` under the default name says so |
 | Codex, Cursor, Gemini CLI, OpenCode | no default name (no session id): pass `--as` |
+| You in a shell | no default name either: the pin and the name of `.claude/settings.local.json` reach only Claude Code sessions; `prime` says "your name is not set" and prints `create` with `--as <your-name>`; pick any name and keep it |
 
 ## After `/clear` or a restart
 
