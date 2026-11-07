@@ -146,6 +146,7 @@ const FILES: Array<[string, number]> = [
   ['docs/monorepo.md', 6],
   ['docs/board-http-api.md', 3],
   ['docs/storage.md', 4],
+  ['docs/comparison.md', 4],
   ['README.md', 8],
   ['README-ru.md', 8],
 ];

@@ -3,6 +3,17 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
+## Unreleased
+
+### Docs
+
+- README: what laneboard gives on the first screen (task memory that survives `/clear`, compaction and restarts, a live local board,
+  safe parallel writes on one machine), "Is it for you?" with who it does not suit (several machines, tasks in git, Linear/GitHub/Jira,
+  Windows, task dependencies), a table next to Claude Code Tasks, beads, Backlog.md, GitHub Issues and `TODO.md` with laneboard's minuses,
+  sources in the new `docs/comparison.md`; import lists its real sources instead of "other trackers" (AB-182).
+- `docs/orchestrators.md`: subagents of one Claude Code session share a default name, so each needs its own `--as`; laneboard has no
+  orchestrator-only mode (AB-182).
+
 ## 0.4.3
 
 The 0.4.3 patch: a web board fix, no change in the CLI, the MCP tools or the store (AB-180).
