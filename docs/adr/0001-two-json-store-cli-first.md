@@ -896,3 +896,16 @@ Checks
   `claim --help` names the work status and the closed task. E3: a repeated `--json`, and `--as` repeated with the same value, run the
   command (`rejectRepeated`; §5): agents add both to a fix that already carries them, which cost a turn with USAGE.
 - Not in 0.4.1: LB-59.4, 62.5, 61.3 (a subagent's request in the orchestrator's prime), 65.3 (telling Codex from Claude Code's Bash).
+
+## 57. Docs: a short README, docs pages, README-ru.md (AB-178 R1, R2; supersedes §10 and §50 "README.ru.md" and "README.md for an agent or orchestrator that learns only from it")
+
+- npm takes the package page from the folder: @npmcli/package-json (normalize, step readme) globs `{README,README.*}` and keeps the
+  first `.md`, so 0.4.1 showed `README.ru.md`; npm-packlist always packs `/readme{,.*}`, so `files` cannot keep it out. The Russian
+  mirror is `README-ru.md` at the root, out of `files`; README.md is the only `README.*` (test/cli/s6r.test.ts). Checked with
+  `npm pack --dry-run` and the readmeFilename of `PackageJson.prepare(<dir>)` and of `pacote.manifest(<tgz>)`.
+- README.md is a short page for a person on GitHub or npm and for an agent sent to it: tagline, badges, screenshots (docs/assets/,
+  outside the package, absolute raw.githubusercontent URLs), quick start with restart and verify, a prompt for agents, one setup
+  command per harness, the Claude Code plugin, a mermaid diagram, limits. Everything else it said is in docs/install, configuration,
+  task-cycle, agent-names, orchestrators, monorepo, board-http-api and storage (`.md`), on GitHub; docs/agent-guide.md stays the
+  agents' manual in the package. Every `docs/*.md` page is executable like the README (test/docs/guide.test.ts fails on a page it
+  does not run); README-ru.md keeps the heading levels and the sh step count of README.md.
