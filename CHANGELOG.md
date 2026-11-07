@@ -3,6 +3,21 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
+## 0.4.2
+
+The 0.4.2 patch: documentation only, no change in behavior (ADR §57).
+
+### Docs
+
+- npm shows the English README: the Russian one is `README-ru.md` (npm took `README.ru.md`, the first `README.*` of the folder, as the package page); the README is short, the details are in `docs/*.md` (ADR §57).
+- A new README: what laneboard is and why on the first screen, screenshots of the web board, the task panel and `laneboard view`,
+  a quick start, a prompt to paste to your agent, the setup command of each agent and what it writes and what to commit,
+  `laneboard board --port` for a taken port, how the parts fit (a diagram) and the limits.
+- The details moved to pages on GitHub: `docs/install.md`, `docs/configuration.md`, `docs/task-cycle.md`, `docs/agent-names.md`,
+  `docs/orchestrators.md`, `docs/monorepo.md`, `docs/board-http-api.md` (with a `curl` example), `docs/storage.md`. Their `sh` blocks
+  run in the test suite like the README's. The package keeps `README.md` and `docs/agent-guide.md`.
+- `README-ru.md` mirrors the README in Russian on GitHub; the docs pages are in English.
+
 ## 0.4.1
 
 The 0.4.1 patch: fixes from dogfooding 0.4.0 (LB-54..LB-66; ADR §56).

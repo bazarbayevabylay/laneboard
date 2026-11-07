@@ -1,6 +1,6 @@
 {
   "name": "laneboard",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Task board & CLI for AI coding agents",
   "keywords": [
     "tasks",
@@ -30,7 +30,6 @@
     "dist",
     "schema",
     "README.md",
-    "README.ru.md",
     "CHANGELOG.md",
     "docs/agent-guide.md",
     "LICENSE"

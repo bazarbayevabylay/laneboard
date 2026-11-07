@@ -168,7 +168,7 @@ describe('S6y U1: on a board with checks the holder hands in only to a check', (
   });
 });
 
-// rev returns API-1 for rework the documented way (README "Return for rework"): the comment, then update into the work status.
+// rev returns API-1 for rework the documented way (docs/orchestrators.md "Return for rework"): the comment, then update into the work status.
 async function returned(s: TestStore, l: Layout, reason = 'Empty state text missing i18n'): Promise<void> {
   expect(sh(s, `laneboard comment API-1 --as rev -- '${reason}' && laneboard update API-1 --status ${l.work} --as rev`)).toBe(0);
 }
