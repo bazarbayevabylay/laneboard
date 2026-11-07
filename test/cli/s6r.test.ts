@@ -45,7 +45,7 @@ describe('A34: an old Node.js gets one warning line', () => {
   it('human output: the result on stdout, one warning line on stderr', async () => {
     const r = await onNode('20.11.1', ['--version']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toBe('0.4.1\n');
+    expect(r.stdout).toBe('0.4.2\n');
     const lines = r.stderr.split('\n').filter((l) => l !== '');
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(OLD_NODE);
@@ -56,7 +56,7 @@ describe('A34: an old Node.js gets one warning line', () => {
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
     const doc = JSON.parse(r.stdout) as { ok: boolean; data: { version: string }; warnings: string[] };
-    expect(doc.data.version).toBe('0.4.1');
+    expect(doc.data.version).toBe('0.4.2');
     expect(doc.warnings).toHaveLength(1);
     expect(`warning: ${doc.warnings[0]}`).toMatch(OLD_NODE);
   });
@@ -84,13 +84,13 @@ describe('A34: an old Node.js gets one warning line', () => {
   });
 });
 
-describe('A33: version 0.4.1 everywhere', () => {
-  it('package.json, package-lock.json and the plugin say 0.4.1', () => {
+describe('A33: version 0.4.2 everywhere', () => {
+  it('package.json, package-lock.json and the plugin say 0.4.2', () => {
     const read = (file: string): Record<string, unknown> => JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')) as Record<string, unknown>;
     const pkg = read('package.json') as { version: string; files: string[]; os: string[]; engines: { node: string } };
-    expect(pkg.version).toBe('0.4.1');
-    expect((read('package-lock.json') as { version: string }).version).toBe('0.4.1');
-    expect((read('plugins/claude-code/.claude-plugin/plugin.json') as { version: string }).version).toBe('0.4.1');
+    expect(pkg.version).toBe('0.4.2');
+    expect((read('package-lock.json') as { version: string }).version).toBe('0.4.2');
+    expect((read('plugins/claude-code/.claude-plugin/plugin.json') as { version: string }).version).toBe('0.4.2');
     expect(pkg.files).toEqual(expect.arrayContaining(['dist', 'schema', 'README.md', 'CHANGELOG.md', 'docs/agent-guide.md', 'LICENSE']));
     // npm takes the first README.* of the folder as the package page (README.ru.md won over README.md in 0.4.1): README.md is the only one.
     expect(pkg.files).not.toContain('README-ru.md');
@@ -101,7 +101,8 @@ describe('A33: version 0.4.1 everywhere', () => {
 
   it('the changelog starts with this version', () => {
     const changelog = fs.readFileSync(path.join(REPO, 'CHANGELOG.md'), 'utf8');
-    expect(changelog).toMatch(/^## 0\.4\.1\b/m);
+    expect(changelog).toMatch(/^## 0\.4\.2\b/m);
+    expect(changelog.indexOf('## 0.4.2')).toBeLessThan(changelog.indexOf('## 0.4.1'));
     expect(changelog.indexOf('## 0.4.1')).toBeLessThan(changelog.indexOf('## 0.4.0'));
     expect(changelog.indexOf('## 0.4.0')).toBeLessThan(changelog.indexOf('## 0.3.1'));
   });
