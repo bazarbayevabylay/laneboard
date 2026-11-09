@@ -5,6 +5,38 @@ The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/ba
 
 ## Unreleased
 
+Agent work with the board, from the lb-tokens experiment: 90 clean Claude Code runs with MCP only, CLI only and both. The CLI did as
+well as MCP; with the hook installed the MCP server was called in 1 run of 30 and cost about 1.7k tokens in every request; agents
+rarely commented their steps; CLI agents made up commands and options and tripped over shell quoting.
+
+### Compatibility
+
+- `setup claude-code` writes no MCP server (`.mcp.json`) by default: the hooks give the agent the rules and the CLI commands. `--mcp`
+  adds it; an entry an earlier setup wrote is kept, with a warning naming `--no-mcp`, which takes it out. Codex, Cursor, Gemini CLI
+  and OpenCode have no hooks and always get the server. `setup <harness> --mcp` / `--no-mcp` for another harness or with `--remove` is `USAGE`.
+- MCP: the server's instructions are the rules worded with the tools (`task_comment`, `actor`, `add_links`), from the new MCP forms
+  in `agent-rules.md` (rules 12 and 14 are shell-only and left out); the preamble no longer says the rules name CLI commands.
+- MCP: `task_prime` no longer repeats the instructions: `rules` is a short pointer to them; `rules: true` returns them as before.
+- `finish` (CLI, MCP `task_finish`) of the assignee with no comment of its own since the claim warns (`warnings`, exit 0), as the commit
+  warnings do: scripts that expect an empty `warnings` after such a finish get one line.
+- Rules: rule 1 names the comment after each step with its command; rule 14 says text with quotes, tabs or newlines goes through stdin;
+  rules 3, 4, 9, 11 and 12 are shorter (the MCP parts moved to the MCP forms). `prime`, its hook and the plugin skill print the new text.
+
+### Added
+
+- `claim --json` and `task_claim` reply `next`: the comment command for the task (`laneboard comment <ID> "<what you did>" --json`,
+  over MCP the `task_comment` call); the human line names it too.
+- `finish --add-link kind=ref` (repeatable; MCP `add_links`), as in `update`: links in the same write; a commit link names the commit
+  to link when `--commit` is not given (HEAD is not linked next to it).
+- Text from stdin: `comment <ID> -` and `comment --text-file -` (as `--file -`), `finish --result-file P|-`; `update
+  --append-description-file -` and `--description-file -` were there.
+- `show` runs as `get` and `edit` as `update` (not in the help); an unknown command that is another word for one (`info`, `close`,
+  `take`, `ls` and others) gets a fix with that command, ready to run.
+- An unknown option that is another name for one (`finish --message`, `--sha`, `--link`; `update --link`, `--desc`) gets a fix with
+  that option; an option given without a value whose absence is its default (`finish --commit`, `claim --status`) gets a fix without it.
+  The fix of `redact` with a blank text names the task id instead of `<id>`.
+- MCP `task_finish`: its description no longer suggests `status: review`; leaving status out is the advice.
+
 ### Docs
 
 - README: what laneboard gives on the first screen (task memory that survives `/clear`, compaction and restarts, a live local board,

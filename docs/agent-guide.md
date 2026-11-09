@@ -49,7 +49,8 @@ laneboard --version
 ### 1.1 Create the store and connect a harness
 
 Run both in the project root. `init` creates the board `./.laneboard` and adds it to this machine's registry; `setup` registers the MCP server
-and adds a 3-line instruction block, pinned to that store. A board has a name and a one-line description (whose project, what work);
+and adds a 3-line instruction block, pinned to that store. Claude Code gets hooks that print the rules and the CLI commands instead, and the
+MCP server only with `setup claude-code --mcp` (an entry an earlier setup wrote is kept, with a warning; `--no-mcp` takes it out). A board has a name and a one-line description (whose project, what work);
 the id prefix is derived from the name, at most 4 characters: the initials of its words (`my-web-app` -> `MWA`) or the start of one word
 (`demo` -> `DEMO`), a trailing number kept. `--prefix` sets your own; `laneboard config --prefix` changes it while the board has no task.
 It must be free on this machine (a taken one fails with a free one in `fix`); `init`, `config` and `setup` check it, so a copied project folder
@@ -73,7 +74,7 @@ What `setup` writes:
 
 | Harness | MCP server entry | Instructions | Store pin |
 |---|---|---|---|
-| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in the `.claude/settings.local.json` Claude Code reads for the folder, kept out of git by a block in `.git/info/exclude`: the folder's own, or the repository root's for a package pinned to the root's board (3.3); `.claude/settings.json` only for a folder with a board of its own inside another git repository, or at a root that holds other boards. Plus the SessionStart hook and the PostToolUse hook (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`) in `.claude/settings.json` |
+| claude-code | `.mcp.json`, only with `--mcp` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in the `.claude/settings.local.json` Claude Code reads for the folder, kept out of git by a block in `.git/info/exclude`: the folder's own, or the repository root's for a package pinned to the root's board (3.3); `.claude/settings.json` only for a folder with a board of its own inside another git repository, or at a root that holds other boards. Plus the SessionStart hook and the PostToolUse hook (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`) in `.claude/settings.json` |
 | codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<store>` before each command in the instructions; the entry forwards `LANEBOARD_DIR` (`env_vars`): start Codex in the project folder or as `LANEBOARD_DIR=<store> codex`, never export it |
 | cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <store>` in the entry, `LANEBOARD_DIR=<store>` in the instructions |
@@ -142,7 +143,10 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 
 ### 2.1 The rules in short
 
-- Before your first file change: claim your task or create one. Comment each meaningful step. When done: commit, then `laneboard finish <ID> --result "<result>" --json`.
+- Before your first file change: claim your task or create one. After each step: `laneboard comment <ID> "<what you did>" --json` (the reply
+  of `claim` names this command as `next`; a `finish` with no comment of yours since the claim warns). When done: commit, then `laneboard finish <ID> --result "<result>" --json`.
+- Text with quotes, tabs or newlines: from stdin, `laneboard comment <ID> - --json <<'EOF'` (also `finish --result-file -`,
+  `--append-description-file -` of update, `--description-file -` of update and create).
 - `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`). Status changes, comments, `claim` and `finish` need none, so no `get` for a rev.
 - Use only `laneboard` commands or the `task_*` MCP tools; never edit `.laneboard/*.json`.
 - Always pass `--json`. Your name: `--as <name>` (MCP: `actor`; `export LANEBOARD_AGENT=<name>` only for a single agent with no subagents: they inherit it); without them Claude Code sessions write under their default name (2.5).
@@ -156,7 +160,8 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 Your name once for the session, then create, claim, work, finish, archive. Every write replies short: `id`, the new `rev`, `status`,
 `assignee` (after `attach` also the `attachment`, after `finish` the `commit`). The whole task: `laneboard get <ID>`, or `--full` on the write (MCP: `full: true`).
 `finish` is one write: the result comment, a link to the current commit (git HEAD of the folder, `commit=<sha>`; `--no-commit` skips it,
-outside git there is none), then the final status, in this order of events. Commit first. Only the assignee finishes (or anybody an unassigned task,
+outside git there is none), then the final status, in this order of events. `--add-link kind=ref` adds links in the same write, as
+`update` does (a `commit=<sha>` link is the commit to link instead of HEAD); `--result-file P|-` reads the result from a file or stdin. Commit first. Only the assignee finishes (or anybody an unassigned task,
 who then becomes its assignee). `--status` takes any status but the first one: `--status review` hands the work in, the orchestrator sets
 the final one (on a board with checks, 3.7: by default the check the task is in, else the first check, and the checkers set the rest).
 The assignee's `finish` into a status that is not final hands the task in: its `status` event and the reply (`--json`, MCP) say `handed_in: true`.
@@ -191,6 +196,9 @@ laneboard claim DEMO-1 --status in_progress --json
 laneboard comment DEMO-1 "Cause: the redirect drops the query string" --json
 laneboard update DEMO-1 --add-link branch=fix/login-redirect --field priority=1 --expected-rev 3 --json
 laneboard update DEMO-1 --append-description "Repro: log in from /cart" --json
+laneboard comment DEMO-1 - --json <<'EOF'
+Checked: word_count('a\tb') with a "quoted" word
+EOF
 echo "request log" > trace.txt
 laneboard attach DEMO-1 trace.txt --json
 laneboard finish DEMO-1 --result "Fixed, regression test added" --json
@@ -250,8 +258,10 @@ laneboard update DEMO-2 --title "Release notes" --expected-rev 3 --json
 
 The same operations as the CLI, with snake_case parameters. Write tools take `actor`; without it the server uses its `mcp --as`, then
 `LANEBOARD_AGENT`, else the default name of the session that started it. Every result has a second text block `{"store", "prefix", "warnings"}`, like the CLI envelope.
-The server's instructions are the rules with an MCP preamble (CLI command -> `task_<command>`, options -> parameters, `--add-link kind=ref`
--> `add_links: [{kind, ref}]`, `--field k=v` -> `fields: {k: v}`, no `--json`). `structuredContent` is the CLI `data`, plus `warnings`
+The server's instructions are a preamble and the rules worded with the tools (the MCP forms in `agent-rules.md`; rules 12 and 14 are
+shell-only); the preamble says how to read a CLI command in a message (`laneboard comment` -> `task_comment`, options -> parameters,
+`--add-link kind=ref` -> `add_links: [{kind, ref}]`, `--field k=v` -> `fields: {k: v}`, no `--json`). `task_prime` does not repeat them:
+its `rules` points to the instructions, `rules: true` returns them. `task_claim` replies `next`, the `task_comment` call for the task. `structuredContent` is the CLI `data`, plus `warnings`
 when there are any. An error's `fix` and the warnings name tool calls, not CLI commands: `task_comment {"id":"DEMO-1","text":"<note>","actor":"dev-1"}`,
 two of them joined by `, then`; a command no tool runs (`boards`, `init`, `config`, `doctor`, an option like `--dir` or `--board`) stays
 a CLI command. A link or field in the CLI form (`"commit=abc"`) gets a fix that names the form. `task_prime` without a name warns to pass `actor`.

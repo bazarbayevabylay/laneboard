@@ -56,8 +56,8 @@ laneboard init --name web --description "ACME web shop: catalog and cart"
 laneboard setup claude-code
 ```
 
-3. Start a new agent session in the project folder: the MCP server and the instructions load at start. Claude Code asks you to
-   approve the project MCP server `laneboard`; then `/mcp` lists it. In the shell, check the board:
+3. Start a new agent session in the project folder: the instructions load at start. In Claude Code a hook prints the rules and your
+   tasks (no MCP server unless `setup claude-code --mcp`); other agents load the MCP server `laneboard`. In the shell, check the board:
 
 ```sh
 laneboard prime
@@ -83,9 +83,9 @@ install, the task cycle, errors, configuration, import. It ships in the npm pack
 
 ## Connect your agent
 
-One command in the project root: `laneboard setup claude-code` (or `codex`, `cursor`, `gemini`, `opencode`). It registers the MCP server
-`laneboard`, adds a 3-line instruction block and pins the project to its board; `--dry-run` writes nothing, `--remove` takes out only
-what setup wrote. What each one writes and what to commit, the Claude Code plugin instead of setup, any other MCP client:
+One command in the project root: `laneboard setup claude-code` (or `codex`, `cursor`, `gemini`, `opencode`). It adds a 3-line
+instruction block, pins the project to its board and registers the MCP server `laneboard`; Claude Code gets hooks instead, and the
+server only with `--mcp` (the agent works through the CLI there). `--dry-run` writes nothing, `--remove` takes out only what setup wrote. What each one writes and what to commit, the Claude Code plugin instead of setup, any other MCP client:
 [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md).
 
 ## What the agent does

@@ -56,8 +56,8 @@ laneboard init --name web --description "Интернет-магазин ACME: �
 laneboard setup claude-code
 ```
 
-3. Откройте новую сессию агента в папке проекта: MCP-сервер и инструкции подгружаются при старте. Claude Code попросит
-   одобрить MCP-сервер проекта `laneboard`, после этого `/mcp` покажет его. Проверьте доску из терминала:
+3. Откройте новую сессию агента в папке проекта: инструкции подгружаются при старте. В Claude Code хук печатает правила и ваши
+   задачи (MCP-сервера нет, если не `setup claude-code --mcp`); другие агенты подгружают MCP-сервер `laneboard`. Проверьте доску из терминала:
 
 ```sh
 laneboard prime
@@ -83,9 +83,9 @@ https://raw.githubusercontent.com/bazarbayevabylay/laneboard/main/docs/agent-gui
 
 ## Подключение агента
 
-Одна команда в корне проекта: `laneboard setup claude-code` (или `codex`, `cursor`, `gemini`, `opencode`). Она регистрирует MCP-сервер
-`laneboard`, добавляет блок инструкций из трёх строк и привязывает проект к его доске; `--dry-run` ничего не пишет, `--remove` убирает
-только то, что записал setup. Что пишет каждая команда и что коммитить, плагин Claude Code вместо setup, любой другой MCP-клиент:
+Одна команда в корне проекта: `laneboard setup claude-code` (или `codex`, `cursor`, `gemini`, `opencode`). Она добавляет блок
+инструкций из трёх строк, привязывает проект к его доске и регистрирует MCP-сервер `laneboard`; Claude Code вместо него получает хуки,
+а сервер — только с `--mcp` (агент там работает через CLI). `--dry-run` ничего не пишет, `--remove` убирает только то, что записал setup. Что пишет каждая команда и что коммитить, плагин Claude Code вместо setup, любой другой MCP-клиент:
 [docs/configuration.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/configuration.md) (на английском).
 
 ## Что делает агент

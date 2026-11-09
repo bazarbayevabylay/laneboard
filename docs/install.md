@@ -53,9 +53,9 @@ laneboard setup claude-code
 laneboard setup codex
 ```
 
-Then start a new agent session in the project folder: it loads the MCP server and the instructions at start.
-Each `setup` prints this as its `next` line (Claude Code: approve the project MCP server `laneboard` when asked).
-The server is named `laneboard`: Claude Code and Gemini CLI list it under `/mcp`, Cursor under its MCP settings,
+Then start a new agent session in the project folder: it loads the instructions (and the MCP server) at start.
+Each `setup` prints this as its `next` line. Claude Code gets hooks that print the rules and your tasks, and no MCP server unless
+`setup claude-code --mcp` (then approve the project MCP server `laneboard` when asked). The server is named `laneboard`: Claude Code and Gemini CLI list it under `/mcp`, Cursor under its MCP settings,
 Codex with `codex mcp list`, OpenCode with `opencode mcp list`.
 
 ## Claude Code plugin
@@ -71,6 +71,11 @@ Without the CLI its SessionStart hook prints `laneboard CLI missing: npm i -g la
   optional, and `config@2` is written only when you turn one on. 0.3.x reads every board that has none of them.
 - MCP: `task_delete` is gone (delete is for people, CLI-only; a call of it is an unknown-tool error whose fix names `laneboard delete`); `task_prime` is new.
 - Re-run `laneboard setup <harness>` in each project: the instruction block, the hook matcher and the Claude Code pin are updated in place.
+
+## Upgrading to 0.4.4
+
+- `setup claude-code` no longer writes the MCP server: the hooks give the agent the rules and the CLI commands. A project set up before
+  keeps its `.mcp.json` entry, and setup warns; `laneboard setup claude-code --no-mcp` takes it out, `--mcp` keeps it without the warning.
 - The new `deny_names` defaults apply to boards created by 0.4.0; an older board keeps its list.
 
 ## Moving a folder or a machine
