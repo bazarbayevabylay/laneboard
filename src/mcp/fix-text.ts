@@ -39,7 +39,7 @@ const COMMANDS: Readonly<Record<string, CommandSpec>> = {
   finish: {
     tool: 'task_finish',
     args: ['id'],
-    options: { result: ['result', 'string'], status: ['status', 'string'], commit: ['commit', 'string'], 'no-commit': ['no_commit', 'true'] },
+    options: { result: ['result', 'string'], status: ['status', 'string'], commit: ['commit', 'string'], 'no-commit': ['no_commit', 'true'], 'add-link': ['add_links', 'link'] },
   },
   get: { tool: 'task_get', args: ['id'], options: { events: ['events', 'int'] } },
   list: {

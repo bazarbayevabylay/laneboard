@@ -686,6 +686,8 @@ export interface WriteReply extends WriteFacts {
 // the commit finish linked (null: none, outside git, --no-commit or an acceptance), and that finish accepted somebody else's handed-in task.
 export interface WriteFacts {
   resumed_from?: string;
+  // After a claim: the command that records a step of the work (agents rarely comment their steps: lb-tokens experiment).
+  next?: string;
   commit?: string | null;
   accepted?: true;
   // On a board with checks (P1): finish by a checker passed the task on to the next check, and the status it came from (also of an acceptance).
@@ -702,6 +704,7 @@ export function writeReply(task: TaskView, attached = false, facts: WriteFacts =
   const added = attached ? task.attachments.at(-1) : undefined;
   if (added) reply.attachment = { name: added.name, size: added.size, sha256: added.sha256 };
   if (facts.resumed_from !== undefined) reply.resumed_from = facts.resumed_from;
+  if (facts.next !== undefined) reply.next = facts.next;
   if (facts.commit !== undefined) reply.commit = facts.commit;
   if (facts.accepted === true) reply.accepted = true;
   if (facts.passed === true) reply.passed = true;

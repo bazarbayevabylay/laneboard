@@ -84,8 +84,8 @@ describe('a package of a monorepo pinned to the repository board', () => {
     const block = fs.readFileSync(path.join(m.web, 'CLAUDE.md'), 'utf8');
     expect(block).toContain('pinned by LANEBOARD_DIR in .claude/settings.local.json at the root of this git repository');
     expect(block).not.toContain(m.root);
+    // No .mcp.json: setup claude-code writes the MCP server only with --mcp (0.4.4).
     expect(r.doc.data.files.map((f: { path: string; result: string }) => [f.path, f.result])).toEqual([
-      ['.mcp.json', 'created'],
       ['CLAUDE.md', 'created'],
       ['.claude/settings.json', 'created'],
       [m.rootLocal, 'created'],
@@ -95,7 +95,7 @@ describe('a package of a monorepo pinned to the repository board', () => {
     expect(committableWith(m, m.root)).toEqual([]);
     expect(m.git(['status', '--porcelain', '--untracked-files=all'])).not.toContain('settings.local.json');
     const again = await json(m.web, ['setup', 'claude-code'], m.env);
-    expect(again.doc.data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged', 'unchanged', 'unchanged']);
+    expect(again.doc.data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged', 'unchanged']);
     // The session in the package reads the root's pin: prime there names the board.
     expect((await json(m.web, ['prime'], { ...m.env, LANEBOARD_DIR: read(m.rootLocal).env.LANEBOARD_DIR })).doc.store).toBe(m.store);
   });

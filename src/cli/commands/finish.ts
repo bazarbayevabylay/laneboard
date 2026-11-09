@@ -1,19 +1,20 @@
 // laneboard finish
-import { finishTask } from '../../core/index.ts';
+import { finishTask, parseLinkArg } from '../../core/index.ts';
 import type { WriteReply } from '../../core/index.ts';
-import { flag, str } from './args.ts';
+import { exclusive, flag, list, readTextFile, str } from './args.ts';
 import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
 export const finish: CommandDef = {
   name: 'finish',
-  usage: 'finish <id> --result T [--status S] [--commit SHA | --no-commit] [--full]',
+  usage: 'finish <id> --result T [--result-file P|-] [--status S] [--commit SHA | --no-commit] [--add-link kind=ref]... [--full]',
   summary:
     'Close your task in one write: the result comment, a link to the current git commit (HEAD of this folder; --commit SHA: that commit, ' +
     'e.g. from your git worktree when you run finish elsewhere; --no-commit: none), then the final status ' +
     '(--status: any but the first one, e.g. review to hand in). Only the assignee (or anybody for an unassigned task); no --expected-rev. ' +
     'Your finish into a status that is not final hands the task in (the status event and the reply say handed_in). ' +
     "Somebody else's task only to accept it after its assignee handed it in with finish: into the final status, no commit link (the status event says accepted). " +
+    '--result-file: the result from a file, - for stdin (text with quotes, tabs or newlines: a heredoc). --add-link adds links in the same write, as update does; a commit link names the commit to link when --commit is not given. ' +
     'Commit your changes first: uncommitted changes (staged too) or a HEAD commit older than your claim give a warning (git is asked; without it: a warning). ' +
     'In the main checkout of a repository whose other worktrees have newer commits: a warning naming them, with the command that fixes the link. ' +
     'Again in the same status: a new result is recorded (handed in again after rework), the same result again changes nothing; a new commit is linked; ' +
@@ -21,11 +22,32 @@ export const finish: CommandDef = {
     'On a board with checks (laneboard config --review-statuses): your finish hands in to the check the task is in, else the first check, never into a later one or the final status, nor into a status that is no check (to put it there with your result: comment, then update --status); ' +
     "a checker's finish --status <next> passes the handed-in task on to the next check (the status event says passed) and from the last one --status <final> accepts it; " +
     'without --status, with the check the task is in or past the next one it is refused (the task may have moved on since you read it; prime prints the command); config review.by names the checkers.',
-  options: { result: { type: 'string' }, status: { type: 'string' }, commit: { type: 'string' }, 'no-commit': { type: 'boolean' }, ...FULL_OPTION },
+  options: {
+    result: { type: 'string' },
+    'result-file': { type: 'string' },
+    status: { type: 'string' },
+    commit: { type: 'string' },
+    'no-commit': { type: 'boolean' },
+    'add-link': { type: 'string', multiple: true },
+    ...FULL_OPTION,
+  },
+  flags: { add_links: '--add-link', no_commit: '--no-commit' },
+  defaults: { commit: 'finish links HEAD of this folder' },
+  synonyms: { '--message': '--result', '--text': '--result', '--summary': '--result', '--comment': '--result', '--sha': '--commit', '--link': '--add-link' },
   args: { min: 1, max: 1 },
   textOption: 'result',
   async run(c) {
-    const r = await finishTask(c.op(), { id: c.positionals[0] ?? '', result: str(c.values, 'result') as string, status: str(c.values, 'status'), commit: str(c.values, 'commit'), no_commit: flag(c.values, 'no-commit') || undefined });
+    exclusive(c.values, 'result', 'result-file');
+    const file = str(c.values, 'result-file');
+    const result = file === undefined ? str(c.values, 'result') : readTextFile(c.io, file, 'result-file');
+    const r = await finishTask(c.op(), {
+      id: c.positionals[0] ?? '',
+      result: result as string,
+      status: str(c.values, 'status'),
+      commit: str(c.values, 'commit'),
+      no_commit: flag(c.values, 'no-commit') || undefined,
+      add_links: list(c.values, 'add-link')?.map(parseLinkArg),
+    });
     const what = r.reply === undefined || r.unchanged === true ? 'unchanged' : r.reply.accepted === true ? 'accepted' : r.reply.passed === true ? `passed to ${r.data.status}` : r.handed_in === true ? 'handed in' : 'finished';
     const out = taskReply(c, r, what);
     // A hand-in says so in the short reply too (LB-63.3), not only in the human line; --full shows the task, whose status event says it.

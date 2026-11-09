@@ -11,7 +11,7 @@ import { claimTask, configureStore, createTask, finishTask, getTask, registerSto
 import { mcpText } from '../../src/mcp/fix-text.ts';
 import { callTool, MCP_RULES_PREAMBLE, TOOLS } from '../../src/mcp/tools.ts';
 import type { ToolEnv, ToolResult } from '../../src/mcp/tools.ts';
-import { as, cleanupTemp, newStore, readStore, rejectsWith, tempDir } from '../helpers.ts';
+import { as, cleanupTemp, newStore, otherWarnings, readStore, rejectsWith, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 import { runCalls, toolCalls } from './tool-calls.ts';
 
@@ -200,7 +200,9 @@ describe('LB-60.4, 60.5, 63.3 over MCP', () => {
       await claimTask(as(s, 'dev-1'), { id: `API-${n}`, status: 'in_progress' });
     }
     const handIn = await callTool('task_finish', { id: 'API-1', status: 'review', result: 'work', no_commit: true, actor: 'dev-1' }, env);
-    expect(handIn.structuredContent).toEqual({ id: 'API-1', rev: expect.any(Number), status: 'review', assignee: 'dev-1', commit: null, handed_in: true });
+    const { warnings: handInWarnings = [], ...handInReply } = handIn.structuredContent as { warnings?: string[] };
+    expect(handInReply).toEqual({ id: 'API-1', rev: expect.any(Number), status: 'review', assignee: 'dev-1', commit: null, handed_in: true });
+    expect(otherWarnings(handInWarnings)).toEqual([]);
     const close = await callTool('task_finish', { id: 'API-2', result: 'work', no_commit: true, actor: 'dev-1' }, env);
     expect(Object.keys(close.structuredContent)).not.toContain('handed_in');
     await updateTask(as(s, 'dev-1'), { id: 'API-2', status: 'in_progress' });
@@ -257,7 +259,7 @@ describe('review A2 NIT: one warning for one wrong commit', () => {
     }
     const r = reply(await callTool('task_finish', { id: 'LB-1', status: 'review', result: 'done', actor: 'dev-1' }, { cwd: s.root, env: {} }));
     expect(r.data.commit).toBe(head);
-    expect(r.warnings).toHaveLength(1);
+    expect(otherWarnings(r.warnings)).toHaveLength(1);
     expect(r.warnings[0]).toContain('other worktrees of this repository have commits since you claimed LB-1');
     expect(r.warnings[0]).toMatch(new RegExp(`; commit ${head.slice(0, 12)} is already linked to LB-2 of dev-2 too$`));
     expect(r.warnings[0]).toContain('task_finish {"id":"LB-1","status":"review","commit":"<HEAD of your worktree>"');

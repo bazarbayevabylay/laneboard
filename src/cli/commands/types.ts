@@ -68,6 +68,10 @@ export interface CommandDef {
   // The text option extra words go to in a wrong-number-of-arguments fix when argv lacks it (finish: result), as `--result=<words>`,
   // so `finish X -- "- text"` keeps the text and the fix runs as printed (S6w U4).
   textOption?: string;
+  // Options whose absence is their default, with what that default is: a missing value's fix drops the option (argv.ts PositionalHint).
+  defaults?: Readonly<Record<string, string>>;
+  // Other names agents give an option, with the option they mean (an unknown-option fix suggests it).
+  synonyms?: Readonly<Record<string, string>>;
   // Only reads a store, so it may open another board with --board (read-only).
   readOnly?: boolean;
   run(c: CommandContext): Promise<CommandOutput>;

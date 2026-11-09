@@ -90,6 +90,11 @@ function withTerminator(command: string, args: readonly string[], options: Optio
 export interface PositionalHint {
   usage: string;
   required(dir: string | undefined): ReadonlyArray<{ name: string; value: string }>;
+  // Options whose absence is their default, with what that default is (finish: --commit, HEAD is linked): a missing value's fix drops
+  // the option instead of a `<value>` placeholder, so it runs as printed.
+  defaults?: Readonly<Record<string, string>>;
+  // Other names agents give an option (`--message` for finish's `--result`): an unknown one of these suggests the option, so the fix runs.
+  synonyms?: Readonly<Record<string, string>>;
 }
 
 // The value of option `--name` in argv before `--` (`--name v` or `--name=v`), or undefined.
@@ -146,7 +151,9 @@ export function parseError(err: unknown, command: string, args: readonly string[
       });
     }
     const option = text ?? quoted;
-    const suggestion = suggestClosest(option.replace(/^-+/, '--').split('=')[0] ?? option, known);
+    const typed = option.replace(/^-+/, '--').split('=')[0] ?? option;
+    const synonym = hint?.synonyms !== undefined && Object.hasOwn(hint.synonyms, typed) ? hint.synonyms[typed] : undefined;
+    const suggestion = suggestClosest(typed, known) ?? synonym;
     return new LaneboardError('UNKNOWN_OPTION', `unknown option ${option} for ${command}`, {
       allowed: known,
       input: suggestion ? { field: 'option', value: option, suggestion } : { field: 'option', value: option },
@@ -167,6 +174,12 @@ export function parseError(err: unknown, command: string, args: readonly string[
     const out = [...args];
     // `--status --as a`: the value is missing; `--description "- a"`: the value starts with "-" and needs `--name=value`.
     if (next === undefined || optionOf(next, options) !== undefined || next === '--') {
+      const name = flag.slice(2);
+      const absent = hint?.defaults !== undefined && Object.hasOwn(hint.defaults, name) ? hint.defaults[name] : undefined;
+      if (absent !== undefined) {
+        out.splice(at, 1);
+        return new LaneboardError('USAGE', `${flag} needs a value; without it ${absent}`, { fix: commandLine([command, ...out]) });
+      }
       out.splice(at + 1, 0, '<value>');
       return new LaneboardError('USAGE', `${flag} needs a value`, { fix: commandLine([command, ...out], new Set([at + 2])) });
     }

@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { agentRules, shortRuleForms } from '../../src/core/index.ts';
 import type { TaskT } from '../../src/core/index.ts';
 import { workStartedAt } from '../../src/core/ops/common.ts';
-import { cleanupTemp, cli, CLI_SOURCE, newStore, readStore, spawnNode, tempDir, writeRaw } from '../helpers.ts';
+import { cleanupTemp, cli, CLI_SOURCE, newStore, otherWarnings, readStore, spawnNode, tempDir, writeRaw } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -43,7 +43,8 @@ const nowSec = (): number => Math.floor(Date.now() / 1000);
 async function finish(s: TestStore, extra: string[] = ['--as', 'dev-1'], env: Record<string, string> = {}): Promise<{ data: Record<string, unknown>; warnings: string[] }> {
   const r = await cli(['finish', 'LB-1', '--result', 'done', ...extra, '--json'], { cwd: s.root, env });
   expect(r.code, r.stdout).toBe(0);
-  return JSON.parse(r.stdout);
+  const doc = JSON.parse(r.stdout);
+  return { ...doc, warnings: otherWarnings(doc.warnings) };
 }
 
 const dirtyWarning = (sha: string) =>
@@ -60,7 +61,7 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     git(s.root, ['add', 'app.txt']);
     const r = await finish(s);
     expect(r.data.commit).toBe(head);
-    expect(r.warnings).toEqual([dirtyWarning(head)]);
+    expect(otherWarnings(r.warnings)).toEqual([dirtyWarning(head)]);
   });
 
   it('a clean tree, also with a file touched under core.autocrlf: no warning', async () => {
@@ -83,7 +84,7 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     expect(r.code, r.stderr).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(doc.data).toEqual({ id: 'LB-1', rev: 2, status: 'done', assignee: 'dev-1', commit: null });
-    expect(doc.warnings).toEqual(['could not check git (git not found in PATH): no commit linked']);
+    expect(otherWarnings(doc.warnings)).toEqual(['could not check git (git not found in PATH): no commit linked']);
   });
 
   // A stand-in `git` in a folder of its own: the PATH of the CLI child names only it. Run once here before the CLI: on macOS the
@@ -108,7 +109,7 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     expect(r.code, r.stderr).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(doc.data).toMatchObject({ status: 'done', commit: null });
-    expect(doc.warnings).toEqual(['could not check git (git did not answer in 2 s): no commit linked']);
+    expect(otherWarnings(doc.warnings)).toEqual(['could not check git (git did not answer in 2 s): no commit linked']);
   }, 15_000);
 
   it('HEAD known but git status fails: the commit is linked, the check is named as skipped', async () => {
@@ -120,7 +121,7 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     expect(r.code, r.stderr).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(doc.data).toMatchObject({ status: 'done', commit: sha });
-    expect(doc.warnings).toEqual([`could not check git (git status: fatal: index file corrupt): not checked whether the linked commit ${sha.slice(0, 12)} holds your work`]);
+    expect(otherWarnings(doc.warnings)).toEqual([`could not check git (git status: fatal: index file corrupt): not checked whether the linked commit ${sha.slice(0, 12)} holds your work`]);
   });
 
   it('another git failure before HEAD (not "not a repository"): no link, the reason in the warning', async () => {
@@ -128,7 +129,7 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     await cli(['create', 'T', '--status', 'in_progress', '--assignee', 'dev-1', '--as', 'a', '--json'], { cwd: s.root });
     const bin = fakeGit(`echo "fatal: detected dubious ownership in repository at '/x'" >&2; exit 128`);
     const r = await spawnNode([CLI_SOURCE, 'finish', 'LB-1', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root, env: { PATH: bin, HOME: tempDir() } });
-    expect(JSON.parse(r.stdout).warnings).toEqual(["could not check git (git rev-parse: fatal: detected dubious ownership in repository at '/x'): no commit linked"]);
+    expect(otherWarnings(JSON.parse(r.stdout).warnings)).toEqual(["could not check git (git rev-parse: fatal: detected dubious ownership in repository at '/x'): no commit linked"]);
   });
 
   it('outside a repository and before the first commit: no link and no warning', async () => {
@@ -138,7 +139,7 @@ describe('review S3b MAJOR: finish asks git for the uncommitted work', () => {
     expect(await finish(s)).toMatchObject({ data: { commit: null }, warnings: [] });
     git(s.root, ['init', '-q']);
     const r = JSON.parse((await cli(['finish', 'LB-2', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
-    expect(r).toMatchObject({ data: { commit: null }, warnings: [] });
+    expect({ ...r, warnings: otherWarnings(r.warnings) }).toMatchObject({ data: { commit: null }, warnings: [] });
   });
 });
 
@@ -176,16 +177,16 @@ describe('review S3b MINOR: a repeat finish that links a new commit says so', ()
     const s = await newStore();
     await cli(['create', 'T', '--status', 'in_progress', '--assignee', 'dev-1', '--as', 'a', '--json'], { cwd: s.root });
     repoWithFile(s.root, nowSec() + 5);
-    expect((await finish(s)).warnings).toEqual([]);
+    expect(otherWarnings((await finish(s)).warnings)).toEqual([]);
     fs.writeFileSync(path.join(s.root, 'app.txt'), 'two\n');
     git(s.root, ['commit', '-q', '-am', 'second'], nowSec() + 6);
     const second = git(s.root, ['rev-parse', 'HEAD']);
     const again = await finish(s);
     expect(again.data).toMatchObject({ rev: 3, commit: second });
-    expect(again.warnings).toEqual([`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json); commit ${second.slice(0, 12)} linked`]);
+    expect(otherWarnings(again.warnings)).toEqual([`status and result unchanged: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json); commit ${second.slice(0, 12)} linked`]);
     const third = await finish(s);
     expect(third.data.rev).toBe(3);
-    expect(third.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
+    expect(otherWarnings(third.warnings)).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
   });
 });
 
@@ -217,7 +218,7 @@ describe('review S3b MINOR: after claim --resume the stale check counts from the
     const { s, claimedA } = await resumedTask();
     const head = repoWithFile(s.root, claimedA - 50);
     await cli(['claim', 'LB-1', '--resume', '--json'], { cwd: s.root, env: SESSION_B });
-    expect((await finish(s, [], SESSION_B)).warnings).toEqual([staleWarning(head)]);
+    expect(otherWarnings((await finish(s, [], SESSION_B)).warnings)).toEqual([staleWarning(head)]);
   });
 
   it('workStartedAt: back through resumed assignments to the first; a plain handover or another holder starts anew', () => {

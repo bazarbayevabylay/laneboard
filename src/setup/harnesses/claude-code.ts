@@ -1,4 +1,4 @@
-// Claude Code: .mcp.json, CLAUDE.md block, in .claude/settings.json the SessionStart hook and the PostToolUse edit reminder, and the
+// Claude Code: .mcp.json (only with --mcp, or kept from an earlier setup: mcpWanted), CLAUDE.md block, in .claude/settings.json the SessionStart hook and the PostToolUse edit reminder, and the
 // store pin plus the default agent name as `env` (LANEBOARD_DIR, LANEBOARD_DEFAULT_AGENT): code.claude.com/docs/en/mcp, /hooks,
 // /memory, /settings (`env` is set "for every session and its subprocesses").
 // The env goes into a .claude/settings.local.json (no machine path is committed) that Claude Code reads for sessions in this folder:
@@ -370,10 +370,48 @@ function installedPlugin(c: HarnessContext): string | undefined {
   return marketplaces.map((m) => path.join(cache, m, 'laneboard')).find((dir) => fs.existsSync(dir));
 }
 
+const MCP_FILE = '.mcp.json';
+
+// Edit of our MCP server entry in .mcp.json.
+function mcpEdit(file: string): TextEdit {
+  return jsonEdit(file, { kind: 'key', path: ['mcpServers', 'laneboard'], value: { command: MCP_COMMAND, args: [...MCP_ARGS] } });
+}
+
+// Does .mcp.json of cwd hold the laneboard server an earlier setup wrote? A file that cannot be read or parsed says no: setup without
+// --mcp then leaves it alone, as it never needs it.
+function mcpInstalled(c: HarnessContext): boolean {
+  try {
+    const text = readText(path.join(c.cwd, MCP_FILE));
+    return text !== null && mcpEdit(MCP_FILE).owns(text);
+  } catch {
+    // Unreadable or unparseable: not ours to touch without --mcp.
+    return false;
+  }
+}
+
+// Is the MCP server part of this install? The hooks print the rules and the CLI commands with the agent's name, so the agent works
+// through the CLI and the server only adds its instructions and tool names to every request (lb-tokens experiment: 2 MCP calls against
+// 120 CLI calls in 30 runs, about 1.7k tokens per request). So: --mcp adds it, --no-mcp takes it out, by default a new install goes
+// without it and an entry an earlier setup wrote stays (a warning says how to take it out).
+export function mcpWanted(c: HarnessContext): boolean {
+  return c.mcp ?? mcpInstalled(c);
+}
+
+// The entry of an earlier setup that the default install keeps: say what it costs and how to take it out.
+function keptMcpWarnings(c: HarnessContext): string[] {
+  if (c.mcp !== undefined || !mcpInstalled(c)) return [];
+  const keeps = c.dryRun ? 'would keep' : 'kept';
+  return [
+    `${keeps} the laneboard MCP server of an earlier setup in ${MCP_FILE}: with the hooks the agent works through the CLI, and the server adds about 1.7k tokens to every request; laneboard setup claude-code --no-mcp --json takes it out (--mcp keeps it without this warning)`,
+  ];
+}
+
 export const claudeCode: Harness = {
   name: 'claude-code',
+  optionalMcp: true,
   files: [
-    { path: '.mcp.json', scope: 'project', edit: (f) => jsonEdit(f, { kind: 'key', path: ['mcpServers', 'laneboard'], value: { command: MCP_COMMAND, args: [...MCP_ARGS] } }) },
+    // The MCP server only with --mcp, or when an earlier setup wrote it (mcpWanted); --no-mcp and --remove take it out.
+    { path: MCP_FILE, scope: 'project', edit: (f) => mcpEdit(f), applies: mcpWanted },
     {
       path: 'CLAUDE.md',
       scope: 'project',
@@ -394,12 +432,15 @@ export const claudeCode: Harness = {
     // The local file, backups and folder markers stay out of git (the local file holds a machine path and the user's name).
     gitExclude,
   ],
-  notes: ['start Claude Code in this directory and approve the project MCP server "laneboard" when asked'],
+  notes: (c) =>
+    mcpWanted(c)
+      ? ['start Claude Code in this directory and approve the project MCP server "laneboard" when asked']
+      : ['start Claude Code in this directory: the SessionStart hook prints the rules and your tasks (laneboard setup claude-code --mcp --json adds the MCP server too)'],
   warnings(c) {
     const dir = installedPlugin(c);
     const plugin = dir
       ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove --json`]
       : [];
-    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...plugin];
+    return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...keptMcpWarnings(c), ...plugin];
   },
 };

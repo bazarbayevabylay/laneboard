@@ -3,17 +3,16 @@ $ laneboard setup claude-code
 exit 0
 --- stdout
 store: <ROOT>/.laneboard
-created .mcp.json
 created CLAUDE.md
 created .claude/settings.json
 created .claude/settings.local.json
-next: start Claude Code in this directory and approve the project MCP server "laneboard" when asked
+next: start Claude Code in this directory: the SessionStart hook prints the rules and your tasks (laneboard setup claude-code --mcp --json adds the MCP server too)
 --- stderr
 
 
 $ laneboard setup claude-code --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"harness":"claude-code","store":"<ROOT>/.laneboard","mode":"install","dry_run":false,"files":[{"path":".mcp.json","scope":"project","result":"created"},{"path":"CLAUDE.md","scope":"project","result":"created"},{"path":".claude/settings.json","scope":"project","result":"created"},{"path":".claude/settings.local.json","scope":"project","result":"created"}],"notes":["start Claude Code in this directory and approve the project MCP server \"laneboard\" when asked"]},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"harness":"claude-code","store":"<ROOT>/.laneboard","mode":"install","dry_run":false,"files":[{"path":"CLAUDE.md","scope":"project","result":"created"},{"path":".claude/settings.json","scope":"project","result":"created"},{"path":".claude/settings.local.json","scope":"project","result":"created"}],"notes":["start Claude Code in this directory: the SessionStart hook prints the rules and your tasks (laneboard setup claude-code --mcp --json adds the MCP server too)"]},"warnings":[]}
 --- stderr
 

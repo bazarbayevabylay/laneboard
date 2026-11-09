@@ -15,8 +15,12 @@ export const claim: CommandDef = {
     'one that waits for a check is handed in already: that session and this one are its author. A closed task is not resumed: new work is a new task.',
   options: { status: { type: 'string' }, 'expected-rev': { type: 'string' }, resume: { type: 'boolean' }, ...FULL_OPTION },
   args: { min: 1, max: 1 },
+  defaults: { status: 'claim moves your task from the first status to the work status', 'expected-rev': 'claim needs no rev' },
   async run(c) {
     const r = await claimTask(c.op(), { id: c.positionals[0] ?? '', status: str(c.values, 'status'), expected_rev: int(c.values, 'expected-rev'), resume: flag(c.values, 'resume') || undefined });
-    return taskReply(c, r, r.reply?.resumed_from === undefined ? 'claimed' : `resumed from ${r.reply.resumed_from}`);
+    const out = taskReply(c, r, r.reply?.resumed_from === undefined ? 'claimed' : `resumed from ${r.reply.resumed_from}`);
+    // The short reply carries `next` (the comment command); the human line names it too.
+    const next = r.reply?.next;
+    return next === undefined || flag(c.values, 'full') ? out : { ...out, human: `${out.human}; after each step: ${next}` };
   },
 };

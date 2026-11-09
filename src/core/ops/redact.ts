@@ -179,7 +179,7 @@ export async function redactTask(ctx: OpContext, input: RedactInputT): Promise<O
   const p = parseInput(RedactInput, input);
   // A blank text would replace spaces and line breaks everywhere; the message never repeats the text.
   if (p.text.trim() === '') {
-    throw new LaneboardError('INVALID_VALUE', 'the text to redact is blank', { input: { field: 'text', value: '' }, fix: 'pass a file that holds the exact text to remove: laneboard redact <id> --text-file <path> --json' });
+    throw new LaneboardError('INVALID_VALUE', 'the text to redact is blank', { input: { field: 'text', value: '' }, fix: `pass a file that holds the exact text to remove: laneboard redact ${p.id} --text-file <path> --json` });
   }
   const warnings: string[] = [];
   const files = ['active', 'archive'] as const;

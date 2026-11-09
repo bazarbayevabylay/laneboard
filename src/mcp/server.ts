@@ -11,7 +11,7 @@ function packageVersion(): string {
   return (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 }
 
-// Build the server: instructions = the MCP preamble and the agent rules (as task_prime), tools from TOOL_LIST.
+// Build the server: instructions = the MCP preamble and the MCP forms of the agent rules (mcpRules), tools from TOOL_LIST.
 // The low-level Server is used on purpose: McpServer validates arguments itself and answers with plain text
 // ("Input validation error"), which would lose the error object with `fix` that the CLI returns.
 export function createMcpServer(env: ToolEnv): Server {

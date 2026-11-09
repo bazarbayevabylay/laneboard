@@ -12,7 +12,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import * as core from '../../src/core/index.ts';
 // @ts-expect-error LB-65.9: ReworkReturn is update.ts's own type, not exported.
 import type { ReworkReturn } from '../../src/core/ops/update.ts';
-import { CLI_SOURCE, cleanupTemp, cli, newStore, readStore, tempDir } from '../helpers.ts';
+import { cleanupTemp, cli, CLI_SOURCE, newStore, otherWarnings, readStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -211,14 +211,14 @@ describe('LB-55.1: finish warns when the commit it links is linked to another ta
     const { s, git } = await repo();
     git(['commit', '-q', '--allow-empty', '-m', 'work of dev-2']);
     const head = git(['rev-parse', 'HEAD']);
-    expect((await run(s.root, 'dev-2', ['finish', 'LB-2', '--result', 'mine'])).doc.warnings).toEqual([]);
+    expect(otherWarnings((await run(s.root, 'dev-2', ['finish', 'LB-2', '--result', 'mine'])).doc.warnings)).toEqual([]);
     const f = await run(s.root, 'dev-1', ['finish', 'LB-1', '--result', 'mine too']);
     expect(f.code).toBe(0);
     expect(f.doc.data.commit).toBe(head);
     const fix =
       `laneboard finish LB-1 --status done --commit <sha of your work> --result "<your result>" --as dev-1 --json && ` +
       `laneboard update LB-1 --remove-link commit=${head} --as dev-1 --json`;
-    expect(f.doc.warnings).toEqual([
+    expect(otherWarnings(f.doc.warnings)).toEqual([
       `commit ${head.slice(0, 12)} is already linked to LB-2 of dev-2: if it holds the work of both, nothing to do; if it is not your work (HEAD of a folder where another agent committed), ` +
         `link the commit of yours instead: ${fix}`,
     ]);
@@ -238,10 +238,10 @@ describe('LB-55.1: finish warns when the commit it links is linked to another ta
     expect((await run(s.root, 'orch', ['update', 'LB-2', '--add-link', `commit=${head.slice(0, 7)}`, '--status', 'done'])).code).toBe(0);
     expect((await run(s.root, 'orch', ['archive', 'LB-2'])).code).toBe(0);
     const f = await run(s.root, 'dev-1', ['finish', 'LB-1', '--status', 'review', '--result', 'mine']);
-    expect(f.doc.warnings).toHaveLength(1);
+    expect(otherWarnings(f.doc.warnings)).toHaveLength(1);
     expect(f.doc.warnings[0]).toContain(`commit ${head.slice(0, 12)} is already linked to LB-2 of dev-2:`);
     // Finished again into the final status: the commit is LB-1's own link already, nothing new is linked, no warning.
-    expect((await run(s.root, 'dev-1', ['finish', 'LB-1', '--result', 'closed'])).doc.warnings).toEqual([]);
+    expect(otherWarnings((await run(s.root, 'dev-1', ['finish', 'LB-1', '--result', 'closed'])).doc.warnings)).toEqual([]);
   });
 });
 
@@ -257,7 +257,7 @@ describe('LB-55.2, 55.3: finish in the main checkout with several worktrees that
     const mainHead = git(['rev-parse', 'HEAD']);
     const f = await run(s.root, 'dev-1', ['finish', 'LB-1', '--status', 'review', '--result', 'done']);
     expect(f.code).toBe(0);
-    expect(f.doc.warnings).toHaveLength(1);
+    expect(otherWarnings(f.doc.warnings)).toHaveLength(1);
     expect(f.doc.warnings[0]).not.toContain('HEAD has not moved');
     const fix =
       `laneboard finish LB-1 --status review --commit <HEAD of your worktree> --result "<your result>" --as dev-1 --json && ` +
@@ -272,7 +272,7 @@ describe('LB-55.2, 55.3: finish in the main checkout with several worktrees that
   it('control: no commit in other worktrees since the claim, so HEAD older than the claim still gets "HEAD has not moved"', async () => {
     const { s } = await repo();
     const f = await run(s.root, 'dev-1', ['finish', 'LB-1', '--status', 'review', '--result', 'done']);
-    expect(f.doc.warnings).toHaveLength(1);
+    expect(otherWarnings(f.doc.warnings)).toHaveLength(1);
     expect(f.doc.warnings[0]).toContain('HEAD has not moved since you claimed LB-1');
   });
 });

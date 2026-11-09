@@ -97,7 +97,8 @@ describe('LB-57.1: rule 7 names checkers only on a board with checks', () => {
     expect((await run(s, 'orch', ['config', '--review-statuses', 'doing'])).code).toBe(0);
     expect((await cli(['prime', '--as', 'dev-1'], { cwd: s.root })).stdout).toContain(CHECKER_SENTENCE);
     // The skill and the MCP instructions know no board: they keep the sentence.
-    expect(mcpRules()).toContain(CHECKER_SENTENCE);
+    // The MCP instructions say it in tool words (0.4.4).
+    expect(mcpRules()).toContain("a checker's task_finish accepts a task handed in with task_finish or passes it to the next check, never its own work.");
   });
 });
 

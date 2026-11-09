@@ -387,7 +387,23 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
     },
     txOptions(ctx, warnings),
   );
-  return resumedFrom === undefined ? { data, warnings } : { data, warnings, reply: { resumed_from: resumedFrom } };
+  const next = commentCommand(data.id, actor, ctx);
+  return { data, warnings, reply: resumedFrom === undefined ? { next } : { resumed_from: resumedFrom, next } };
+}
+
+// The command that comments a step of the work on task `id`: claim's next (CLI and MCP, where it reads as a task_comment call) and the
+// warning of a finish with no comment. `--as` for an explicit name only (rule 3: the session default needs none).
+function commentCommand(id: string, actor: string, ctx: OpContext): string {
+  const as = ctx.actorSource === 'default' ? '' : ` --as ${shellQuote(actor)}`;
+  return `laneboard comment ${id} "<what you did>"${as} --json`;
+}
+
+// Did the actor comment `task` since its work began (the event that gave it the task, workStartedAt; across claim --resume an earlier
+// session of its default name counts, as its work does)? By event order, not time: a comment in the same millisecond as an earlier
+// claim stays before it. Result comments (finish) do not count. `since` undefined: the whole history.
+function commentedSince(task: TaskT, actor: string, sessionBase: string | undefined, since: string | undefined): boolean {
+  const start = since === undefined ? -1 : task.events.findLastIndex((e) => e.at === since && (e.type === 'assigned' || e.type === 'created'));
+  return task.events.some((e, i) => i > start && e.type === 'commented' && e.data.result !== true && (e.actor === actor || byEarlierSession(e, sessionBase, actor)));
 }
 
 // Warnings of a claim --resume of `task` from `holder` (read before the write): the holder wrote recently, so it may be a parallel
@@ -462,8 +478,20 @@ export const FinishInput = z.strictObject({
   // Absolute path of the folder whose git HEAD is linked instead of the command's own (MCP: the agent's worktree, as the server
   // runs in the main checkout); with commit: the folder git is asked in.
   cwd: z.string().refine((v) => path.isAbsolute(v), 'must be an absolute path').optional(),
+  // Links added in the same write, as update's add_links (agents pass them to finish: lb-tokens experiment); the first commit link
+  // names the commit to link when commit is not given.
+  add_links: z.array(LinkInput).optional(),
 });
 export type FinishInputT = z.infer<typeof FinishInput>;
+
+// finish's add_links: the first commit link becomes the commit to link when none is named (finish links one commit, so HEAD is not
+// linked next to it), the rest are the links to add.
+function finishLinks(p: FinishInputT): { p: FinishInputT; extra: LinkT[] } {
+  const links = unique(p.add_links ?? [], linkKey);
+  const named = p.commit === undefined ? links.find((l) => l.kind === 'commit') : undefined;
+  if (named === undefined) return { p, extra: links };
+  return { p: parseInput(FinishInput, { ...p, commit: named.ref }), extra: links.filter((l) => l !== named) };
+}
 
 // Statuses finish may set: all but the first one (where new tasks start), the final one always.
 function finishStatuses(statuses: readonly string[]): string[] {
@@ -1338,11 +1366,13 @@ function checkerFinish(
 // (review r2, checkerFinish), and the holder hands in only to a check (S6y U1: a status that is no check is refused, handInOutsideCheck).
 export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<OpResult<TaskView>> {
   const actor = requireActor(ctx.actor);
-  const p = parseInput(FinishInput, input);
+  const { p, extra } = finishLinks(parseInput(FinishInput, input));
   // Asked before the lock: the checkout does not change because of this write.
   const git = await finishCheckout(ctx, p);
   const commit = git.head;
   const warnings: string[] = [];
+  // Links to other boards: checked there before this board's lock is taken (ADR §30), as update does.
+  const checked = await checkForeignTaskLinks(ctx, extra, warnings);
   let finished = false;
   // The assignee's finish into a status that is not final (hands the task in).
   let handedInNow = false;
@@ -1352,6 +1382,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   let checkedFrom: string | undefined;
   let linked = false;
   let workStart: string | undefined;
+  // The assignee finished (or handed in) without a comment since its claim (lb-tokens experiment: agents skip the steps).
+  let noSteps = false;
   // The warning that the linked commit is linked to other names' tasks already (LB-55.1), until the worktree warning may replace it.
   let shared: { text: string; named: string } | undefined;
   let taskId = '';
@@ -1373,6 +1405,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
         });
       }
       const task = requireActiveTask(s, id, (missing) => missingTask(ctx, missing, s.config.prefix, 'write'));
+      checkTaskLinks(extra, [s.active, s.archive], s.config.prefix, checked);
       const notRecorded = `the result was not recorded (add it with laneboard comment ${id} "<text>" --json)`;
       const review = reviewStatuses(s.config);
       // The owner first: somebody else's task is ALREADY_CLAIMED (review S3 NIT), unless this is an acceptance or the task is closed.
@@ -1385,6 +1418,9 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       // A task of an earlier session of the actor's default name: take it back first, then finish (P5, S6l); its acceptance stays.
       const refused = (other: LaneboardError): LaneboardError =>
         holder !== null && heldByEarlierSession(task, ctx.sessionBase, actor) ? earlierSessionClaimed(id, holder, actor, silentFor(s.active.tasks, holder, s.now), ', then finish it again') : other;
+      if (byOther && extra.length > 0) {
+        warnings.push(`links not added: only the assignee's finish adds links; laneboard update ${id} ${extra.map((l) => `--add-link ${shellQuote(linkKey(l))}`).join(' ')} --json`);
+      }
       if (byOther && review.length > 0) {
         const out = checkerFinish(s, task, p, actor, refused, warnings, notRecorded, actorSourceOf(ctx), ctx.sessionBase);
         finished = out.done;
@@ -1426,6 +1462,9 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       // When the actor's work began (across claim --resume, its earlier sessions' too): a commit older than that is not its work.
       workStart = holder === actor ? workStartedAt(task) : undefined;
       const newCommit = commit !== undefined && !task.links.some((l) => l.kind === 'commit' && l.ref === commit) ? commit : undefined;
+      const added = extra.filter((l) => !task.links.some((k) => linkKey(k) === linkKey(l)) && !(l.kind === 'commit' && l.ref === newCommit));
+      const newLinks = newCommit !== undefined || added.length > 0;
+      const linkedText = [...(newCommit === undefined ? [] : [`commit ${newCommit.slice(0, 12)} linked`]), ...(added.length === 0 ? [] : [`links added: ${added.map(linkKey).join(', ')}`])].join('; ');
       const handIn = !finals.includes(status);
       const closed = finals.includes(task.status);
       // Already there: final, or handed in to this status (a task moved there by update is handed in now).
@@ -1434,16 +1473,19 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       // after a lost reply and records nothing. A closed task keeps its result: finish never reopens it (ADR §20).
       const resubmit = again && !closed && lastResultText(task) !== p.result;
       const kept = closed ? `; ${notRecorded}` : ' with this result';
-      if (again && !resubmit && newCommit === undefined) warnings.push(`no changes: ${id} is already ${task.status}${kept}`);
-      if (again && !resubmit && newCommit !== undefined) warnings.push(`status and result unchanged: ${id} is already ${task.status}${kept}; commit ${newCommit.slice(0, 12)} linked`);
-      if (again && !resubmit && newCommit === undefined) return toTaskView(task, false);
+      if (again && !resubmit && !newLinks) warnings.push(`no changes: ${id} is already ${task.status}${kept}`);
+      if (again && !resubmit && newLinks) warnings.push(`status and result unchanged: ${id} is already ${task.status}${kept}; ${linkedText}`);
+      if (again && !resubmit && !newLinks) return toTaskView(task, false);
+      if (!again || resubmit) noSteps = !commentedSince(task, actor, ctx.sessionBase, workStart);
       // One write, one rev, whatever events follow.
       touch(task, s.now, actor);
       if (!again || resubmit) addEvent(task, s.config, s.now, actor, 'commented', { text: p.result, result: true }, actorSourceOf(ctx));
-      if (newCommit !== undefined) {
-        const links: LinkT[] = [...task.links, { kind: 'commit', ref: newCommit }];
+      if (newLinks) {
+        const links: LinkT[] = [...task.links, ...(newCommit === undefined ? [] : [{ kind: 'commit' as const, ref: newCommit }]), ...added];
         addEvent(task, s.config, s.now, actor, 'updated', { links: [task.links, links] }, actorSourceOf(ctx));
         task.links = links;
+      }
+      if (newCommit !== undefined) {
         linked = true;
         shared = commitLinkedWarning([...s.active.tasks, ...s.archive.tasks], id, newCommit, status, actor);
         if (shared !== undefined) warnings.push(shared.text);
@@ -1481,6 +1523,8 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   const sharedAt = shared === undefined ? -1 : warnings.indexOf(shared.text);
   if (other !== undefined && sharedAt !== -1) warnings.splice(sharedAt, 1);
   if (other !== undefined) warnings.push(shared === undefined ? other : `${other}; commit ${commit?.slice(0, 12) ?? ''} is already linked to ${shared.named} too`);
+  // A warning, not an error (as the commit ones): the result is recorded, the steps may still be added.
+  if (noSteps) warnings.push(`no comment on ${taskId} between your claim and this finish, so the board shows no steps of the work: comment after each step (${commentCommand(taskId, actor, ctx)}); the steps of this task can still be added`);
   if (finished && byOther) {
     const from = checkedFrom === undefined ? {} : { from: checkedFrom };
     return { data, warnings, reply: passedOn ? { commit: null, passed: true, ...from } : { commit: null, accepted: true, ...from } };

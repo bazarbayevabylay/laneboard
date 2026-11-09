@@ -34,6 +34,8 @@ export interface SetupInput {
   // The store is the board of cwd's git repository found above cwd (a package of a monorepo, a linked worktree): named in a warning.
   storeAbove?: boolean;
   env: Record<string, string | undefined>;
+  // --mcp (true) or --no-mcp (false) for a harness whose MCP server is optional (Claude Code); absent: its default.
+  mcp?: boolean;
 }
 
 export interface SetupFileResult {
@@ -255,13 +257,14 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
       edit: { drop: [{ name: 'global' }] },
     });
   }
+  if (input.mcp !== undefined) checkMcpOption(harness, input);
   const home = input.env.HOME;
   if (!home) throw new LaneboardError('USAGE', 'HOME is not set, so global harness files cannot be found', {
     fix: 'export HOME=<your home directory> and run setup again',
     edit: { env: 'HOME=<your home directory>' },
   });
   const cwd = path.resolve(input.cwd);
-  const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir), dryRun: input.dryRun };
+  const context: HarnessContext = { cwd, home, env: input.env, storeDir: path.resolve(cwd, input.storeDir), dryRun: input.dryRun, ...(input.mcp === undefined ? {} : { mcp: input.mcp }) };
   const roots = [cwd, home];
   const users = new Map<string, string[]>();
   const projects = new Map<string, string[]>();
@@ -338,10 +341,23 @@ export function runSetup(input: SetupInput): { data: SetupResult; warnings: stri
       mode: input.remove ? 'remove' : 'install',
       dry_run: input.dryRun,
       files: plan.map((p) => ({ path: p.shown, scope: p.scope, result: p.result, ...(p.diff ? { diff: p.diff } : {}) })),
-      notes: input.remove || input.dryRun ? [] : harness.notes,
+      notes: input.remove || input.dryRun ? [] : typeof harness.notes === 'function' ? harness.notes(context) : harness.notes,
     },
     warnings,
   };
+}
+
+// --mcp / --no-mcp: only for a harness whose MCP server is optional (the others need it: no hooks print the rules), never with --remove.
+function checkMcpOption(harness: Harness, input: SetupInput): void {
+  const option = input.mcp === true ? 'mcp' : 'no-mcp';
+  if (input.remove) {
+    throw new LaneboardError('USAGE', `--${option} goes with an install; --remove takes out everything setup wrote, the MCP server too`, { fix: `laneboard setup ${harness.name} --remove --json` });
+  }
+  if (!harness.optionalMcp) {
+    throw new LaneboardError('USAGE', `--${option} is for claude-code only: ${harness.name} has no hooks, so its MCP server is how the agent gets the rules and the tools, and setup always registers it`, {
+      fix: `laneboard setup ${harness.name} --json`,
+    });
+  }
 }
 
 // Does a bare `laneboard init` in cwd (no --dir, no LANEBOARD_DIR) create storeDir rather than refuse or go elsewhere?

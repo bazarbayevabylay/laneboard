@@ -104,7 +104,7 @@ describe('S7a U1 r1: no project file names a session; an unnamed session reads t
     expect(fs.existsSync(path.join(p.cwd, '.claude'))).toBe(false);
     expect(fs.existsSync(path.join(p.cwd, 'AGENTS.md'))).toBe(false);
     const help = (await p.run(['setup', '--help'])).stdout;
-    expect(help.split('\n')[0]).toBe('laneboard setup <claude-code|codex|cursor|gemini|opencode> [--remove [--global]] [--dry-run]');
+    expect(help.split('\n')[0]).toBe('laneboard setup <claude-code|codex|cursor|gemini|opencode> [--mcp | --no-mcp] [--remove [--global]] [--dry-run]');
   });
 
   it('setup writes the hooks without a name and puts no role name into any file', async () => {
