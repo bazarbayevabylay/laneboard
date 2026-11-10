@@ -12,4 +12,5 @@ The plugin does not install the CLI. Install it first: `npm i -g laneboard`, the
 Without a name of your own, writes use the session's default name (`laneboard prime` shows it); pick one with `--as <name>`.
 
 Install: `/plugin marketplace add bazarbayevabylay/laneboard`, then `/plugin install laneboard@laneboard`.
-Do not also run `laneboard setup claude-code` in the same project: both register the same MCP server and hook.
+The plugin is `laneboard setup claude-code --mcp`: the hooks and the MCP server (`setup claude-code` without `--mcp` writes no MCP server).
+Do not also run `laneboard setup claude-code` in the same project: use one of them.

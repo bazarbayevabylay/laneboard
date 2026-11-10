@@ -84,7 +84,7 @@ describe('a package of a monorepo pinned to the repository board', () => {
     const block = fs.readFileSync(path.join(m.web, 'CLAUDE.md'), 'utf8');
     expect(block).toContain('pinned by LANEBOARD_DIR in .claude/settings.local.json at the root of this git repository');
     expect(block).not.toContain(m.root);
-    // No .mcp.json: setup claude-code writes the MCP server only with --mcp (0.4.4).
+    // No .mcp.json: setup claude-code writes the MCP server only with --mcp (0.5.0).
     expect(r.doc.data.files.map((f: { path: string; result: string }) => [f.path, f.result])).toEqual([
       ['CLAUDE.md', 'created'],
       ['.claude/settings.json', 'created'],

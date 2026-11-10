@@ -158,7 +158,7 @@ describe('MCP server over stdio (SDK client)', () => {
         expect('field_args' in (t.inputSchema.properties ?? {}), t.name).toBe(false);
       }
       const instructions = mcp.client.getInstructions() ?? '';
-      // The MCP forms of the rules (agent-rules.md), worded with the tools (0.4.4).
+      // The MCP forms of the rules (agent-rules.md), worded with the tools (0.5.0).
       expect(instructions).toBe(`${MCP_RULES_PREAMBLE}\n\n${mcpAgentRules()}`);
       expect(instructions.length).toBeLessThanOrEqual(4096);
     } finally {
@@ -287,7 +287,7 @@ describe('MCP server over stdio (SDK client)', () => {
         expect(r.isError, r.text.join(' ')).toBe(false);
         // LB-60.3: the warnings ride in structuredContent too (only when there are any), each CLI command of a task tool as its call.
         const { warnings: mcpWarnings, ...mcpData } = r.structured;
-        // claim's next (0.4.4) is the comment command: over MCP the same command as its tool call, as fixes and warnings.
+        // claim's next (0.5.0) is the comment command: over MCP the same command as its tool call, as fixes and warnings.
         const cliData = envelope.data as Record<string, unknown>;
         const expected = typeof cliData.next === 'string' ? { ...cliData, next: mcpText(cliData.next) } : cliData;
         expect(normalize(mcpData)).toEqual(normalize(expected));

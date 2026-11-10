@@ -31,7 +31,7 @@ laneboard create --title "No title argument" --status todo --as dev-1 --json  # 
 - An option given twice is `USAGE` (`--status is given 2 times`), except `--json` and `--as` with the same value: a fix you add
   `--as <name> --json` to still runs.
 - `claim` also replies `next`, the comment command for the task: comment after each step (a `finish` with no comment of yours since
-  the claim warns). Text with quotes, tabs or newlines goes through stdin: `laneboard comment WEB-1 - --json <<'EOF'`.
+  you took the task warns). Text with quotes, tabs or newlines goes through stdin: `laneboard comment WEB-1 - --json <<'EOF'`.
 - `show` runs as `get` and `edit` as `update`; `finish --add-link kind=ref` adds links in the same write, as `update` does.
 - Every write replies short: `id`, the new `rev`, `status`, `assignee` (`attach` adds `attachment`, `finish` adds `commit`, `claim` adds `next`);
   the whole task is `laneboard get WEB-1` or `--full` on the write. People read better without `--json`: `list`, `get`, `events`, `view`.

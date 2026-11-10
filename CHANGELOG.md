@@ -3,38 +3,55 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
-## Unreleased
+## 0.5.0
 
-Agent work with the board, from the lb-tokens experiment: 90 clean Claude Code runs with MCP only, CLI only and both. The CLI did as
-well as MCP; with the hook installed the MCP server was called in 1 run of 30 and cost about 1.7k tokens in every request; agents
-rarely commented their steps; CLI agents made up commands and options and tripped over shell quoting.
+A minor version: `setup claude-code` writes other files and `claim`, `finish` and `task_prime` reply differently (Compatibility).
+Agent work with the board, from the lb-tokens experiment (ADR §58, AB-191): 90 clean Claude Code runs of 0.4.3 with MCP only, CLI
+only and both. The CLI did as well as MCP; with the hook installed the MCP server was called in 1 run of 30 and cost about 1.7k tokens
+in every request; agents rarely commented their steps; CLI agents made up commands and options and tripped over shell quoting.
+The same experiment on this version, 120 runs: the default setup costs 1.87k tokens of laneboard in every request instead of 3.55k
+(-47%), laneboard errors fell from 19 to 3 (one of them an expected `ALREADY_CLAIMED`), text with quotes went through stdin (the
+scenario with such text: 16 of 18 -> 23 of 24), and the share of successful runs stayed within noise (77% -> 69%, p = 0.28). Agents still comment their steps rarely: `next` and the finish warning did not change
+that (a scenario that asks for 2 steps: 3 of 18 -> 2 of 24); that is left for a later version.
 
 ### Compatibility
 
 - `setup claude-code` writes no MCP server (`.mcp.json`) by default: the hooks give the agent the rules and the CLI commands. `--mcp`
   adds it; an entry an earlier setup wrote is kept, with a warning naming `--no-mcp`, which takes it out. Codex, Cursor, Gemini CLI
   and OpenCode have no hooks and always get the server. `setup <harness> --mcp` / `--no-mcp` for another harness or with `--remove` is `USAGE`.
+  The Claude Code plugin keeps its MCP server on purpose (it is `setup claude-code --mcp`; dropping it would break its users with no
+  migration); a plugin without the server is a separate task.
 - MCP: the server's instructions are the rules worded with the tools (`task_comment`, `actor`, `add_links`), from the new MCP forms
   in `agent-rules.md` (rules 12 and 14 are shell-only and left out); the preamble no longer says the rules name CLI commands.
-- MCP: `task_prime` no longer repeats the instructions: `rules` is a short pointer to them; `rules: true` returns them as before.
-- `finish` (CLI, MCP `task_finish`) of the assignee with no comment of its own since the claim warns (`warnings`, exit 0), as the commit
-  warnings do: scripts that expect an empty `warnings` after such a finish get one line.
-- Rules: rule 1 names the comment after each step with its command; rule 14 says text with quotes, tabs or newlines goes through stdin;
-  rules 3, 4, 9, 11 and 12 are shorter (the MCP parts moved to the MCP forms). `prime`, its hook and the plugin skill print the new text.
+- MCP: `task_prime` no longer repeats the instructions: `rules` is a short pointer to them; `rules: true` returns them (the MCP forms
+  with the preamble; 0.4.3 returned the CLI rules there).
+- `finish` (CLI, MCP `task_finish`) of the assignee with no comment of its own since its work on the task began (the claim, a create
+  with it as assignee, or this finish of an unassigned task) warns (`warnings`, exit 0), as the commit warnings do: scripts that expect
+  an empty `warnings` after such a finish get one line.
+- Rules: rule 1 names the comment after each step with its command; rule 14 says text with quotes, tabs or newlines goes through stdin.
+  Rules 3 and 11 lost their MCP parts (now in the MCP forms), rule 4 the advice on `--as` (rule 3 says it), rule 9 the comment command
+  (rule 1 names it), rule 12 the note on `LANEBOARD_DIR`. `prime`, its hook and the plugin skill print the new text.
+- `-` (text from stdin: `comment <ID> -`, `--file -`, `--result-file -`, the `--description-file -` options, `redact --text-file -`) with a
+  terminal on stdin is `USAGE` before anything is read (it waited for Ctrl+D, then failed with `INTERNAL EAGAIN`); an empty stdin for a
+  comment or a result is `INVALID_VALUE` that says so. The fix of both is the same command with a heredoc.
 
 ### Added
 
 - `claim --json` and `task_claim` reply `next`: the comment command for the task (`laneboard comment <ID> "<what you did>" --json`,
   over MCP the `task_comment` call); the human line names it too.
 - `finish --add-link kind=ref` (repeatable; MCP `add_links`), as in `update`: links in the same write; a commit link names the commit
-  to link when `--commit` is not given (HEAD is not linked next to it).
+  to link when `--commit` is not given (HEAD is not linked next to it). Somebody else's finish (an acceptance) adds none and warns with
+  the `update --add-link` command that adds them.
 - Text from stdin: `comment <ID> -` and `comment --text-file -` (as `--file -`), `finish --result-file P|-`; `update
   --append-description-file -` and `--description-file -` were there.
 - `show` runs as `get` and `edit` as `update` (not in the help); an unknown command that is another word for one (`info`, `close`,
-  `take`, `ls` and others) gets a fix with that command, ready to run.
-- An unknown option that is another name for one (`finish --message`, `--sha`, `--link`; `update --link`, `--desc`) gets a fix with
-  that option; an option given without a value whose absence is its default (`finish --commit`, `claim --status`) gets a fix without it.
-  The fix of `redact` with a blank text names the task id instead of `<id>`.
+  `take`, `ls` and others) gets a fix with that command.
+- An unknown option that is another name for one (`finish --message`, `--sha`, `--link`; `update --link`, `--desc`, `--label`,
+  `--append`, `--assign`) gets a fix with that option; an option given without a value whose absence is its default (`finish --commit`,
+  `claim --status`, `claim --expected-rev`) gets a fix without it. The fix of `redact` with a blank text names the task id instead of `<id>`.
+
+### Changed
+
 - MCP `task_finish`: its description no longer suggests `status: review`; leaving status out is the advice.
 
 ### Docs

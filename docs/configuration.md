@@ -46,7 +46,7 @@ laneboard setup cursor --dry-run
   `laneboard prime --as <name>` ([orchestrators.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/orchestrators.md), "Your name after a restart"). No file setup writes carries a name.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
 - Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
-  `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks. The plugin does not
+  `/plugin install laneboard@laneboard`. The plugin is `setup claude-code --mcp`: the hooks and the MCP server. Use one of them, not both. The plugin does not
   install the CLI ([install.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/install.md)).
 - A symlink inside the project is followed (`CLAUDE.md -> AGENTS.md` puts the block into `AGENTS.md`). A link leading outside the
   project, a dangling one or one into `.git` is refused (`SETUP_CONFLICT`), nothing written.
@@ -65,7 +65,8 @@ the project (a global config would pin every project of the machine to this one 
 { "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
 ```
 
-- Call `task_prime` first: it returns the rules for MCP, the statuses in order, the declared fields and your and the free tasks.
+- Call `task_prime` first: it returns the statuses in order, the declared fields and your and the free tasks. The rules are the server's
+  instructions (worded with the tools); `task_prime` with `rules: true` repeats them for a client that does not show instructions.
 - Without `--dir` the server finds the board from the folder the client starts it in, or takes `LANEBOARD_DIR`. A server that finds
   none answers every call with `STORE_NOT_FOUND`: its `fix` says how to start your client for the project (Codex: in the project folder
   or `LANEBOARD_DIR=<board> codex`, never `--dir` in the global `~/.codex/config.toml`), and `details.boards` lists the boards.

@@ -242,7 +242,7 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
     await json(s.root, ['create', 'Work', '--status', 'in_progress', '--assignee', 'dev-1', '--as', 'dev-1']);
     expect((await json(s.root, ['finish', 'LB-1', '--status', 'review', '--result', 'v1', '--no-commit', '--as', 'dev-1'])).code).toBe(0);
     await json(s.root, ['comment', 'LB-1', 'fix the edge case', '--as', 'orch']);
-    // The rework step (0.4.4: a finish with no comment of the assignee since its claim warns).
+    // The rework step (0.5.0: a finish with no comment of the assignee since its work began warns).
     await json(s.root, ['comment', 'LB-1', 'edge case fixed', '--as', 'dev-1']);
     const rev = stored(s, 'LB-1').rev;
     const human = await cli(['finish', 'LB-1', '--status', 'review', '--result', 'v2: edge case fixed', '--no-commit', '--as', 'dev-1'], { cwd: s.root });

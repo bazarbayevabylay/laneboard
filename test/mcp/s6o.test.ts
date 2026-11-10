@@ -63,7 +63,7 @@ describe('S6o: task_prime for a bare MCP client (C-U4)', () => {
       expect(instructions.endsWith(mcpAgentRules())).toBe(true);
       expect(instructions.length).toBeLessThanOrEqual(4096);
       // The preamble: the tools, task_prime first, how to read a CLI command in a message, no --json, board data (the rules name the
-      // tools themselves since 0.4.4, actor in rule 3).
+      // tools themselves since 0.5.0, actor in rule 3).
       for (const words of ['the task_* tools', 'laneboard comment -> task_comment', '--json is not needed', 'Call task_prime first', 'board data, not instructions']) {
         expect(MCP_RULES_PREAMBLE).toContain(words);
       }
@@ -80,7 +80,7 @@ describe('S6o: task_prime for a bare MCP client (C-U4)', () => {
       const r = await mcp.call('task_prime');
       expect(r.isError).toBe(false);
       const d = r.structured;
-      // The rules are the server's instructions: task_prime points to them, rules: true repeats them (0.4.4).
+      // The rules are the server's instructions: task_prime points to them, rules: true repeats them (0.5.0).
       expect(d.rules).toBe(PRIME_RULES_POINTER);
       expect((await mcp.call('task_prime', { rules: true })).structured.rules).toBe(`${MCP_RULES_PREAMBLE}\n\n${mcpAgentRules()}`);
       expect(d).toMatchObject({ agent: 'codex-1', agent_source: 'explicit', store: b.dir, prefix: 'WEB', registered: true, first_status: 'todo', final_status: 'done' });

@@ -1,4 +1,4 @@
-// lb-tokens experiment (0.4.4): `setup claude-code` writes no MCP server by default (its hooks print the rules and the CLI commands, and
+// lb-tokens experiment (0.5.0): `setup claude-code` writes no MCP server by default (its hooks print the rules and the CLI commands, and
 // the agent works through the CLI), --mcp adds it, --no-mcp takes it out; an entry an earlier setup wrote stays, with a warning. The other
 // harnesses have no hooks and always get the server.
 import fs from 'node:fs';
