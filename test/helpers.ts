@@ -110,7 +110,7 @@ export function readStore(dir: string, kind: 'active' | 'archive'): { rev: numbe
   return JSON.parse(fs.readFileSync(path.join(dir, `${kind}.json`), 'utf8'));
 }
 
-// The warnings without finish's "no comment on <ID> between your claim and this finish" (0.4.4, tested in test/cli/agent-ux.test.ts):
+// The warnings without finish's "no comment on <ID> since your work on it began" (0.5.0, tested in test/cli/agent-ux.test.ts):
 // tests of the other finish warnings leave it out.
 export function otherWarnings(warnings: readonly string[]): string[] {
   return warnings.filter((w) => !w.startsWith('no comment on '));

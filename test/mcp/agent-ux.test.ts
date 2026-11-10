@@ -1,4 +1,4 @@
-// 0.4.4, from the lb-tokens experiment: the MCP instructions name tools, not CLI commands (Haiku with MCP only tried the CLI three
+// 0.5.0, from the lb-tokens experiment: the MCP instructions name tools, not CLI commands (Haiku with MCP only tried the CLI three
 // times); task_prime no longer repeats them (~3.9k characters per call) unless asked; task_finish does not push to status review on a
 // board without checks; task_claim says how to comment a step and task_finish takes add_links (an agent passed it).
 import crypto from 'node:crypto';
@@ -78,8 +78,19 @@ describe('task_finish and task_claim', () => {
     expect(claimed.data.next).toBe('task_comment {"id":"LB-1","text":"<what you did>","actor":"dev-1"}');
     const finished = reply(await callTool('task_finish', { id: 'LB-1', result: 'median added', no_commit: true, actor: 'dev-1' }, env));
     expect(finished.warnings).toEqual([
-      'no comment on LB-1 between your claim and this finish, so the board shows no steps of the work: comment after each step (task_comment {"id":"LB-1","text":"<what you did>","actor":"dev-1"}); the steps of this task can still be added',
+      'no comment on LB-1 since your work on it began, so the board shows no steps of the work: comment after each step (task_comment {"id":"LB-1","text":"<what you did>","actor":"dev-1"}); the steps of this task can still be added',
     ]);
+  });
+
+  it('task_finish of somebody else\'s task with add_links: the acceptance adds none and warns with the task_update call', async () => {
+    const env = await board();
+    await callTool('task_claim', { id: 'LB-1', status: 'in_progress', actor: 'dev-1' }, env);
+    await callTool('task_comment', { id: 'LB-1', text: 'added median()', actor: 'dev-1' }, env);
+    await callTool('task_finish', { id: 'LB-1', result: 'r', status: 'in_progress', no_commit: true, actor: 'dev-1' }, env);
+    const r = reply(await callTool('task_finish', { id: 'LB-1', result: 'ok', add_links: [{ kind: 'pr', ref: 'https://example.invalid/pr/1' }], actor: 'orch' }, env));
+    expect(r.data).toMatchObject({ status: 'done', accepted: true });
+    expect(r.warnings).toEqual(['links not added: only the assignee\'s finish adds links; task_update {"id":"LB-1","add_links":[{"kind":"pr","ref":"https://example.invalid/pr/1"}]}']);
+    expect(readStore(`${env.cwd}/.laneboard`, 'active').tasks[0]?.links).toEqual([]);
   });
 
   it('task_finish takes add_links; a commit link is the commit to link', async () => {

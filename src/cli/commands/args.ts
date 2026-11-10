@@ -44,9 +44,9 @@ export function exclusive(values: Values, a: string, b: string): void {
   if (values[a] !== undefined && values[b] !== undefined) throw new LaneboardError('USAGE', `--${a} and --${b} cannot be combined`, { edit: { drop: [{ name: b }] } });
 }
 
-// Text from a file path or `-` (stdin).
-export function readTextFile(io: CliIo, file: string, option: string): string {
-  if (file === '-') return io.readStdin();
+// Text from a file path or `-` (stdin, readStdinText); `nonEmpty`: an empty stdin is refused (the text of a comment or a result).
+export function readTextFile(io: CliIo, file: string, option: string, nonEmpty = false): string {
+  if (file === '-') return readStdinText(io, `--${option} -`, option, nonEmpty);
   try {
     return fs.readFileSync(path.resolve(io.cwd, file), 'utf8');
   } catch {
@@ -56,6 +56,18 @@ export function readTextFile(io: CliIo, file: string, option: string): string {
       fix: `pass the path of an existing, readable file to --${option}, or - to read stdin`,
     });
   }
+}
+
+// Text from stdin for `-` (`what`: how the command names it, `field`: the option or argument). A terminal on stdin is refused before
+// it is read: nothing is piped in, so the read would wait for Ctrl+D and then fail with EAGAIN. With `nonEmpty` an empty stdin is
+// refused too (comment text, finish result): the core would only say "must not be empty", not that stdin was empty. Both fixes are
+// the same command with a heredoc.
+export function readStdinText(io: CliIo, what: string, field: string, nonEmpty = false): string {
+  const how = { edit: { heredoc: true }, fix: "pipe the text into the same command on stdin, e.g. a heredoc: <<'EOF' ... EOF" };
+  if (io.stdinIsTTY === true) throw new LaneboardError('USAGE', `${what} reads the text from stdin, and stdin is a terminal here: pipe the text in`, how);
+  const text = io.readStdin();
+  if (nonEmpty && text === '') throw new LaneboardError('INVALID_VALUE', `${what}: stdin is empty, and the text must not be empty`, { ...how, input: { field, value: '-' } });
+  return text;
 }
 
 // Text to add to the description, from --append-description or --append-description-file; neither goes with a replacing

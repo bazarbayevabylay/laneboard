@@ -97,6 +97,8 @@ export interface FixEdit {
   drop?: Array<{ name: string; value?: string }>;
   // An environment assignment put before the command, like `HOME=<your home directory>`.
   env?: string;
+  // The command reads its text from stdin (`-`): the fix ends with a heredoc, `<<'EOF' ... EOF`.
+  heredoc?: boolean;
 }
 
 export interface ErrorExtra {

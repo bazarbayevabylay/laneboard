@@ -225,7 +225,7 @@ export function editedCommand(argv: readonly string[], edit: FixEdit, options: O
   const added = edit.args ?? [];
   const out = [command, ...withOptions(kept, extra), ...added];
   const placeholders = [...addedPlaceholders(extra, 1 + optionsAt(kept)), ...addedPlaceholders(added, out.length - added.length)];
-  const line = commandLine(out, new Set(placeholders));
+  const line = `${commandLine(out, new Set(placeholders))}${edit.heredoc === true ? " <<'EOF' ... EOF" : ''}`;
   return edit.env === undefined ? line : `${edit.env} ${line}`;
 }
 

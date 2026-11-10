@@ -39,7 +39,7 @@ export const finish: CommandDef = {
   async run(c) {
     exclusive(c.values, 'result', 'result-file');
     const file = str(c.values, 'result-file');
-    const result = file === undefined ? str(c.values, 'result') : readTextFile(c.io, file, 'result-file');
+    const result = file === undefined ? str(c.values, 'result') : readTextFile(c.io, file, 'result-file', true);
     const r = await finishTask(c.op(), {
       id: c.positionals[0] ?? '',
       result: result as string,

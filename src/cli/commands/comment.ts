@@ -1,6 +1,6 @@
 // laneboard comment
 import { commentTask, LaneboardError } from '../../core/index.ts';
-import { exclusive, readTextFile, str } from './args.ts';
+import { exclusive, readStdinText, readTextFile, str } from './args.ts';
 import { FULL_OPTION, taskReply } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
@@ -21,7 +21,7 @@ export const comment: CommandDef = {
       throw new LaneboardError('USAGE', 'pass the comment text or --file, exactly one', { edit: file === undefined ? { args: ['<text>'] } : { drop: [{ name: 'file' }, { name: 'text-file' }] } });
     }
     // `comment LB-1 -`: the text from stdin, as `--file -`.
-    const text = file !== undefined ? readTextFile(c.io, file, str(c.values, 'file') === undefined ? 'text-file' : 'file') : inline === '-' ? c.io.readStdin() : (inline ?? '');
+    const text = file !== undefined ? readTextFile(c.io, file, str(c.values, 'file') === undefined ? 'text-file' : 'file', true) : inline === '-' ? readStdinText(c.io, 'the text -', 'text', true) : (inline ?? '');
     const r = await commentTask(c.op(), { id: c.positionals[0] ?? '', text });
     return taskReply(c, r, 'commented');
   },

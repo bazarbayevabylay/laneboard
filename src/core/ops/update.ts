@@ -1382,7 +1382,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   let checkedFrom: string | undefined;
   let linked = false;
   let workStart: string | undefined;
-  // The assignee finished (or handed in) without a comment since its claim (lb-tokens experiment: agents skip the steps).
+  // The assignee finished (or handed in) without a comment since its work began (lb-tokens experiment: agents skip the steps).
   let noSteps = false;
   // The warning that the linked commit is linked to other names' tasks already (LB-55.1), until the worktree warning may replace it.
   let shared: { text: string; named: string } | undefined;
@@ -1523,8 +1523,9 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
   const sharedAt = shared === undefined ? -1 : warnings.indexOf(shared.text);
   if (other !== undefined && sharedAt !== -1) warnings.splice(sharedAt, 1);
   if (other !== undefined) warnings.push(shared === undefined ? other : `${other}; commit ${commit?.slice(0, 12) ?? ''} is already linked to ${shared.named} too`);
-  // A warning, not an error (as the commit ones): the result is recorded, the steps may still be added.
-  if (noSteps) warnings.push(`no comment on ${taskId} between your claim and this finish, so the board shows no steps of the work: comment after each step (${commentCommand(taskId, actor, ctx)}); the steps of this task can still be added`);
+  // A warning, not an error (as the commit ones): the result is recorded, the steps may still be added. "Since your work on it began":
+  // the task came by claim, by create with the actor as assignee, or by this finish (an unassigned task), so the text names no claim.
+  if (noSteps) warnings.push(`no comment on ${taskId} since your work on it began, so the board shows no steps of the work: comment after each step (${commentCommand(taskId, actor, ctx)}); the steps of this task can still be added`);
   if (finished && byOther) {
     const from = checkedFrom === undefined ? {} : { from: checkedFrom };
     return { data, warnings, reply: passedOn ? { commit: null, passed: true, ...from } : { commit: null, accepted: true, ...from } };

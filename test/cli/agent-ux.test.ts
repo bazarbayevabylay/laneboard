@@ -1,7 +1,8 @@
-// 0.4.4, from the lb-tokens experiment (90 clean Claude Code runs): claim says how to comment a step and finish warns when no step was
+// 0.5.0, from the lb-tokens experiment (90 clean Claude Code runs): claim says how to comment a step and finish warns when no step was
 // commented; the commands and options agents made up (show, edit, finish --add-link, --commit without a value) run or get a ready fix;
 // text with quotes, tabs or newlines goes through stdin.
 import { afterAll, describe, expect, it } from 'vitest';
+import { runCli } from '../../src/cli/run.ts';
 import { cleanupTemp, cli, newStore, readStore } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
@@ -26,7 +27,7 @@ async function board(): Promise<TestStore> {
 }
 
 const noStepsWarning = (as: string) =>
-  `no comment on LB-1 between your claim and this finish, so the board shows no steps of the work: comment after each step (laneboard comment LB-1 "<what you did>"${as} --json); the steps of this task can still be added`;
+  `no comment on LB-1 since your work on it began, so the board shows no steps of the work: comment after each step (laneboard comment LB-1 "<what you did>"${as} --json); the steps of this task can still be added`;
 
 describe('steps: claim names the comment command, finish without a comment warns', () => {
   it('claim --json: next is the comment command for this task with your --as; the human line names it too', async () => {
@@ -60,6 +61,17 @@ describe('steps: claim names the comment command, finish without a comment warns
     await run(s, ['comment', 'LB-1', 'a note from the orchestrator', '--as', 'orch']);
     // A hand-in (finish into a status that is not final) warns too.
     expect((await run(s, ['finish', 'LB-1', '--result', 'r', '--status', 'in_progress', '--no-commit', '--as', 'dev-1'])).doc.warnings).toEqual([noStepsWarning(' --as dev-1')]);
+  });
+
+  it('the warning names no claim: a task created for you, or an unassigned one your finish takes, warns the same', async () => {
+    const s = await board();
+    // Rule 4's other start: create with yourself as assignee (no claim).
+    expect((await run(s, ['create', 'Fix typo', '--status', 'in_progress', '--assignee', 'dev-5', '--as', 'dev-5'])).code).toBe(0);
+    const created = await run(s, ['finish', 'LB-2', '--result', 'typo fixed', '--no-commit', '--as', 'dev-5']);
+    expect(created.doc.warnings).toEqual([noStepsWarning(' --as dev-5').replaceAll('LB-1', 'LB-2')]);
+    const free = await run(s, ['finish', 'LB-1', '--result', 'median added', '--no-commit', '--as', 'dev-1']);
+    expect(free.doc.warnings).toEqual([noStepsWarning(' --as dev-1')]);
+    expect(free.doc.warnings[0]).not.toContain('claim');
   });
 
   it('a step commented: finish gives no warning', async () => {
@@ -120,10 +132,54 @@ describe('commands and options agents made up', () => {
     expect(r.doc.error).toMatchObject({ code: 'UNKNOWN_OPTION', fix: 'laneboard finish LB-1 --result done --as dev-1 --json' });
   });
 
+  it.each([
+    ['--link', 'pr=https://example.invalid/pr/1', '--add-link'],
+    ['--desc', 'criterion: 3 words', '--description'],
+    ['--label', 'ui', '--add-label'],
+    ['--append', 'criterion: 3 words', '--append-description'],
+    ['--assign', 'dev-2', '--assignee'],
+  ])('update %s %s (another name for an option): UNKNOWN_OPTION, the fix uses %s', async (typed, value, meant) => {
+    const s = await board();
+    const r = await run(s, ['update', 'LB-1', typed, value, '--as', 'dev-1']);
+    expect(r.code).toBe(2);
+    expect(r.doc.error).toMatchObject({ code: 'UNKNOWN_OPTION', fix: `laneboard update LB-1 ${meant} ${value.includes(' ') ? `'${value}'` : value} --as dev-1 --json` });
+    // Nothing was written.
+    expect(readStore(s.dir, 'active').tasks[0]?.rev).toBe(1);
+  });
+
+  it('claim --status or --expected-rev without a value: USAGE, the fix leaves the option out (no <value> placeholder)', async () => {
+    const s = await board();
+    const r = await run(s, ['claim', 'LB-1', '--status', '--as', 'dev-1']);
+    expect(r.code).toBe(2);
+    expect(r.doc.error).toMatchObject({
+      code: 'USAGE',
+      message: '--status needs a value; without it claim moves your task from the first status to the work status',
+      fix: 'laneboard claim LB-1 --as dev-1 --json',
+    });
+    const rev = await run(s, ['claim', 'LB-1', '--expected-rev', '--as', 'dev-1']);
+    expect(rev.doc.error).toMatchObject({ code: 'USAGE', message: '--expected-rev needs a value; without it claim needs no rev', fix: 'laneboard claim LB-1 --as dev-1 --json' });
+    // The fix runs as printed.
+    expect((await run(s, ['claim', 'LB-1', '--as', 'dev-1'])).code).toBe(0);
+  });
+
   it('UNKNOWN_FIELD with an unknown key and one declared field: the fix keeps the placeholder (a guess could set the wrong field)', async () => {
     const s = await board();
     const r = await run(s, ['update', 'LB-1', '--field', 'color=red', '--as', 'dev-1']);
     expect(r.doc.error).toMatchObject({ code: 'UNKNOWN_FIELD', fix: 'laneboard update LB-1 --field <field from allowed>=red --as dev-1 --json' });
+  });
+});
+
+describe('finish of somebody else\'s task with --add-link', () => {
+  it('the acceptance adds no links and warns with the update command that adds them', async () => {
+    const s = await board();
+    await run(s, ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1']);
+    await run(s, ['comment', 'LB-1', 'added median()', '--as', 'dev-1']);
+    expect((await run(s, ['finish', 'LB-1', '--result', 'r', '--status', 'in_progress', '--no-commit', '--as', 'dev-1'])).doc.data.handed_in).toBe(true);
+    const r = await run(s, ['finish', 'LB-1', '--result', 'ok', '--add-link', 'pr=https://example.invalid/pr/1', '--as', 'orch']);
+    expect(r.code).toBe(0);
+    expect(r.doc.data).toMatchObject({ status: 'done', accepted: true });
+    expect(r.doc.warnings).toEqual(["links not added: only the assignee's finish adds links; laneboard update LB-1 --add-link pr=https://example.invalid/pr/1 --json"]);
+    expect(readStore(s.dir, 'active').tasks[0]?.links).toEqual([]);
   });
 });
 
@@ -146,6 +202,61 @@ describe('text from stdin', () => {
     expect((await run(s, ['finish', 'LB-1', '--result-file', '-', '--no-commit', '--as', 'dev-1'], text)).code).toBe(0);
     const result = events(s).find((e) => e.type === 'commented' && e.data.result === true);
     expect(result?.data.text).toBe(text);
+  });
+
+  it('a terminal on stdin: USAGE before any read, the fix is the same command with a heredoc', async () => {
+    const s = await board();
+    for (const [argv, what] of [
+      [['comment', 'LB-1', '-', '--as', 'dev-1', '--json'], 'the text -'],
+      [['finish', 'LB-1', '--result-file', '-', '--as', 'dev-1', '--json'], '--result-file -'],
+      [['update', 'LB-1', '--append-description-file', '-', '--as', 'dev-1', '--json'], '--append-description-file -'],
+    ] as const) {
+      let stdout = '';
+      let read = false;
+      const code = await runCli({
+        argv: [...argv],
+        env: {},
+        cwd: s.root,
+        stdinIsTTY: true,
+        // Reading a terminal waits for Ctrl+D, then fails with EAGAIN: it must not happen.
+        readStdin: () => {
+          read = true;
+          return 'typed';
+        },
+        stdout: (t) => {
+          stdout += t;
+        },
+        stderr: () => undefined,
+      });
+      expect(code).toBe(2);
+      expect(read).toBe(false);
+      expect(JSON.parse(stdout).error).toMatchObject({
+        code: 'USAGE',
+        message: `${what} reads the text from stdin, and stdin is a terminal here: pipe the text in`,
+        fix: `laneboard ${argv.join(' ')} <<'EOF' ... EOF`,
+      });
+    }
+    expect(readStore(s.dir, 'active').tasks[0]?.rev).toBe(1);
+  });
+
+  it('an empty stdin for a comment or a result: INVALID_VALUE that says stdin was empty, with the heredoc fix', async () => {
+    const s = await board();
+    await run(s, ['claim', 'LB-1', '--as', 'dev-1']);
+    for (const [argv, what] of [
+      [['comment', 'LB-1', '-', '--as', 'dev-1'], 'the text -'],
+      [['comment', 'LB-1', '--file', '-', '--as', 'dev-1'], '--file -'],
+      [['finish', 'LB-1', '--result-file', '-', '--as', 'dev-1'], '--result-file -'],
+    ] as const) {
+      const r = await run(s, [...argv], '');
+      expect(r.code).toBe(2);
+      expect(r.doc.error).toMatchObject({
+        code: 'INVALID_VALUE',
+        message: `${what}: stdin is empty, and the text must not be empty`,
+        fix: `laneboard ${argv.join(' ')} --json <<'EOF' ... EOF`,
+      });
+    }
+    // Only the claim was written (rev 2): no comment, no result.
+    expect(readStore(s.dir, 'active').tasks[0]?.rev).toBe(2);
   });
 
   it('--result with --result-file, --file with --text-file: USAGE', async () => {

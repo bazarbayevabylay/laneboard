@@ -439,7 +439,7 @@ export const claudeCode: Harness = {
   warnings(c) {
     const dir = installedPlugin(c);
     const plugin = dir
-      ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the same MCP server and hook, so use one: uninstall the plugin or run laneboard setup claude-code --remove --json`]
+      ? [`the laneboard Claude Code plugin is installed (${dir}); it registers the hooks and the MCP server (the plugin is setup claude-code with --mcp), so use one: uninstall the plugin or run laneboard setup claude-code --remove --json`]
       : [];
     return [...stalePinWarnings(c), ...movedPinWarnings(c), ...leftPinWarnings(c), ...committedPinWarnings(c), ...keptMcpWarnings(c), ...plugin];
   },
