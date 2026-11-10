@@ -178,7 +178,7 @@ describe('finish of somebody else\'s task with --add-link', () => {
     const r = await run(s, ['finish', 'LB-1', '--result', 'ok', '--add-link', 'pr=https://example.invalid/pr/1', '--as', 'orch']);
     expect(r.code).toBe(0);
     expect(r.doc.data).toMatchObject({ status: 'done', accepted: true });
-    expect(r.doc.warnings).toEqual(["links not added: only the assignee's finish adds links; laneboard update LB-1 --add-link pr=https://example.invalid/pr/1 --json"]);
+    expect(r.doc.warnings).toEqual(["links not added: only the assignee's finish adds links; laneboard update LB-1 --add-link pr=https://example.invalid/pr/1 --as orch --json"]);
     expect(readStore(s.dir, 'active').tasks[0]?.links).toEqual([]);
   });
 });

@@ -1419,7 +1419,7 @@ export async function finishTask(ctx: OpContext, input: FinishInputT): Promise<O
       const refused = (other: LaneboardError): LaneboardError =>
         holder !== null && heldByEarlierSession(task, ctx.sessionBase, actor) ? earlierSessionClaimed(id, holder, actor, silentFor(s.active.tasks, holder, s.now), ', then finish it again') : other;
       if (byOther && extra.length > 0) {
-        warnings.push(`links not added: only the assignee's finish adds links; laneboard update ${id} ${extra.map((l) => `--add-link ${shellQuote(linkKey(l))}`).join(' ')} --json`);
+        warnings.push(`links not added: only the assignee's finish adds links; laneboard update ${id} ${extra.map((l) => `--add-link ${shellQuote(linkKey(l))}`).join(' ')}${ctx.actorSource === 'default' ? '' : ` --as ${shellQuote(actor)}`} --json`);
       }
       if (byOther && review.length > 0) {
         const out = checkerFinish(s, task, p, actor, refused, warnings, notRecorded, actorSourceOf(ctx), ctx.sessionBase);

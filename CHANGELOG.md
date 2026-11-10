@@ -41,7 +41,7 @@ that (a scenario that asks for 2 steps: 3 of 18 -> 2 of 24); that is left for a 
   over MCP the `task_comment` call); the human line names it too.
 - `finish --add-link kind=ref` (repeatable; MCP `add_links`), as in `update`: links in the same write; a commit link names the commit
   to link when `--commit` is not given (HEAD is not linked next to it). Somebody else's finish (an acceptance) adds none and warns with
-  the `update --add-link` command that adds them.
+  the `update --add-link` command that adds them (with `--as` of an explicit name, as the steps warning).
 - Text from stdin: `comment <ID> -` and `comment --text-file -` (as `--file -`), `finish --result-file P|-`; `update
   --append-description-file -` and `--description-file -` were there.
 - `show` runs as `get` and `edit` as `update` (not in the help); an unknown command that is another word for one (`info`, `close`,

@@ -89,7 +89,7 @@ describe('task_finish and task_claim', () => {
     await callTool('task_finish', { id: 'LB-1', result: 'r', status: 'in_progress', no_commit: true, actor: 'dev-1' }, env);
     const r = reply(await callTool('task_finish', { id: 'LB-1', result: 'ok', add_links: [{ kind: 'pr', ref: 'https://example.invalid/pr/1' }], actor: 'orch' }, env));
     expect(r.data).toMatchObject({ status: 'done', accepted: true });
-    expect(r.warnings).toEqual(['links not added: only the assignee\'s finish adds links; task_update {"id":"LB-1","add_links":[{"kind":"pr","ref":"https://example.invalid/pr/1"}]}']);
+    expect(r.warnings).toEqual(['links not added: only the assignee\'s finish adds links; task_update {"id":"LB-1","add_links":[{"kind":"pr","ref":"https://example.invalid/pr/1"}],"actor":"orch"}']);
     expect(readStore(`${env.cwd}/.laneboard`, 'active').tasks[0]?.links).toEqual([]);
   });
 
