@@ -7,7 +7,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterAll, describe, expect, it } from 'vitest';
-import { agentRules, archiveTasks, claimTask, createTask, OPS, registerStore } from '../../src/core/index.ts';
+import { archiveTasks, claimTask, createTask, mcpAgentRules, OPS, registerStore } from '../../src/core/index.ts';
 import { mcpText } from '../../src/mcp/fix-text.ts';
 import { MCP_RULES_PREAMBLE, TOOL_LIST, TOOLS } from '../../src/mcp/tools.ts';
 import { as, cleanupTemp, cli, CLI_SOURCE, newStore, tempDir } from '../helpers.ts';
@@ -158,7 +158,8 @@ describe('MCP server over stdio (SDK client)', () => {
         expect('field_args' in (t.inputSchema.properties ?? {}), t.name).toBe(false);
       }
       const instructions = mcp.client.getInstructions() ?? '';
-      expect(instructions).toBe(`${MCP_RULES_PREAMBLE}\n\n${agentRules()}`);
+      // The MCP forms of the rules (agent-rules.md), worded with the tools (0.5.0).
+      expect(instructions).toBe(`${MCP_RULES_PREAMBLE}\n\n${mcpAgentRules()}`);
       expect(instructions.length).toBeLessThanOrEqual(4096);
     } finally {
       await mcp.close();
@@ -286,7 +287,10 @@ describe('MCP server over stdio (SDK client)', () => {
         expect(r.isError, r.text.join(' ')).toBe(false);
         // LB-60.3: the warnings ride in structuredContent too (only when there are any), each CLI command of a task tool as its call.
         const { warnings: mcpWarnings, ...mcpData } = r.structured;
-        expect(normalize(mcpData)).toEqual(normalize(envelope.data));
+        // claim's next (0.5.0) is the comment command: over MCP the same command as its tool call, as fixes and warnings.
+        const cliData = envelope.data as Record<string, unknown>;
+        const expected = typeof cliData.next === 'string' ? { ...cliData, next: mcpText(cliData.next) } : cliData;
+        expect(normalize(mcpData)).toEqual(normalize(expected));
         expect(normalize(mcpWarnings ?? [])).toEqual(normalize((envelope.warnings ?? []).map(mcpText)));
         return;
       }

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { callTool, toolListing, TOOLS } from '../../src/mcp/tools.ts';
-import { cleanupTemp, cli, newStore, readStore, tempDir } from '../helpers.ts';
+import { cleanupTemp, cli, newStore, otherWarnings, readStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -130,7 +130,7 @@ describe('A18, LB-1: finish links the commit of the worktree', () => {
     const f = await json(r.wt, ['finish', 'LB-1', '--status', 'review', '--result', 'done in wt', '--as', 'dev-1']);
     expect(f.code).toBe(0);
     expect(f.doc.data.commit).toBe(head);
-    expect(f.doc.warnings).toEqual([]);
+    expect(otherWarnings(f.doc.warnings)).toEqual([]);
   });
 
   it('in the main checkout: the warning names the folder, its HEAD, the worktree with its commit, and a fix that relinks', async () => {
@@ -161,7 +161,7 @@ describe('A18, LB-1: finish links the commit of the worktree', () => {
     r.git(['commit', '-q', '--allow-empty', '-m', 'work in main']);
     const f = await json(r.main, ['finish', 'LB-1', '--result', 'done', '--as', 'dev-1']);
     expect(f.doc.data.commit).toBe(r.git(['rev-parse', 'HEAD']));
-    expect(f.doc.warnings).toEqual([]);
+    expect(otherWarnings(f.doc.warnings)).toEqual([]);
   });
 
   it('--commit links that commit (a short sha as the full one); a sha git does not know or --no-commit with it: refused', async () => {
@@ -182,7 +182,7 @@ describe('A18, LB-1: finish links the commit of the worktree', () => {
     const f = await json(r.main, ['finish', 'LB-1', '--status', 'review', '--result', 'done', '--commit', work.slice(0, 7).toUpperCase(), '--as', 'dev-1']);
     expect(f.code).toBe(0);
     expect(f.doc.data.commit).toBe(work);
-    expect(f.doc.warnings).toEqual([]);
+    expect(otherWarnings(f.doc.warnings)).toEqual([]);
     expect(stored(r.s, 'LB-1').links).toEqual([{ kind: 'commit', ref: work }]);
   });
 
@@ -191,7 +191,7 @@ describe('A18, LB-1: finish links the commit of the worktree', () => {
     const first = r.git(['rev-parse', 'HEAD']);
     await claimed(r);
     const f = await json(r.wt, ['finish', 'LB-1', '--result', 'done', '--commit', first, '--as', 'dev-1']);
-    expect(f.doc.warnings).toEqual([
+    expect(otherWarnings(f.doc.warnings)).toEqual([
       `the linked commit ${first.slice(0, 12)} is from before your work: it was committed before you claimed LB-1; check the sha of your work's commit (git rev-parse HEAD in its folder)`,
     ]);
   });
@@ -208,7 +208,7 @@ describe('A18, B-U4: MCP task_finish with cwd or commit', () => {
     const work = r.wtGit(['rev-parse', 'HEAD']);
     const byCwd = await callTool('task_finish', { id: 'LB-1', result: 'done', status: 'review', cwd: r.wt, actor: 'b' }, env);
     expect(byCwd.structuredContent).toMatchObject({ id: 'LB-1', commit: work });
-    expect(JSON.parse(byCwd.content[1]?.text ?? '{}').warnings).toEqual([]);
+    expect(otherWarnings(JSON.parse(byCwd.content[1]?.text ?? '{}').warnings)).toEqual([]);
     const byCommit = await callTool('task_finish', { id: 'LB-2', result: 'done', status: 'review', commit: work, actor: 'b' }, env);
     expect(byCommit.structuredContent).toMatchObject({ id: 'LB-2', commit: work });
     const plain = await callTool('task_finish', { id: 'LB-3', result: 'done', status: 'review', actor: 'b' }, env);
@@ -242,6 +242,8 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
     await json(s.root, ['create', 'Work', '--status', 'in_progress', '--assignee', 'dev-1', '--as', 'dev-1']);
     expect((await json(s.root, ['finish', 'LB-1', '--status', 'review', '--result', 'v1', '--no-commit', '--as', 'dev-1'])).code).toBe(0);
     await json(s.root, ['comment', 'LB-1', 'fix the edge case', '--as', 'orch']);
+    // The rework step (0.5.0: a finish with no comment of the assignee since its work began warns).
+    await json(s.root, ['comment', 'LB-1', 'edge case fixed', '--as', 'dev-1']);
     const rev = stored(s, 'LB-1').rev;
     const human = await cli(['finish', 'LB-1', '--status', 'review', '--result', 'v2: edge case fixed', '--no-commit', '--as', 'dev-1'], { cwd: s.root });
     expect(human.code).toBe(0);
@@ -252,12 +254,12 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
     expect(t.events.at(-1)).toMatchObject({ type: 'commented', actor: 'dev-1', data: { text: 'v2: edge case fixed', result: true } });
     expect(t.events.filter((e) => e.type === 'status')).toHaveLength(1);
     const retry = await json(s.root, ['finish', 'LB-1', '--status', 'review', '--result', 'v2: edge case fixed', '--no-commit', '--as', 'dev-1']);
-    expect(retry.doc.warnings).toEqual(['no changes: LB-1 is already review with this result']);
+    expect(otherWarnings(retry.doc.warnings)).toEqual(['no changes: LB-1 is already review with this result']);
     expect(stored(s, 'LB-1').rev).toBe(rev + 1);
     expect((await json(s.root, ['finish', 'LB-1', '--result', 'accepted', '--as', 'orch'])).doc.data).toMatchObject({ status: 'done', accepted: true });
     // A closed task keeps its result: finish never reopens it, nor records another result.
     const late = await json(s.root, ['finish', 'LB-1', '--status', 'review', '--result', 'v3', '--no-commit', '--as', 'dev-1']);
-    expect(late.doc.warnings).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
+    expect(otherWarnings(late.doc.warnings)).toEqual(['no changes: LB-1 is already done; the result was not recorded (add it with laneboard comment LB-1 "<text>" --json)']);
     expect(stored(s, 'LB-1').events.filter((e) => e.data.result === true).map((e) => e.data.text)).toEqual(['v1', 'v2: edge case fixed', 'accepted']);
   });
 
@@ -270,7 +272,7 @@ describe('CARRYOVER S6h: a task handed in again records the new result', () => {
     const v2 = r.wtGit(['rev-parse', 'HEAD']);
     const rev = stored(r.s, 'LB-1').rev;
     const f = await json(r.wt, ['finish', 'LB-1', '--status', 'review', '--result', 'v2', '--as', 'dev-1']);
-    expect(f.doc).toMatchObject({ data: { rev: rev + 1, status: 'review', commit: v2 }, warnings: [] });
+    expect({ ...f.doc, warnings: otherWarnings(f.doc.warnings) }).toMatchObject({ data: { rev: rev + 1, status: 'review', commit: v2 }, warnings: [] });
     expect(stored(r.s, 'LB-1').events.slice(-2).map((e) => e.type)).toEqual(['commented', 'updated']);
   });
 });
@@ -301,7 +303,7 @@ describe('review S6h r2: the main checkout, a fix that never guesses, the shared
     const f = await json(alpha, ['finish', 'LB-1', '--status', 'review', '--result', 'done', '--as', 'dev-1'], env);
     expect(f.code).toBe(0);
     expect(f.doc.data.commit).toBe(gitIn(alpha)(['rev-parse', 'HEAD']));
-    expect(f.doc.warnings).toEqual([]);
+    expect(otherWarnings(f.doc.warnings)).toEqual([]);
   });
 
   it('main checkout + 2 worktrees with commits since the claim: both named (newest first), the fix takes your sha and runs as is only with it', async () => {
@@ -364,7 +366,7 @@ describe('review S6h r2: the main checkout, a fix that never guesses, the shared
     git(['worktree', 'add', '-q', 'pkg/wt', '-b', 'feat']);
     const l = await json(path.join(pkg, 'wt'), ['list'], env);
     expect(l.code).toBe(0);
-    expect(l.doc.warnings).toEqual([]);
+    expect(otherWarnings(l.doc.warnings)).toEqual([]);
   });
 
   it('setup --remove in a worktree keeps the shared exclude block while the setup of the main checkout stands; the last --remove takes it out', async () => {

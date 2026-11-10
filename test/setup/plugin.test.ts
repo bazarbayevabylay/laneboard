@@ -29,8 +29,9 @@ describe('agent rules (src/core/agent-rules.md)', () => {
     const rules = agentRules();
     expect(rules.split('\n').length).toBeLessThanOrEqual(15);
     expect(rules).toContain('`laneboard create "<title>" --status <status> --assignee <your name> --json`');
-    // --as only with a name of the agent's own (rules 3 and 4 agree; S2d): no template forces a made-up --as.
-    expect(rules).toContain('add `--as <name>` only for a name of your own');
+    // --as only with a name of the agent's own (rule 3; S2d, rule 4 says prime prints the commands with your name since 0.5.0): no
+    // template forces a made-up --as.
+    expect(rules).toContain('Your own: `--as <name>` on every command');
     expect(rules).not.toContain('--as <you>');
     // A board found with boards --json is used with --dir on every command: an export does not outlive one Bash call (S2d).
     expect(rules).toContain('then pass `--dir <path>` on every command');
@@ -57,7 +58,8 @@ describe('agent rules (src/core/agent-rules.md)', () => {
   it('rule 1 makes task tracking mandatory for any work, also when nobody asks for tasks and the board is empty (usability test 03.11)', () => {
     const first = agentRules().split('\n')[1] ?? '';
     expect(first).toMatch(/^1\. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one/);
-    expect(first).toContain('comment each meaningful step');
+    // 0.5.0 (lb-tokens experiment: agents skipped the steps): a comment after each step, with the command.
+    expect(first).toContain('after each step: `laneboard comment <ID> "<what you did>"`');
     // S3: closing is one command (result comment, commit link, final status), after the commit.
     expect(first).toContain('when done: commit, then `laneboard finish <ID> --result "<result>" --json`');
     expect(first).toContain('No untracked work.');

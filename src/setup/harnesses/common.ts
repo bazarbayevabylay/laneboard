@@ -68,6 +68,9 @@ export interface HarnessContext {
   env: Record<string, string | undefined>;
   // A --dry-run: warnings say what setup would do (review C2, like planWarnings in setup/index.ts); absent means a real run.
   dryRun?: boolean;
+  // The MCP server of a harness that has hooks (Claude Code): true with --mcp, false with --no-mcp, absent: the default (no server on
+  // a new install, an entry an earlier setup wrote is kept).
+  mcp?: boolean;
 }
 
 export interface HarnessFile {
@@ -87,8 +90,10 @@ export interface HarnessFile {
 export interface Harness {
   name: string;
   files: HarnessFile[];
-  // Notes printed after a successful install (what the user still has to do).
-  notes: string[];
+  // Notes printed after a successful install (what the user still has to do); a function when they depend on the install (--mcp).
+  notes: string[] | ((c: HarnessContext) => string[]);
+  // The harness has hooks that print the rules and the CLI commands (Claude Code): its MCP server is optional (--mcp, --no-mcp).
+  optionalMcp?: boolean;
   // Warnings that depend on the machine (e.g. the plugin is installed too).
   warnings?: (c: HarnessContext) => string[];
 }

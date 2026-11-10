@@ -138,7 +138,10 @@ describe('setup details', () => {
     for (const h of HARNESS_NAMES) await ok(s, ['setup', h]);
     const read = (rel: string): unknown => JSON.parse(fs.readFileSync(path.join(s.cwd, rel), 'utf8'));
     const store = path.join(s.cwd, '.laneboard');
-    // Claude Code pins the store through env LANEBOARD_DIR (below); the other project MCP entries carry --dir.
+    // Claude Code: no MCP server by default (its hooks print the rules and the CLI commands); --mcp adds it. It pins the store through
+    // env LANEBOARD_DIR (below); the other project MCP entries carry --dir.
+    expect(fs.existsSync(path.join(s.cwd, '.mcp.json'))).toBe(false);
+    await ok(s, ['setup', 'claude-code', '--mcp']);
     expect(read('.mcp.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp'] } } });
     expect(read('.cursor/mcp.json')).toEqual({ mcpServers: { laneboard: { type: 'stdio', command: 'laneboard', args: ['mcp', '--dir', store] } } });
     expect(read('.gemini/settings.json')).toEqual({ mcpServers: { laneboard: { command: 'laneboard', args: ['mcp', '--dir', store] } } });
@@ -332,7 +335,7 @@ describe('setup backups and exact edits', () => {
 
   it('a created file whose laneboard entry changed: setup takes no backup, --remove really takes the entry out', async () => {
     const s = sandbox();
-    await ok(s, ['setup', 'claude-code']);
+    await ok(s, ['setup', 'claude-code', '--mcp']);
     editOurEntry(s);
     const r = await ok(s, ['setup', 'claude-code']);
     expect(r.files.find((f) => f.path === '.mcp.json')?.result).toBe('updated');
@@ -361,7 +364,7 @@ describe('setup backups and exact edits', () => {
     const s = sandbox();
     const original = '{\n    "mcpServers": {\n        "other": { "command": "x" }\n    }\n}';
     plant(s, { 'p:.mcp.json': original });
-    await ok(s, ['setup', 'claude-code']);
+    await ok(s, ['setup', 'claude-code', '--mcp']);
     editOurEntry(s);
     fs.writeFileSync(mcpFile(s), fs.readFileSync(mcpFile(s), 'utf8').replace(',\n    "mine": {\n      "command": "o"\n    }', ''));
     await ok(s, ['setup', 'claude-code']);
@@ -697,8 +700,8 @@ describe('Claude Code store pin and default name (S2c)', () => {
     expect(fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8')).toContain('.laneboard-created');
     expect((await cli(['setup', 'claude-code'], { cwd: nested, env })).code).toBe(0);
     expect(JSON.parse(fs.readFileSync(path.join(nested, '.claude', 'settings.json'), 'utf8')).env.LANEBOARD_DIR).toBe(path.join(nested, '.laneboard'));
-    // A third run at the root keeps the layout (idempotent).
-    expect(JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout).data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged', 'unchanged']);
+    // A third run at the root keeps the layout (idempotent): CLAUDE.md, .claude/settings.json and the exclude block (no MCP server).
+    expect(JSON.parse((await cli(['setup', 'claude-code', '--json'], { cwd: root, env })).stdout).data.files.map((f: { result: string }) => f.result)).toEqual(['unchanged', 'unchanged', 'unchanged']);
   });
 
   it("the root's local pin in a nested board missing from the registry (made before it or under another HOME): the conflict fix still ends in one round", async () => {

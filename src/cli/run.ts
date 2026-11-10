@@ -5,7 +5,7 @@ import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard,
 import type { DiscoveryInput, StoreRef } from '../core/index.ts';
 import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated } from './argv.ts';
 import type { PositionalHint } from './argv.ts';
-import { COMMANDS, findCommand } from './commands/index.ts';
+import { commandName, COMMANDS, commandSynonym, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
 import { safeText } from './display.ts';
 import { cliMessage, errorEnvelope, errorText, okEnvelope, warningText } from './format.ts';
@@ -114,7 +114,8 @@ interface Printed {
 
 // Run one CLI invocation; returns the exit code.
 export async function runCli(io: CliIo): Promise<number> {
-  const argv = io.argv;
+  // An alias (show, edit) runs as its command, and every fix names the command itself.
+  const argv = io.argv.length > 0 && !(io.argv[0] ?? '').startsWith('-') ? [commandName(io.argv[0] ?? ''), ...io.argv.slice(1)] : io.argv;
   const out: Printed = { json: jsonRequested(argv), store: null };
   // An old Node.js is named on every run: a warning of the result (--json: `warnings`), on stderr next to an error.
   const runtime = nodeWarning(io.nodeVersion ?? process.versions.node);
@@ -134,7 +135,7 @@ export async function runCli(io: CliIo): Promise<number> {
     def = findCommand(name);
     if (!def) {
       const names = COMMANDS.map((c) => c.name);
-      const suggestion = suggestClosest(name, names);
+      const suggestion = suggestClosest(name, names) ?? commandSynonym(name);
       throw new LaneboardError('USAGE', `unknown command "${name}"`, {
         allowed: names,
         input: suggestion ? { field: 'command', value: name, suggestion } : { field: 'command', value: name },
@@ -145,7 +146,7 @@ export async function runCli(io: CliIo): Promise<number> {
     // `create --title X`: the fix puts X in its place and adds create's --status <first status> of the store argv's --dir names.
     // Where a command looks for its store, for a given --dir (one rule for the fix hint and the run itself).
     const discoveryFor = (dir: string | undefined): DiscoveryInput => ({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined });
-    const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.(discoveryFor(dir)) ?? [] };
+    const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.(discoveryFor(dir)) ?? [], defaults: command.defaults, synonyms: command.synonyms };
     const parsed = parseStrict(command.name, rest, options, hint);
     rejectRepeated(parsed.tokens, command.name, rest, options);
     const values: Values = parsed.values;

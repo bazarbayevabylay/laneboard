@@ -87,10 +87,11 @@ const DOTFILES: Record<string, string> = {
 };
 
 // Per harness: the project path a clone holds as a symlink and the HOME entry it points to.
-const LINKS: Array<{ harness: string; link: string; target: string }> = [
+const LINKS: Array<{ harness: string; link: string; target: string; extra?: string[] }> = [
   { harness: 'claude-code', link: 'CLAUDE.md', target: '.zshrc' },
   { harness: 'claude-code', link: '.claude', target: '.claude' },
-  { harness: 'claude-code', link: '.mcp.json', target: '.mcp-global.json' },
+  // Claude Code writes .mcp.json only with --mcp.
+  { harness: 'claude-code', link: '.mcp.json', target: '.mcp-global.json', extra: ['--mcp'] },
   { harness: 'codex', link: 'AGENTS.md', target: '.gitconfig' },
   { harness: 'cursor', link: 'AGENTS.md', target: '.gitconfig' },
   { harness: 'cursor', link: '.cursor', target: '.cursor' },
@@ -101,12 +102,12 @@ const LINKS: Array<{ harness: string; link: string; target: string }> = [
 ];
 
 describe('A2: setup never writes through a symlink in the project', () => {
-  it.each(LINKS)('$harness with $link -> ~/$target: SETUP_CONFLICT (exit 6) naming the link and its target, no file anywhere changed', async ({ harness, link, target }) => {
+  it.each(LINKS)('$harness with $link -> ~/$target: SETUP_CONFLICT (exit 6) naming the link and its target, no file anywhere changed', async ({ harness, link, target, extra = [] }) => {
     const s = sandbox();
     for (const [rel, text] of Object.entries(DOTFILES)) put(path.join(s.home, rel), text);
     fs.symlinkSync(path.join(s.home, target), path.join(s.cwd, link));
     const before = state(s);
-    for (const argv of [['setup', harness], ['setup', harness, '--dry-run']]) {
+    for (const argv of [['setup', harness, ...extra], ['setup', harness, ...extra, '--dry-run']]) {
       const err = await fails(s, argv);
       expect(err.code).toBe('SETUP_CONFLICT');
       const file = String(err.details.file);

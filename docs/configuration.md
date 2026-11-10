@@ -18,6 +18,10 @@ laneboard init --name web --description "ACME web shop: catalog and cart"
 `laneboard setup <harness>` in the project root registers the MCP server `laneboard`, adds a 3-line instruction block and pins the
 project to its board. Several harnesses per project are fine. A second run reports `unchanged`; `--dry-run` writes nothing.
 
+Claude Code is the exception: its hooks print the rules and the CLI commands with the agent's name, so the agent works through the CLI
+and setup writes no MCP server. In 90 test runs with both the server was called in 1 run of 30 and cost about 1.7k tokens in every
+request. `--mcp` adds the server; an entry an earlier setup wrote stays (a warning names `--no-mcp`, which takes it out).
+
 ```sh
 laneboard setup claude-code
 laneboard setup cursor --dry-run
@@ -25,7 +29,7 @@ laneboard setup cursor --dry-run
 
 | Harness | MCP entry | Instructions | Board pin |
 |---|---|---|---|
-| claude-code | `.mcp.json` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (kept out of git by `.git/info/exclude`); in a folder with a board of its own inside another git repository, or at a repository root that holds other boards, they go to the committed `.claude/settings.json` (Claude Code reads the local file only at the repository root, so a pin there would reach every board) — do not commit that machine path, or keep one board per repository; plus the SessionStart and PostToolUse hooks in `.claude/settings.json` |
+| claude-code | `.mcp.json`, only with `--mcp` | `CLAUDE.md` | `env.LANEBOARD_DIR` and `env.LANEBOARD_DEFAULT_AGENT` in `.claude/settings.local.json` (kept out of git by `.git/info/exclude`); in a folder with a board of its own inside another git repository, or at a repository root that holds other boards, they go to the committed `.claude/settings.json` (Claude Code reads the local file only at the repository root, so a pin there would reach every board) — do not commit that machine path, or keep one board per repository; plus the SessionStart and PostToolUse hooks in `.claude/settings.json` |
 | codex | `~/.codex/config.toml` (global; `CODEX_HOME` moves it) | `AGENTS.md` | `LANEBOARD_DIR=<board>` before each command in the instructions; the entry forwards `LANEBOARD_DIR`: start Codex in the project folder or as `LANEBOARD_DIR=<board> codex`, never export it (Codex in other projects would write to this board) |
 | cursor | `.cursor/mcp.json` | `AGENTS.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
 | gemini | `.gemini/settings.json` | `GEMINI.md` | `mcp --dir <board>` in the entry, `LANEBOARD_DIR=<board>` in the instructions |
@@ -42,14 +46,14 @@ laneboard setup cursor --dry-run
   `laneboard prime --as <name>` ([orchestrators.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/orchestrators.md), "Your name after a restart"). No file setup writes carries a name.
 - A board that came with a cloned repository is not shown to the agent by the hook until `laneboard setup claude-code` registers it.
 - Claude Code plugin instead of `setup claude-code`: `/plugin marketplace add bazarbayevabylay/laneboard`, then
-  `/plugin install laneboard@laneboard`. Use one of them, not both: they register the same server and hooks. The plugin does not
+  `/plugin install laneboard@laneboard`. The plugin is `setup claude-code --mcp`: the hooks and the MCP server. Use one of them, not both. The plugin does not
   install the CLI ([install.md](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/install.md)).
 - A symlink inside the project is followed (`CLAUDE.md -> AGENTS.md` puts the block into `AGENTS.md`). A link leading outside the
   project, a dangling one or one into `.git` is refused (`SETUP_CONFLICT`), nothing written.
 - Text you put between `<!-- laneboard:start -->` and `<!-- laneboard:end -->` is never deleted: setup refuses and names the lines.
 - `.git/info/exclude` gets a laneboard block: the local settings, `*.laneboard.bak` backups and `.laneboard-created` markers stay out of git.
-- What to commit for Claude Code: `.mcp.json` (`laneboard mcp`, no path), `CLAUDE.md` and `.claude/settings.json` (the hooks), so the
-  team shares the server, rules and hooks; each machine runs `setup claude-code` once for its own `.claude/settings.local.json`.
+- What to commit for Claude Code: `CLAUDE.md` and `.claude/settings.json` (the hooks), with `--mcp` also `.mcp.json` (`laneboard mcp`,
+  no path), so the team shares the rules, hooks and server; each machine runs `setup claude-code` once for its own `.claude/settings.local.json`.
   The other harnesses put `--dir <board>`, a path of this machine, into their MCP entry or instructions.
 
 ## Any MCP client
@@ -61,7 +65,8 @@ the project (a global config would pin every project of the machine to this one 
 { "command": "laneboard", "args": ["mcp", "--dir", "/abs/path/to/project/.laneboard", "--as", "codex-1"] }
 ```
 
-- Call `task_prime` first: it returns the rules for MCP, the statuses in order, the declared fields and your and the free tasks.
+- Call `task_prime` first: it returns the statuses in order, the declared fields and your and the free tasks. The rules are the server's
+  instructions (worded with the tools); `task_prime` with `rules: true` repeats them for a client that does not show instructions.
 - Without `--dir` the server finds the board from the folder the client starts it in, or takes `LANEBOARD_DIR`. A server that finds
   none answers every call with `STORE_NOT_FOUND`: its `fix` says how to start your client for the project (Codex: in the project folder
   or `LANEBOARD_DIR=<board> codex`, never `--dir` in the global `~/.codex/config.toml`), and `details.boards` lists the boards.

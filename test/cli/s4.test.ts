@@ -8,7 +8,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { claimTask, createTask, finishTask, updateTask, VIEW_FINAL_MAX, viewBoard } from '../../src/core/index.ts';
 import { renderBoard } from '../../src/cli/board-view.ts';
 import { callTool } from '../../src/mcp/tools.ts';
-import { as, cleanupTemp, cli, newStore, readStore, rejectsWith, tempDir } from '../helpers.ts';
+import { as, cleanupTemp, cli, newStore, otherWarnings, readStore, rejectsWith, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -157,7 +157,7 @@ describe('LB-9: finish by somebody else accepts a task its assignee handed in wi
     await updateTask(as(s, 'dev-1'), { id: 'LB-1', status: 'review' });
     await rejectsWith(finishTask(as(s, 'orch'), { id: 'LB-1', result: 'x', no_commit: true }), 'ALREADY_CLAIMED');
     const again = await finishTask(as(s, 'dev-1'), { id: 'LB-1', result: 'handed in again', status: 'review', no_commit: true });
-    expect(again.warnings).toEqual([]);
+    expect(otherWarnings(again.warnings)).toEqual([]);
     expect(stored(s, 'LB-1').events.slice(-2).map((e) => [e.type, e.data])).toEqual([
       ['commented', { text: 'handed in again', result: true }],
       ['status', { from: 'review', to: 'review', handed_in: true }],

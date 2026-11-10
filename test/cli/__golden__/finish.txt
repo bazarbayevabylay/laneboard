@@ -4,11 +4,11 @@ exit 0
 --- stdout
 LB-1 finished (rev 3, done, dev-1); no commit linked
 --- stderr
-
+warning: no comment on LB-1 since your work on it began, so the board shows no steps of the work: comment after each step (laneboard comment LB-1 "<what you did>" --as dev-1 --json); the steps of this task can still be added
 
 $ laneboard finish LB-1 --result 'Fixed the redirect, tests green' --as dev-1 --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":3,"status":"done","assignee":"dev-1","commit":null},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":3,"status":"done","assignee":"dev-1","commit":null},"warnings":["no comment on LB-1 since your work on it began, so the board shows no steps of the work: comment after each step (laneboard comment LB-1 \"<what you did>\" --as dev-1 --json); the steps of this task can still be added"]}
 --- stderr
 

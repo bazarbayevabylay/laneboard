@@ -32,6 +32,7 @@ export const update: CommandDef = {
     ...FULL_OPTION,
   },
   args: { min: 1, max: 1 },
+  synonyms: { '--link': '--add-link', '--label': '--add-label', '--desc': '--description', '--append': '--append-description', '--assign': '--assignee' },
   // Op parameters named in fixes (a label both added and removed drops its --remove-label).
   flags: { add_labels: '--add-label', remove_labels: '--remove-label', add_links: '--add-link', remove_links: '--remove-link', unset_fields: '--unset-field', expected_rev: '--expected-rev' },
   async run(c) {

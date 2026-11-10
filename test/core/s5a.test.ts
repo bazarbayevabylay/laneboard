@@ -1,7 +1,7 @@
 // S5a (ADR §25-§27): subtasks (`parent`), appending to the description, the result mark on finish's comment.
 import { afterAll, describe, expect, it } from 'vitest';
 import { archiveTasks, claimTask, commentTask, createTask, deleteTask, finishTask, getTask, listTasks, updateTask } from '../../src/core/index.ts';
-import { as, cleanupTemp, newStore, readStore, rejectsWith } from '../helpers.ts';
+import { as, cleanupTemp, newStore, otherWarnings, readStore, rejectsWith } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -114,13 +114,13 @@ describe('§25 subtasks: parent', () => {
     const open = 'LB-1 has open children: LB-2 [todo]; they keep parent LB-1';
     await claimTask(as(s, 'dev'), { id: 'LB-1' });
     const handIn = await finishTask(as(s, 'dev'), { id: 'LB-1', result: 'ready', status: 'review', no_commit: true });
-    expect(handIn.warnings).toEqual([]);
+    expect(otherWarnings(handIn.warnings)).toEqual([]);
     const accepted = await finishTask(as(s, 'boss'), { id: 'LB-1', result: 'accepted' });
     expect(accepted.warnings).toEqual([open]);
     expect((await updateTask(as(s, 'a'), { id: 'LB-1', status: 'todo' })).warnings).toEqual([]);
     expect((await updateTask(as(s, 'a'), { id: 'LB-1', status: 'done' })).warnings).toEqual([open]);
     await updateTask(as(s, 'a'), { id: 'LB-1', status: 'in_progress' });
-    expect((await finishTask(as(s, 'dev'), { id: 'LB-1', result: 'done', no_commit: true })).warnings).toEqual([open]);
+    expect(otherWarnings((await finishTask(as(s, 'dev'), { id: 'LB-1', result: 'done', no_commit: true })).warnings)).toEqual([open]);
     expect((await archiveTasks(as(s, 'a'), { ids: ['LB-1'] })).warnings).toEqual([open]);
     expect(stored(s, 'LB-2').parent).toBe('LB-1');
     // No open child: no warning.

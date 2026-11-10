@@ -12,7 +12,7 @@ import type { PrimeData } from '../../src/cli/format.ts';
 import type { ListItem } from '../../src/core/index.ts';
 import { runCli } from '../../src/cli/run.ts';
 import { callTool } from '../../src/mcp/tools.ts';
-import { as, ceilingRules, cleanupTemp, cli, newStore, readStore, tempDir } from '../helpers.ts';
+import { as, ceilingRules, cleanupTemp, cli, newStore, otherWarnings, readStore, tempDir } from '../helpers.ts';
 import type { TestStore } from '../helpers.ts';
 
 afterAll(cleanupTemp);
@@ -250,7 +250,7 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     const r = JSON.parse((await cli(['finish', 'LB-1', '--result', 'Ready for review', '--status', 'review', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     // handed_in: the reply says the hand-in (slice A2, LB-63.3).
     expect(r.data).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'dev-1', commit: head, handed_in: true });
-    expect(r.warnings).toEqual([]);
+    expect(otherWarnings(r.warnings)).toEqual([]);
     expect(stored(s, 'LB-1').events.slice(-3).map((e) => [e.type, e.data])).toEqual([
       ['commented', { text: 'Ready for review', result: true }],
       ['updated', { links: [[], [{ kind: 'commit', ref: head }]] }],
@@ -262,7 +262,7 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     expect(again.code).toBe(0);
     const doc = JSON.parse(again.stdout);
     expect(doc.data).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'dev-1' });
-    expect(doc.warnings).toEqual(['no changes: LB-1 is already review with this result']);
+    expect(otherWarnings(doc.warnings)).toEqual(['no changes: LB-1 is already review with this result']);
     expect((await cli(['finish', 'LB-1', '--result', 'Approved', '--as', 'dev-1', '--json'], { cwd: s.root })).code).toBe(0);
     expect(stored(s, 'LB-1')).toMatchObject({ rev: 4, status: 'done' });
     // A closed task is not reopened by a later hand-in.
@@ -275,7 +275,9 @@ describe('finish --status: any status but the first one (owner, S3b)', () => {
     const s = await newStore();
     await createTask(as(s, 'a'), { title: 'A', status: 'in_progress', assignee: 'm' });
     const r = await callTool('task_finish', { id: 'LB-1', result: 'done', status: 'review', no_commit: true, actor: 'm' }, { cwd: s.root, env: {} });
-    expect(r.structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'review', assignee: 'm', commit: null, handed_in: true });
+    const { warnings = [], ...reply } = r.structuredContent as { warnings?: string[] };
+    expect(reply).toEqual({ id: 'LB-1', rev: 2, status: 'review', assignee: 'm', commit: null, handed_in: true });
+    expect(otherWarnings(warnings)).toEqual([]);
   });
 });
 
@@ -291,7 +293,7 @@ describe('finish warns when the linked commit may not hold the work (owner, S3b)
     const head = repoWithFile(s.root, nowSec() + 5);
     const r = JSON.parse((await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout);
     expect(r.data.commit).toBe(head);
-    expect(r.warnings).toEqual([]);
+    expect(otherWarnings(r.warnings)).toEqual([]);
   });
 
   it('uncommitted changes: a warning; commit, finish again: the new commit is linked (status and result unchanged)', async () => {
@@ -300,7 +302,7 @@ describe('finish warns when the linked commit may not hold the work (owner, S3b)
     const first = repoWithFile(s.root, nowSec() + 5);
     fs.writeFileSync(path.join(s.root, 'app.txt'), 'two\n');
     const r = await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root });
-    expect(JSON.parse(r.stdout).warnings).toEqual([dirtyWarning(first)]);
+    expect(otherWarnings(JSON.parse(r.stdout).warnings)).toEqual([dirtyWarning(first)]);
     git(s.root, ['commit', '-q', '-am', 'second'], nowSec() + 6);
     const second = git(s.root, ['rev-parse', 'HEAD']);
     const again = await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1'], { cwd: s.root });
@@ -320,10 +322,10 @@ describe('finish warns when the linked commit may not hold the work (owner, S3b)
     await createTask(as(s, 'a'), { title: 'T', status: 'todo', assignee: 'dev-1' });
     await createTask(as(s, 'a'), { title: 'U', status: 'todo', assignee: 'dev-1' });
     await createTask(as(s, 'a'), { title: 'Free', status: 'todo' });
-    expect(JSON.parse((await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).warnings).toEqual([staleWarning(head)]);
-    expect(JSON.parse((await cli(['finish', 'LB-2', '--result', 'done', '--no-commit', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).warnings).toEqual([]);
+    expect(otherWarnings(JSON.parse((await cli(['finish', 'LB-1', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).warnings)).toEqual([staleWarning(head)]);
+    expect(otherWarnings(JSON.parse((await cli(['finish', 'LB-2', '--result', 'done', '--no-commit', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).warnings)).toEqual([]);
     // An unassigned task has no claim to compare with (the finisher takes it now).
-    expect(JSON.parse((await cli(['finish', 'LB-3', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).warnings).toEqual([]);
+    expect(otherWarnings(JSON.parse((await cli(['finish', 'LB-3', '--result', 'done', '--as', 'dev-1', '--json'], { cwd: s.root })).stdout).warnings)).toEqual([]);
   });
 });
 

@@ -35,7 +35,7 @@ export { ConfigureInput, DoctorInput, InitInput, configureStore, doctor, initSto
 export type { ConfigureInputT, ConfigureResult, DoctorCheck, DoctorInputT, DoctorResult, InitInputT, InitOptions, InitResult, MigrateResult } from './ops/admin.ts';
 export { ImportEvent, ImportInput, ImportTask, importTasks } from './ops/import.ts';
 export type { ImportInputT, ImportResult, ImportTaskT } from './ops/import.ts';
-export { agentRules, shortRuleForms, skillMarkdown } from './rules.ts';
+export { agentRules, mcpAgentRules, mcpRuleForms, shortRuleForms, skillMarkdown } from './rules.ts';
 export type { ShortRule } from './rules.ts';
 export { OPS } from './ops/registry.ts';
 export type { OpName } from './ops/registry.ts';

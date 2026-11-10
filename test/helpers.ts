@@ -110,6 +110,12 @@ export function readStore(dir: string, kind: 'active' | 'archive'): { rev: numbe
   return JSON.parse(fs.readFileSync(path.join(dir, `${kind}.json`), 'utf8'));
 }
 
+// The warnings without finish's "no comment on <ID> since your work on it began" (0.5.0, tested in test/cli/agent-ux.test.ts):
+// tests of the other finish warnings leave it out.
+export function otherWarnings(warnings: readonly string[]): string[] {
+  return warnings.filter((w) => !w.startsWith('no comment on '));
+}
+
 // Overwrite a store file by hand (simulates a hand edit or corruption).
 export function writeRaw(file: string, content: string): void {
   fs.chmodSync(file, 0o644);
