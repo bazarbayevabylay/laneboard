@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { DiscoveryInput, StoreRef } from '../core/index.ts';
-import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated } from './argv.ts';
+import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated, suggestedCommandFix } from './argv.ts';
 import type { PositionalHint } from './argv.ts';
 import { commandName, COMMANDS, commandSynonym, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
@@ -79,6 +79,22 @@ function commandHelp(def: CommandDef): string {
 }
 
 // Strict parse of a command's argv; parse errors become UNKNOWN_OPTION or USAGE with a rebuilt fix.
+// The fix of an unknown command that names another one: with more words than that command takes (`done LB-1 "Added median"`), the
+// fix of a wrong number of arguments for it (the extra words become `--result=<words>`), so the fix runs as printed; else
+// suggestedCommandFix (review 051 MINOR).
+function meantFix(meant: CommandDef, rest: string[], required: (dir: string | undefined) => ReadonlyArray<{ name: string; value: string }>): string {
+  try {
+    const parsed = parseArgs({ args: rest, options: { ...GLOBAL_OPTIONS, ...meant.options }, allowPositionals: true, strict: true, tokens: true });
+    if (parsed.positionals.length > meant.args.max) {
+      const dir = typeof parsed.values.dir === 'string' ? parsed.values.dir : undefined;
+      return argumentsFix(meant.name, rest, parsed.tokens, meant.usage, meant.args, required(dir), meant.textOption);
+    }
+  } catch {
+    // Options the command does not know: the plain fix below.
+  }
+  return suggestedCommandFix([meant.name, ...rest], meant.name, required, meant.textOption);
+}
+
 function parseStrict(command: string, args: string[], options: OptionSpec, hint?: PositionalHint) {
   try {
     return parseArgs({ args, options, allowPositionals: true, strict: true, tokens: true });
@@ -129,23 +145,25 @@ export async function runCli(io: CliIo): Promise<number> {
     if (name.startsWith('-')) {
       throw new LaneboardError('USAGE', `the command comes first: laneboard <command> [options], got ${name}`, {
         allowed: COMMANDS.map((c) => c.name),
-        fix: commandFirst(argv, (t) => findCommand(t) !== undefined),
+        fix: commandFirst(argv, (t) => findCommand(t)?.name),
       });
     }
+    // Where a command looks for its store, for a given --dir (one rule for the fix hints and the run itself).
+    const discoveryFor = (dir: string | undefined): DiscoveryInput => ({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined });
     def = findCommand(name);
     if (!def) {
       const names = COMMANDS.map((c) => c.name);
       const suggestion = suggestClosest(name, names) ?? commandSynonym(name);
+      const meant = suggestion === undefined ? undefined : findCommand(suggestion);
+      // The command meant runs as printed (with the options it needs); with none, the fix is a placeholder from `allowed`.
       throw new LaneboardError('USAGE', `unknown command "${name}"`, {
         allowed: names,
-        input: suggestion ? { field: 'command', value: name, suggestion } : { field: 'command', value: name },
+        ...(meant ? { fix: meantFix(meant, rest, (dir) => meant.required?.(discoveryFor(dir)) ?? []) } : { input: { field: 'command', value: name } }),
       });
     }
     const command = def;
     const options = { ...GLOBAL_OPTIONS, ...command.options };
     // `create --title X`: the fix puts X in its place and adds create's --status <first status> of the store argv's --dir names.
-    // Where a command looks for its store, for a given --dir (one rule for the fix hint and the run itself).
-    const discoveryFor = (dir: string | undefined): DiscoveryInput => ({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined });
     const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.(discoveryFor(dir)) ?? [], defaults: command.defaults, synonyms: command.synonyms };
     const parsed = parseStrict(command.name, rest, options, hint);
     rejectRepeated(parsed.tokens, command.name, rest, options);

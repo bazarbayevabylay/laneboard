@@ -650,7 +650,7 @@ describe('A4: a marker is a whole line, and only lines laneboard writes are insi
   });
 });
 
-describe('blocks written by 0.1.0 builds, 0.2.0 and 0.3.1 are laneboard\'s: updated in place and removed', () => {
+describe('blocks written by 0.1.0 builds, 0.2.0, 0.3.1 and 0.5.0 are laneboard\'s: updated in place and removed', () => {
   const md = fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.md'));
 
   it('the fixtures are the real blocks of the releases (three ways to name the store) and of the 0.1.0 builds that wrote other lines', () => {
@@ -661,6 +661,11 @@ describe('blocks written by 0.1.0 builds, 0.2.0 and 0.3.1 are laneboard\'s: upda
       '0.1.0-69f36fc-CLAUDE.settings-env.md',
       '0.1.0-6f81877-CLAUDE.md',
       ...['0.2.0', '0.3.1'].flatMap((v) => [`${v}-AGENTS.inline.md`, `${v}-CLAUDE.local-env.md`, `${v}-CLAUDE.settings-env.md`]),
+      // 0.5.0 (also 0.4.x): the task line before the plan comment of 0.5.1 (K7), with the store pin at the repository root too.
+      '0.5.0-AGENTS.inline.md',
+      '0.5.0-CLAUDE.local-env.md',
+      '0.5.0-CLAUDE.root-local-env.md',
+      '0.5.0-CLAUDE.settings-env.md',
     ]);
   });
 
@@ -673,9 +678,12 @@ describe('blocks written by 0.1.0 builds, 0.2.0 and 0.3.1 are laneboard\'s: upda
     put(file, `# Mine\n\n${old}\n## Later\n`);
     const r = await ok(s, ['setup', harness]);
     const now = fs.readFileSync(file, 'utf8');
-    // This folder is no repository: Claude Code's block names the local file (the 0.2.0/0.3.1 block is what setup writes now), AGENTS.md this project's store.
-    if (name.includes('local-env') && !name.startsWith('0.1.0')) expect(r.files.find((f) => f.path === target)?.result).toBe('unchanged');
-    else expect(r.files.find((f) => f.path === target)?.result).toBe('updated');
+    // Every block of a release is updated: the task line of 0.5.1 is new (ADR §59). This folder is no repository: Claude Code's block
+    // names the local file, AGENTS.md this project's store.
+    expect(r.files.find((f) => f.path === target)?.result).toBe('updated');
+    expect(now).toContain('comment your plan at once, then each plan item or commit;');
+    expect(now).not.toContain('comment each meaningful step');
+    expect(now.match(/<!-- laneboard:start -->/g)).toHaveLength(1);
     expect(now).toContain(target === 'AGENTS.md' ? `Its store is ${path.join(s.cwd, '.laneboard')}:` : 'Its store is pinned by LANEBOARD_DIR in .claude/settings.local.json');
     expect(now).not.toContain('/home/dev/project');
     expect(now.startsWith('# Mine\n\n<!-- laneboard:start -->\n')).toBe(true);

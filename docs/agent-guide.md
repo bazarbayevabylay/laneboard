@@ -143,8 +143,9 @@ laneboard mcp --dir .laneboard --as codex-1 < /dev/null
 
 ### 2.1 The rules in short
 
-- Before your first file change: claim your task or create one. After each step: `laneboard comment <ID> "<what you did>" --json` (the reply
-  of `claim` names this command as `next`; a `finish` with no comment of yours since you took the task warns). When done: commit, then `laneboard finish <ID> --result "<result>" --json`.
+- Before your first file change: claim your task or create one. At once comment your plan, then each step, a plan item or a commit:
+  `laneboard comment <ID> "<text>" --json` (the reply of `claim`, and of `create` with you as assignee, names this command as `next`; a
+  `finish` with no comment of yours since you took the task warns). When done: commit, then `laneboard finish <ID> --result "<result>" --json`.
 - Text with quotes, tabs or newlines: from stdin, `laneboard comment <ID> - --json <<'EOF'` (also `finish --result-file -`,
   `--append-description-file -` of update, `--description-file -` of update and create).
 - `--expected-rev` is optional: only for edits on top of what you read (`--description`, `--field`). Status changes, comments, `claim` and `finish` need none, so no `get` for a rev.
@@ -261,7 +262,7 @@ The same operations as the CLI, with snake_case parameters. Write tools take `ac
 The server's instructions are a preamble and the rules worded with the tools (the MCP forms in `agent-rules.md`; rules 12 and 14 are
 shell-only); the preamble says how to read a CLI command in a message (`laneboard comment` -> `task_comment`, options -> parameters,
 `--add-link kind=ref` -> `add_links: [{kind, ref}]`, `--field k=v` -> `fields: {k: v}`, no `--json`). `task_prime` does not repeat them:
-its `rules` points to the instructions, `rules: true` returns them. `task_claim` replies `next`, the `task_comment` call for the task. `structuredContent` is the CLI `data`, plus `warnings`
+its `rules` points to the instructions, `rules: true` returns them. `task_claim` (and `task_create` with you as assignee) replies `next`, the `task_comment` call of your plan for the task. `structuredContent` is the CLI `data`, plus `warnings`
 when there are any. An error's `fix` and the warnings name tool calls, not CLI commands: `task_comment {"id":"DEMO-1","text":"<note>","actor":"dev-1"}`,
 two of them joined by `, then`; a command no tool runs (`boards`, `init`, `config`, `doctor`, an option like `--dir` or `--board`) stays
 a CLI command. A link or field in the CLI form (`"commit=abc"`) gets a fix that names the form. `task_prime` without a name warns to pass `actor`.

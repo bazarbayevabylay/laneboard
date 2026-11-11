@@ -31,7 +31,7 @@ import {
 } from './common.ts';
 import type { OpContext, OpResult, TaskView } from './common.ts';
 import { checkForeignTaskLinks } from './links.ts';
-import { reviewMoveRefusal, reviewRefusalText, workStatusBeforeChecks } from './update.ts';
+import { planCommand, reviewMoveRefusal, reviewRefusalText, workStatusBeforeChecks } from './update.ts';
 import type { ReviewRefusal as ReviewRefusalT } from './update.ts';
 
 export const CreateInput = z.strictObject({
@@ -93,6 +93,8 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
   const warnings: string[] = [];
   // A name in create_by hands tasks out (LB-61.1): its task for another name gets no "not to you" warning.
   let handsOut = false;
+  // The task is created in a final status (a record of done work): no work starts, so no plan to comment.
+  let closed = false;
   // Links to other boards: checked there before this board's lock is taken (ADR §30).
   const checked = await checkForeignTaskLinks(ctx, links, warnings);
   const data = await transact(
@@ -141,11 +143,14 @@ export async function createTask(ctx: OpContext, input: CreateInputT): Promise<O
       const refusal = reviewMoveRefusal(s.config, task, actor, p.status, task.assignee === actor);
       if (refusal !== undefined) throw createPastChecks(s.config, refusal, p.status);
       s.active.tasks.push(task);
+      closed = finalStatuses(s.config.statuses).includes(task.status);
       return toTaskView(task, false);
     },
     txOptions(ctx, warnings),
   );
   if (data.assignee !== null && data.assignee !== actor && !handsOut) warnings.push(otherAssignee(data, actor));
+  // Your own task starts your work as a claim does (rule 4's other start, workStartedAt): the same `next`, the comment of your plan.
+  if (data.assignee === actor && !closed) return { data, warnings, reply: { next: planCommand(data.id, actor, ctx) } };
   return { data, warnings };
 }
 

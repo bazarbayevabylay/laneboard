@@ -1,5 +1,5 @@
 laneboard agent rules (task board & CLI for AI coding agents):
-1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`laneboard prime` says how, or whom to ask); after each step: `laneboard comment <ID> "<what you did>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
+1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`prime` says how, or whom to ask); at once your plan, then each item or commit: `laneboard comment <ID> "<text>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
 2. Use only `laneboard` commands (or the task_* MCP tools). Never edit .laneboard/*.json by hand.
 3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command, one per subagent or worker; LANEBOARD_AGENT only if none (inherited).
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name.
@@ -17,7 +17,7 @@ laneboard agent rules (task board & CLI for AI coding agents):
 <!-- short forms: not part of the rules above. When prime runs out of room it prints these instead of the rules of the same number
 (src/cli/format.ts). Line: `short <n> <first 8 hex of the sha256 of rule n>: <text>`. Changed rule n? Re-read its short form so it says
 the same, then put the new hash (the test in test/cli/s3c.test.ts prints it). -->
-short 1 d4db94b0: MANDATORY for every request, even with an empty board: claim or create your task before your first file change (below); after each step: `laneboard comment <ID> "<what you did>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`.
+short 1 81d67270: MANDATORY for every request, even on an empty board: claim or create your task before your first edit; at once, your plan, then each item or commit: `laneboard comment <ID> "<text>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`.
 short 3 cb709e9e: Always `--json`. Name: the session default (prime shows it), or your own `--as <name>` on every command, one per subagent/worker; LANEBOARD_AGENT only if none.
 short 4 4e66f42e: New task, start: the create and claim commands below (`--status`, `--assignee`, `--json` set; subtask: `--parent <ID>`).
 short 5 75e18f80: `--expected-rev` only for edits on top of what you read (`--description`, `--field`): your last rev. Not for status, comment, claim, finish, `--append-description`.
@@ -33,7 +33,7 @@ short 14 bbb708cd: Text starting with "-": options, `--`, then the text (`lanebo
 rules for a client with tools and no shell (lb-tokens experiment: rules that name CLI commands sent MCP agents to the shell). Line:
 `mcp <n> <hash as for the short forms>: <text>`; text `-`: the rule has no MCP form (shell only). Changed rule n? Re-read its mcp form so
 it says the same, then put the new hash (the test in test/mcp/agent-ux.test.ts prints it). -->
-mcp 1 d4db94b0: MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, take your task with task_claim or create one with task_create (task_prime says how, or whom to ask); after each step: task_comment with what you did; when done: commit, then task_finish with result. No untracked work.
+mcp 1 81d67270: MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, take your task with task_claim or create one with task_create (task_prime says how, or whom to ask); at once task_comment with your plan, then with each step (a plan item, a commit); when done: commit, then task_finish with result. No untracked work.
 mcp 2 f856612e: Use only the task_* tools (or the `laneboard` CLI). Never edit .laneboard/*.json by hand.
 mcp 3 cb709e9e: Your name is the parameter actor: without it writes use the server's `laneboard mcp --as`, else LANEBOARD_AGENT, else the session's default name (task_prime: agent). Each subagent or worker passes its own actor on every call.
 mcp 4 4e66f42e: New task: task_create with title, status and assignee: your name (subtask: parent). Start work: task_claim with id and status (the working one).

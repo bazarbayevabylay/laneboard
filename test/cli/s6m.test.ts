@@ -54,7 +54,8 @@ describe('rules 1 and 7 (A-U4, P1/P2) within the budgets', () => {
   it('rule 1 says prime tells how or whom to ask; rule 7: a checker passes on or accepts, never its own work; budgets hold', () => {
     const rules = agentRules();
     const line = (n: number): string => rules.split('\n').find((l) => l.startsWith(`${n}. `)) ?? '';
-    expect(line(1)).toContain('claim your task or create one (`laneboard prime` says how, or whom to ask)');
+    // 0.5.1: `prime` as rule 3 names it, to make room for the plan comment within the budget.
+    expect(line(1)).toContain('claim your task or create one (`prime` says how, or whom to ask)');
     // LB-57.1: the sentence is for a board with checks (prime leaves it out elsewhere).
     expect(line(7)).toContain("With checks, a checker's `finish` accepts a task handed in with `finish` or passes it to the next check, never its own work.");
     expect(rules.length).toBeLessThanOrEqual(RULES_MAX_CHARS);

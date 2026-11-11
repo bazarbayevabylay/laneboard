@@ -28,7 +28,7 @@ describe('write replies are short (LB-7)', () => {
     };
     const json = async (argv: string[]) => JSON.parse((await run([...argv, '--json'])).stdout);
     expect((await json(['create', 'Fix login', '--status', 'todo', '--as', 'a'])).data).toEqual({ id: 'LB-1', rev: 1, status: 'todo', assignee: null });
-    expect((await json(['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: 'dev-1', next: 'laneboard comment LB-1 "<what you did>" --as dev-1 --json' });
+    expect((await json(['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: 'dev-1', next: 'laneboard comment LB-1 "<now: your plan; then after each step: what you did>" --as dev-1 --json' });
     expect((await json(['update', 'LB-1', '--title', 'Fix the login', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 3, status: 'in_progress', assignee: 'dev-1' });
     expect((await json(['comment', 'LB-1', 'step', '--as', 'dev-1'])).data).toEqual({ id: 'LB-1', rev: 4, status: 'in_progress', assignee: 'dev-1' });
     const sha256 = 'af94040caa54ae89a0460096007629185ce8d17256b0ba0ed7691ef4500449bf';
@@ -44,7 +44,7 @@ describe('write replies are short (LB-7)', () => {
     // People: one line with what changed and the state after it.
     expect((await run(['comment', 'LB-2', 'note', '--as', 'a'])).stdout).toBe('LB-2 commented (rev 2, todo, dev-2)\n');
     // 0.4.1 (LB-57.4): a claim of one's own task in the first status moves it into the work status.
-    expect((await run(['claim', 'LB-2', '--as', 'dev-2'])).stdout).toBe('LB-2 claimed (rev 3, in_progress, dev-2); after each step: laneboard comment LB-2 "<what you did>" --as dev-2 --json\n');
+    expect((await run(['claim', 'LB-2', '--as', 'dev-2'])).stdout).toBe('LB-2 claimed (rev 3, in_progress, dev-2); now comment your plan, then each step: laneboard comment LB-2 "<now: your plan; then after each step: what you did>" --as dev-2 --json\n');
     expect((await run(['update', 'LB-2', '--unassign', '--as', 'a'])).stdout).toBe('LB-2 updated (rev 4, in_progress, unassigned)\n');
     // --full: the task as get shows it, in JSON and for people; get alone adds its parent and children (ADR §25).
     const full = await json(['comment', 'LB-2', 'more', '--as', 'a', '--full']);
@@ -79,7 +79,7 @@ describe('write replies are short (LB-7)', () => {
     expect(created.structuredContent).toEqual({ id: 'LB-1', rev: 1, status: 'todo', assignee: null });
     expect(JSON.parse(created.content[0]?.text ?? '')).toEqual(created.structuredContent);
     expect(JSON.parse(created.content[1]?.text ?? '')).toEqual({ store: s.dir, prefix: 'LB', warnings: [] });
-    expect((await callTool('task_claim', { id: 'LB-1', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'todo', assignee: 'm', next: 'task_comment {"id":"LB-1","text":"<what you did>","actor":"m"}' });
+    expect((await callTool('task_claim', { id: 'LB-1', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 2, status: 'todo', assignee: 'm', next: 'task_comment {"id":"LB-1","text":"<now: your plan; then after each step: what you did>","actor":"m"}' });
     expect((await callTool('task_update', { id: 'LB-1', status: 'review', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 3, status: 'review', assignee: 'm' });
     expect((await callTool('task_comment', { id: 'LB-1', text: 'x', actor: 'm' }, env)).structuredContent).toEqual({ id: 'LB-1', rev: 4, status: 'review', assignee: 'm' });
     const attached = await callTool('task_attach', { id: 'LB-1', path: path.join(s.root, 'notes.txt'), actor: 'm' }, env);

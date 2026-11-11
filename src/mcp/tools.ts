@@ -425,7 +425,7 @@ export async function callTool(name: string, rawArgs: unknown, env: ToolEnv): Pr
     // Same short reply as the CLI unless the whole task is asked for (the attachment added rides along, as in the CLI).
     // A hand-in says so in the short reply, as the CLI's finish --json does (LB-63.3); `full` shows the task, whose status event says it.
     const handedIn = result.handed_in === true ? { handed_in: true } : {};
-    // claim's next is a CLI command (the comment of a step): over MCP it is the tool call (LB-60.1).
+    // The next of claim and of create for yourself is a CLI command (the comment of your plan): over MCP it is the tool call (LB-60.1).
     const facts = result.reply?.next === undefined ? result.reply : { ...result.reply, next: mcpText(result.reply.next) };
     const data = entry.def.prime
       ? primeReply(result.data as unknown as SummaryResult, named, store.dir, input.rules === true)

@@ -1,7 +1,7 @@
 // laneboard claim
 import { claimTask } from '../../core/index.ts';
 import { flag, int, str } from './args.ts';
-import { FULL_OPTION, taskReply } from './reply.ts';
+import { FULL_OPTION, taskReply, withPlan } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
 export const claim: CommandDef = {
@@ -19,8 +19,7 @@ export const claim: CommandDef = {
   async run(c) {
     const r = await claimTask(c.op(), { id: c.positionals[0] ?? '', status: str(c.values, 'status'), expected_rev: int(c.values, 'expected-rev'), resume: flag(c.values, 'resume') || undefined });
     const out = taskReply(c, r, r.reply?.resumed_from === undefined ? 'claimed' : `resumed from ${r.reply.resumed_from}`);
-    // The short reply carries `next` (the comment command); the human line names it too.
-    const next = r.reply?.next;
-    return next === undefined || flag(c.values, 'full') ? out : { ...out, human: `${out.human}; after each step: ${next}` };
+    // The short reply carries `next` (the comment of your plan); the human line names it too.
+    return withPlan(c, out, r.reply?.next);
   },
 };

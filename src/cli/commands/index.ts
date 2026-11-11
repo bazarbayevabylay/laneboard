@@ -29,7 +29,7 @@ export const COMMANDS: readonly CommandDef[] = [create, get, list, update, claim
 
 // Names agents type for a command (lb-tokens experiment: `laneboard show`, `laneboard edit`): they run as that command; the help does
 // not list them, so agents keep learning one name.
-export const COMMAND_ALIASES: Readonly<Record<string, string>> = { show: 'get', edit: 'update' };
+const COMMAND_ALIASES: Readonly<Record<string, string>> = { show: 'get', edit: 'update' };
 
 // Other words for a command: an unknown one of these is no command, but its error suggests the command, so the fix runs as printed.
 const COMMAND_SYNONYMS: Readonly<Record<string, string>> = {

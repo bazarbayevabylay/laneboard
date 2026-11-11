@@ -58,8 +58,9 @@ describe('agent rules (src/core/agent-rules.md)', () => {
   it('rule 1 makes task tracking mandatory for any work, also when nobody asks for tasks and the board is empty (usability test 03.11)', () => {
     const first = agentRules().split('\n')[1] ?? '';
     expect(first).toMatch(/^1\. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one/);
-    // 0.5.0 (lb-tokens experiment: agents skipped the steps): a comment after each step, with the command.
-    expect(first).toContain('after each step: `laneboard comment <ID> "<what you did>"`');
+    // 0.5.0 (lb-tokens experiment: agents skipped the steps): the comment with its command; 0.5.1 (ADR §59): the plan at once, then
+    // each item of it or commit (agents read "after each step" as "at the end").
+    expect(first).toContain('at once your plan, then each item or commit: `laneboard comment <ID> "<text>"`');
     // S3: closing is one command (result comment, commit link, final status), after the commit.
     expect(first).toContain('when done: commit, then `laneboard finish <ID> --result "<result>" --json`');
     expect(first).toContain('No untracked work.');

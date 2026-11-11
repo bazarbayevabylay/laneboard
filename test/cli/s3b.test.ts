@@ -220,6 +220,7 @@ describe('review S3 MAJOR 2: claim --resume decides by the events, not by the fo
 describe('review S3 MAJOR 3: the setup block tells every harness to finish', () => {
   const OLD_RULE = 'when done, set the final status and add a result comment';
   const NEW_RULE = 'when done: commit, then `laneboard finish <ID> --result "<result>" --json` (one write: the result, the commit link, the status).';
+  const STEPS = 'comment your plan at once, then each plan item or commit;';
   const files: Record<string, string> = { 'claude-code': 'CLAUDE.md', codex: 'AGENTS.md', cursor: 'AGENTS.md', gemini: 'GEMINI.md', opencode: 'AGENTS.md' };
 
   for (const [harness, file] of Object.entries(files)) {
@@ -232,8 +233,10 @@ describe('review S3 MAJOR 3: the setup block tells every harness to finish', () 
       const text = fs.readFileSync(path.join(cwd, file), 'utf8');
       expect(text).toContain(NEW_RULE);
       expect(text).not.toContain(OLD_RULE);
-      // The block as S3 wrote it: the next setup replaces it.
-      fs.writeFileSync(path.join(cwd, file), text.replace(NEW_RULE, `${OLD_RULE}. No untracked work.`).replace(' No untracked work. No untracked work.', ' No untracked work.'));
+      // The block as S3 wrote it (its steps said "comment each meaningful step" until 0.5.1): the next setup replaces it.
+      const s3 = text.replace(STEPS, 'comment each meaningful step;').replace(NEW_RULE, `${OLD_RULE}. No untracked work.`).replace(' No untracked work. No untracked work.', ' No untracked work.');
+      expect(s3).toContain('comment each meaningful step; when done, set the final status and add a result comment. No untracked work.');
+      fs.writeFileSync(path.join(cwd, file), s3);
       const again = JSON.parse((await run(['setup', harness])).stdout).data as { files: Array<{ path: string; result: string }> };
       expect(again.files.find((f) => f.path === file)?.result).toBe('updated');
       expect(fs.readFileSync(path.join(cwd, file), 'utf8')).toContain(NEW_RULE);

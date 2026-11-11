@@ -366,7 +366,7 @@ describe('review S6h r2: the main checkout, a fix that never guesses, the shared
     git(['worktree', 'add', '-q', 'pkg/wt', '-b', 'feat']);
     const l = await json(path.join(pkg, 'wt'), ['list'], env);
     expect(l.code).toBe(0);
-    expect(otherWarnings(l.doc.warnings)).toEqual([]);
+    expect(l.doc.warnings).toEqual([]);
   });
 
   it('setup --remove in a worktree keeps the shared exclude block while the setup of the main checkout stands; the last --remove takes it out', async () => {

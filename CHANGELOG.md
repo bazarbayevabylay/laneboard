@@ -3,6 +3,31 @@
 All notable changes of laneboard. Versions follow semver; before 1.0 a minor version may change behavior, and the notes say how.
 The reasons behind each change are in [ADR-0001 on GitHub](https://github.com/bazarbayevabylay/laneboard/blob/main/docs/adr/0001-two-json-store-cli-first.md) (sections named below).
 
+## 0.5.1
+
+A patch: the steps of the work (ADR §59, AB-193). In the 0.5.0 runs agents commented once the work was over (scenario s2: a comment
+before the last file change in 3 of 24 runs), because `next` said "after each step". Now the reply that starts the work asks for the
+plan at once. No change to the store, exit codes or the MCP tool list.
+
+### Changed
+
+- `claim --json` and `task_claim`: `next` is the comment of your plan, `laneboard comment <ID> "<now: your plan; then after each step:
+  what you did>" --json` (over MCP the `task_comment` call); the human line says `now comment your plan, then each step: …`.
+- Rule 1 (and its short and MCP forms, the plugin skill, `prime`): at once your plan, then each item of it or commit, with the comment
+  command; "(`prime` says how, or whom to ask)" is shorter to keep the rules within their budget.
+- The instruction block of `setup` (CLAUDE.md, AGENTS.md, GEMINI.md): "comment your plan at once, then each plan item or commit" instead
+  of "comment each meaningful step". Run `setup <harness>` again to update a block of an earlier version (reported `updated`); the old
+  block keeps working until then.
+- The fix of an unknown command that names another one adds what that command needs: `close <ID>` -> `finish <ID> --result <result>`
+  (not without `--result`, which failed again), `new <title>` -> `create <title> --status <first status>`.
+  A result given as a word goes into the option: `done LB-1 "Added median"` -> `finish LB-1 '--result=Added median'`.
+- The fix of an alias that is not the first word names the command itself: `--json show LB-1` -> `get --json LB-1`.
+
+### Added
+
+- `create` with yourself as assignee (CLI `--json`, the human line, MCP `task_create`) replies the same `next` as `claim`: your work
+  starts there. Not for a task without an assignee, for another name, or created right in the final status.
+
 ## 0.5.0
 
 A minor version: `setup claude-code` writes other files and `claim`, `finish` and `task_prime` reply differently (Compatibility).

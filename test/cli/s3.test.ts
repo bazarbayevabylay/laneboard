@@ -219,7 +219,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     expect((await run(['prime', '--as', 'dev-2'], SESSION_B)).stdout).not.toContain('Your earlier sessions');
 
     const r = await run(['claim', 'LB-1', '--resume'], SESSION_B);
-    expect(r.stdout).toBe(`LB-1 resumed from ${NAME_A} (rev 3, in_progress, ${NAME_B}); after each step: laneboard comment LB-1 "<what you did>" --json\n`);
+    expect(r.stdout).toBe(`LB-1 resumed from ${NAME_A} (rev 3, in_progress, ${NAME_B}); now comment your plan, then each step: laneboard comment LB-1 "<now: your plan; then after each step: what you did>" --json\n`);
     const t = stored(s, 'LB-1');
     expect(t.events.at(-1)).toMatchObject({ type: 'assigned', actor: NAME_B, actor_source: 'default', data: { from: NAME_A, to: NAME_B, resumed: true } });
     expect((await run(['get', 'LB-1'], SESSION_B)).stdout).toContain(`${NAME_B} (default name)  assigned  resumed from ${NAME_A} to=${NAME_B}`);
@@ -238,10 +238,10 @@ describe('claim --resume (after /clear the session default name changes)', () =>
     expect(plain.error.message).toContain('if that session is closed: laneboard claim LB-1 --resume');
     expect(plain.error.fix).toBe(`laneboard comment LB-1 "<note for ${NAME_A}>" --as ${NAME_B} --json`);
     const r = JSON.parse((await cli(['claim', 'LB-1', '--resume', '--json'], { cwd: s.root, env: SESSION_B })).stdout);
-    expect(r.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A, next: 'laneboard comment LB-1 "<what you did>" --json' });
+    expect(r.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: NAME_B, resumed_from: NAME_A, next: 'laneboard comment LB-1 "<now: your plan; then after each step: what you did>" --json' });
     // On a free task or an own one --resume is a plain claim.
     await createTask(as(s, 'a'), { title: 'Free', status: 'todo' });
-    expect(JSON.parse((await cli(['claim', 'LB-2', '--resume', '--json'], { cwd: s.root, env: SESSION_B })).stdout).data).toEqual({ id: 'LB-2', rev: 2, status: 'todo', assignee: NAME_B, next: 'laneboard comment LB-2 "<what you did>" --json' });
+    expect(JSON.parse((await cli(['claim', 'LB-2', '--resume', '--json'], { cwd: s.root, env: SESSION_B })).stdout).data).toEqual({ id: 'LB-2', rev: 2, status: 'todo', assignee: NAME_B, next: 'laneboard comment LB-2 "<now: your plan; then after each step: what you did>" --json' });
     expect(stored(s, 'LB-2').events.at(-1)?.data).toEqual({ from: null, to: NAME_B });
   });
 
@@ -291,7 +291,7 @@ describe('claim --resume (after /clear the session default name changes)', () =>
       status: 'in_progress',
       assignee: NAME_B,
       resumed_from: NAME_A,
-      next: 'task_comment {"id":"LB-1","text":"<what you did>"}',
+      next: 'task_comment {"id":"LB-1","text":"<now: your plan; then after each step: what you did>"}',
       warnings: [
         `LB-1 taken from a session active <1 min ago (${NAME_A}): if it is a parallel session at work, not your own closed one, tell it: task_comment {"id":"LB-1","text":"<note for ${NAME_A}>"}`,
       ],

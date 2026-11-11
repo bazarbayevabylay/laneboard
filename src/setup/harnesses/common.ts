@@ -32,9 +32,11 @@ export function shellWord(value: string): string {
 }
 
 // The task rule every instruction block carries: weak models skip optional-sounding advice, so it says MANDATORY and when it applies.
+// The steps as rule 1 says them (0.5.1, ADR §59): the plan right after the claim, then each plan item or commit; the 0.5.0 line is in
+// EARLIER_LINES (md-block.ts), so setup still knows and updates a block that holds it.
 const TASK_RULE =
   'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); ' +
-  'comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json` (one write: the result, the commit link, the status). No untracked work.';
+  'comment your plan at once, then each plan item or commit; when done: commit, then `laneboard finish <ID> --result "<result>" --json` (one write: the result, the commit link, the status). No untracked work.';
 
 const NAME_LINE = 'Writes need your name: pass `--as <your-name>` on every command (or `export LANEBOARD_AGENT=<your-name>` only if no subagent runs under you: they inherit it).';
 

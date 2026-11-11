@@ -20,3 +20,9 @@ export function taskReply(c: CommandContext, r: OpResult<TaskView>, what: string
   const linked = commit === undefined ? '' : commit === null ? '; no commit linked' : `; commit ${commit.slice(0, COMMIT_SHOWN)} linked`;
   return { data: writeReply(t, attached, r.reply), warnings: r.warnings, human: `${t.id} ${what} (rev ${t.rev}, ${t.status}, ${t.assignee ?? 'unassigned'})${linked}` };
 }
+
+// The reply of a write that starts your work (claim; create with you as assignee): its human line names `next`, the comment of your
+// plan, as the short data does (0.5.1: now, not after the work); --full shows the task instead.
+export function withPlan(c: CommandContext, out: CommandOutput, next: string | undefined): CommandOutput {
+  return next === undefined || flag(c.values, 'full') ? out : { ...out, human: `${out.human}; now comment your plan, then each step: ${next}` };
+}
