@@ -193,7 +193,19 @@ describe('commands and options agents made up', () => {
     expect((await run(s, ['close', 'LB-1', '--result', 'r', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard finish LB-1 --result r --as dev-3 --json');
     expect((await run(s, ['close', 'LB-1', '--result=r', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard finish LB-1 --result=r --as dev-3 --json');
     expect((await run(s, ['close', 'LB-1', '--result-file', '-', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard finish LB-1 --result-file - --as dev-3 --json');
-    expect((await cli(['close', 'LB-1', '--json', '--', '--result'], { cwd: s.root })).stdout).toContain('"fix":"laneboard finish LB-1 --json --result <result> -- --result"');
+    expect((await cli(['close', 'LB-1', '--json', '--', '--result'], { cwd: s.root })).stdout).toContain('"fix":"laneboard finish LB-1 --json --result=--result"');
+  });
+
+  it('done with the result as a word: the fix passes it as --result, and runs as printed (review 051 MINOR)', async () => {
+    const s = await board();
+    await run(s, ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-3']);
+    expect((await run(s, ['done', 'LB-1', 'Added median', '--as', 'dev-3'])).doc.error.fix).toBe("laneboard finish LB-1 --as dev-3 --json '--result=Added median'");
+    const r = await run(s, ['done', 'LB-1', "it's median", '--as', 'dev-3']);
+    expect(r.doc.error.fix).toBe("laneboard finish LB-1 --as dev-3 --json '--result=it'\\''s median'");
+    const argv = ['finish', 'LB-1', "--result=it's median", '--no-commit', '--as', 'dev-3'];
+    const done = await run(s, argv);
+    expect(done.code).toBe(0);
+    expect(JSON.stringify(events(s))).toContain("it's median");
   });
 
   it('new or add: the fix is create with --status <first status> of the board (review 044 NIT, as create --title)', async () => {

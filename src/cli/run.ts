@@ -79,6 +79,22 @@ function commandHelp(def: CommandDef): string {
 }
 
 // Strict parse of a command's argv; parse errors become UNKNOWN_OPTION or USAGE with a rebuilt fix.
+// The fix of an unknown command that names another one: with more words than that command takes (`done LB-1 "Added median"`), the
+// fix of a wrong number of arguments for it (the extra words become `--result=<words>`), so the fix runs as printed; else
+// suggestedCommandFix (review 051 MINOR).
+function meantFix(meant: CommandDef, rest: string[], required: (dir: string | undefined) => ReadonlyArray<{ name: string; value: string }>): string {
+  try {
+    const parsed = parseArgs({ args: rest, options: { ...GLOBAL_OPTIONS, ...meant.options }, allowPositionals: true, strict: true, tokens: true });
+    if (parsed.positionals.length > meant.args.max) {
+      const dir = typeof parsed.values.dir === 'string' ? parsed.values.dir : undefined;
+      return argumentsFix(meant.name, rest, parsed.tokens, meant.usage, meant.args, required(dir), meant.textOption);
+    }
+  } catch {
+    // Options the command does not know: the plain fix below.
+  }
+  return suggestedCommandFix([meant.name, ...rest], meant.name, required, meant.textOption);
+}
+
 function parseStrict(command: string, args: string[], options: OptionSpec, hint?: PositionalHint) {
   try {
     return parseArgs({ args, options, allowPositionals: true, strict: true, tokens: true });
@@ -142,7 +158,7 @@ export async function runCli(io: CliIo): Promise<number> {
       // The command meant runs as printed (with the options it needs); with none, the fix is a placeholder from `allowed`.
       throw new LaneboardError('USAGE', `unknown command "${name}"`, {
         allowed: names,
-        ...(meant ? { fix: suggestedCommandFix(argv, meant.name, (dir) => meant.required?.(discoveryFor(dir)) ?? [], meant.textOption) } : { input: { field: 'command', value: name } }),
+        ...(meant ? { fix: meantFix(meant, rest, (dir) => meant.required?.(discoveryFor(dir)) ?? []) } : { input: { field: 'command', value: name } }),
       });
     }
     const command = def;

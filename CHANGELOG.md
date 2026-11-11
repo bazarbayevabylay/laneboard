@@ -20,6 +20,7 @@ plan at once. No change to the store, exit codes or the MCP tool list.
   block keeps working until then.
 - The fix of an unknown command that names another one adds what that command needs: `close <ID>` -> `finish <ID> --result <result>`
   (not without `--result`, which failed again), `new <title>` -> `create <title> --status <first status>`.
+  A result given as a word goes into the option: `done LB-1 "Added median"` -> `finish LB-1 '--result=Added median'`.
 - The fix of an alias that is not the first word names the command itself: `--json show LB-1` -> `get --json LB-1`.
 
 ### Added
