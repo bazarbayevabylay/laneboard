@@ -2,13 +2,13 @@
 $ laneboard claim LB-1 --status in_progress --as dev-1
 exit 0
 --- stdout
-LB-1 claimed (rev 2, in_progress, dev-1); after each step: laneboard comment LB-1 "<what you did>" --as dev-1 --json
+LB-1 claimed (rev 2, in_progress, dev-1); now comment your plan, then each step: laneboard comment LB-1 "<now: your plan; then after each step: what you did>" --as dev-1 --json
 --- stderr
 
 
 $ laneboard claim LB-1 --status in_progress --as dev-1 --json
 exit 0
 --- stdout
-{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":2,"status":"in_progress","assignee":"dev-1","next":"laneboard comment LB-1 \"<what you did>\" --as dev-1 --json"},"warnings":[]}
+{"ok":true,"store":"<ROOT>/.laneboard","prefix":"LB","data":{"id":"LB-1","rev":2,"status":"in_progress","assignee":"dev-1","next":"laneboard comment LB-1 \"<now: your plan; then after each step: what you did>\" --as dev-1 --json"},"warnings":[]}
 --- stderr
 

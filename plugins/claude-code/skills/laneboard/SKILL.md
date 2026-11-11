@@ -4,7 +4,7 @@ description: "Track work on the laneboard task board - claim a task (or resume y
 ---
 
 laneboard agent rules (task board & CLI for AI coding agents):
-1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`laneboard prime` says how, or whom to ask); after each step: `laneboard comment <ID> "<what you did>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
+1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`prime` says how, or whom to ask); at once your plan, then each item or commit: `laneboard comment <ID> "<text>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
 2. Use only `laneboard` commands (or the task_* MCP tools). Never edit .laneboard/*.json by hand.
 3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command, one per subagent or worker; LANEBOARD_AGENT only if none (inherited).
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name.

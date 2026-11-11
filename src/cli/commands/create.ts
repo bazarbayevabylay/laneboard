@@ -2,7 +2,7 @@
 import { createTask, LaneboardError, loadConfig, parseLinkArg, resolveStore } from '../../core/index.ts';
 import type { DiscoveryInput } from '../../core/index.ts';
 import { description, list, str } from './args.ts';
-import { FULL_OPTION, taskReply } from './reply.ts';
+import { FULL_OPTION, taskReply, withPlan } from './reply.ts';
 import type { CommandDef } from './types.ts';
 
 // The first status of the store create would write to (where new work starts); `<status>` while no store is readable.
@@ -48,6 +48,7 @@ export const create: CommandDef = {
       links: list(c.values, 'link')?.map(parseLinkArg),
       field_args: list(c.values, 'field'),
     });
-    return taskReply(c, r, 'created');
+    // Your own task: `next`, the comment of your plan, as after a claim.
+    return withPlan(c, taskReply(c, r, 'created'), r.reply?.next);
   },
 };

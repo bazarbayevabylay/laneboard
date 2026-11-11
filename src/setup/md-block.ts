@@ -59,6 +59,8 @@ const EARLIER_LINES = [
   // The name line up to 0.4.0 before S7a r2: LANEBOARD_AGENT without its condition (subagents inherit it).
   'Writes need your name: pass `--as <your-name>` on every command (or `export LANEBOARD_AGENT=<your-name>`).',
   'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); comment each meaningful step; when done, set the final status and add a result comment. No untracked work.',
+  // The task line of 0.3.0 to 0.5.0 (fixtures 0.3.1-*, 0.5.0-*), before the plan comment of 0.5.1 (ADR §59).
+  'MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, run `laneboard prime` and claim your task or create one (prime prints the command); comment each meaningful step; when done: commit, then `laneboard finish <ID> --result "<result>" --json` (one write: the result, the commit link, the status). No untracked work.',
   // The inline store line of 0.1.0 to 0.4.0 before S6v: its "export ... once" sent other projects' writes to this board (UX run 3 C-U3).
   `This project tracks work with laneboard (task board & CLI for AI coding agents). Its store is ${STORE_SLOT}: run every laneboard command with it, \`LANEBOARD_DIR=${STORE_SLOT} laneboard <command>\` (or export LANEBOARD_DIR=${STORE_SLOT} once).`,
 ];

@@ -30,7 +30,8 @@ describe('MCP instructions: the rules in tool words', () => {
     const rules = text.slice(MCP_RULES_PREAMBLE.length + 2);
     expect(rules).not.toMatch(/`laneboard (prime|create|claim|comment|finish|get|list|update|attach|archive|restore|events|boards|init)\b/);
     expect(rules).not.toContain('--json');
-    expect(rules).toContain('after each step: task_comment with what you did');
+    // 0.5.1 (ADR §59): the plan at once, then each step.
+    expect(rules).toContain('at once task_comment with your plan, then with each step (a plan item, a commit)');
     expect(rules).toContain('add_links: [{kind, ref}]');
     expect(MCP_RULES_PREAMBLE).not.toContain('The rules below name CLI commands');
     expect(text.length).toBeLessThanOrEqual(4096);
@@ -72,14 +73,23 @@ describe('task_finish and task_claim', () => {
     expect(description).toContain('Leave status out');
   });
 
-  it('task_claim: next is the task_comment call for this task; task_finish without a comment warns in tool words', async () => {
+  it('task_claim: next is the task_comment call of your plan for this task; task_finish without a comment warns in tool words', async () => {
     const env = await board();
     const claimed = reply(await callTool('task_claim', { id: 'LB-1', status: 'in_progress', actor: 'dev-1' }, env));
-    expect(claimed.data.next).toBe('task_comment {"id":"LB-1","text":"<what you did>","actor":"dev-1"}');
+    expect(claimed.data.next).toBe('task_comment {"id":"LB-1","text":"<now: your plan; then after each step: what you did>","actor":"dev-1"}');
     const finished = reply(await callTool('task_finish', { id: 'LB-1', result: 'median added', no_commit: true, actor: 'dev-1' }, env));
     expect(finished.warnings).toEqual([
       'no comment on LB-1 since your work on it began, so the board shows no steps of the work: comment after each step (task_comment {"id":"LB-1","text":"<what you did>","actor":"dev-1"}); the steps of this task can still be added',
     ]);
+  });
+
+  it('K2/K3: task_create with yourself as assignee replies the same task_comment call; for another name none; full: the task', async () => {
+    const env = await board();
+    const own = reply(await callTool('task_create', { title: 'Fix typo', status: 'in_progress', assignee: 'dev-5', actor: 'dev-5' }, env));
+    expect(own.data).toEqual({ id: 'LB-2', rev: 1, status: 'in_progress', assignee: 'dev-5', next: 'task_comment {"id":"LB-2","text":"<now: your plan; then after each step: what you did>","actor":"dev-5"}' });
+    expect(reply(await callTool('task_create', { title: 'For dev-6', status: 'todo', assignee: 'dev-6', actor: 'dev-5' }, env)).data.next).toBeUndefined();
+    expect(reply(await callTool('task_create', { title: 'Free', status: 'todo', actor: 'dev-5' }, env)).data.next).toBeUndefined();
+    expect(reply(await callTool('task_create', { title: 'Mine, full', status: 'todo', assignee: 'dev-5', actor: 'dev-5', full: true }, env)).data.next).toBeUndefined();
   });
 
   it('task_finish of somebody else\'s task with add_links: the acceptance adds none and warns with the task_update call', async () => {

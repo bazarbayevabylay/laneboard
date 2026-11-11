@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { ERRORS, LaneboardError, parentStoreWarning, resolveActor, resolveBoard, resolveStore, storePrefix, suggestClosest, toLaneboardError } from '../core/index.ts';
 import type { DiscoveryInput, StoreRef } from '../core/index.ts';
-import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated } from './argv.ts';
+import { argumentsFix, cliFix, commandFirst, jsonRequested, parseError, rejectRepeated, suggestedCommandFix } from './argv.ts';
 import type { PositionalHint } from './argv.ts';
 import { commandName, COMMANDS, commandSynonym, findCommand } from './commands/index.ts';
 import type { CliIo, CommandDef, OptionSpec, Values } from './commands/types.ts';
@@ -129,23 +129,25 @@ export async function runCli(io: CliIo): Promise<number> {
     if (name.startsWith('-')) {
       throw new LaneboardError('USAGE', `the command comes first: laneboard <command> [options], got ${name}`, {
         allowed: COMMANDS.map((c) => c.name),
-        fix: commandFirst(argv, (t) => findCommand(t) !== undefined),
+        fix: commandFirst(argv, (t) => findCommand(t)?.name),
       });
     }
+    // Where a command looks for its store, for a given --dir (one rule for the fix hints and the run itself).
+    const discoveryFor = (dir: string | undefined): DiscoveryInput => ({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined });
     def = findCommand(name);
     if (!def) {
       const names = COMMANDS.map((c) => c.name);
       const suggestion = suggestClosest(name, names) ?? commandSynonym(name);
+      const meant = suggestion === undefined ? undefined : findCommand(suggestion);
+      // The command meant runs as printed (with the options it needs); with none, the fix is a placeholder from `allowed`.
       throw new LaneboardError('USAGE', `unknown command "${name}"`, {
         allowed: names,
-        input: suggestion ? { field: 'command', value: name, suggestion } : { field: 'command', value: name },
+        ...(meant ? { fix: suggestedCommandFix(argv, meant.name, (dir) => meant.required?.(discoveryFor(dir)) ?? [], meant.textOption) } : { input: { field: 'command', value: name } }),
       });
     }
     const command = def;
     const options = { ...GLOBAL_OPTIONS, ...command.options };
     // `create --title X`: the fix puts X in its place and adds create's --status <first status> of the store argv's --dir names.
-    // Where a command looks for its store, for a given --dir (one rule for the fix hint and the run itself).
-    const discoveryFor = (dir: string | undefined): DiscoveryInput => ({ dir, envDir: io.env.LANEBOARD_DIR, cwd: io.cwd, home: io.env.HOME || undefined });
     const hint = { usage: command.usage, required: (dir: string | undefined) => command.required?.(discoveryFor(dir)) ?? [], defaults: command.defaults, synonyms: command.synonyms };
     const parsed = parseStrict(command.name, rest, options, hint);
     rejectRepeated(parsed.tokens, command.name, rest, options);

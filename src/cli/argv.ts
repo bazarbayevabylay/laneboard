@@ -412,10 +412,23 @@ function derivedEdit(argv: readonly string[], err: LaneboardError): FixEdit | un
   return err.code === 'ACTOR_REQUIRED' ? { add: [{ name: 'as', value: '<your-name>' }] } : undefined;
 }
 
-// The command a fix starts from when the command name is missing or not first: that name moved first, else `prime` (the agent's start).
-export function commandFirst(argv: readonly string[], isCommand: (token: string) => boolean): string {
-  const at = argv.findIndex(isCommand);
-  return commandLine(at < 0 ? ['prime', ...argv] : [argv[at] ?? '', ...argv.filter((_, i) => i !== at)]);
+// The fix of an unknown command that is another word for one, or a typo of it (`close` -> finish, `new` -> create): argv with that
+// command in place of the word, plus the options it cannot run without that argv lacks (`required`, by the --dir of argv: create's
+// --status <first status>; its text option unless given as a file: finish's --result <result>), so one fix runs once its placeholders
+// are filled, as the fix of a missing option does (review 044 NIT: close gave finish without --result).
+export function suggestedCommandFix(argv: readonly string[], command: string, required: (dir: string | undefined) => ReadonlyArray<{ name: string; value: string }>, textOption?: string): string {
+  const args = argv.slice(1);
+  const given = (name: string): boolean => args.slice(0, optionsAt(args)).some((t) => t === `--${name}` || t.startsWith(`--${name}=`));
+  const text = textOption !== undefined && !given(`${textOption}-file`) ? [{ name: textOption, value: `<${textOption}>` }] : [];
+  const added = [...required(optionValue(args, 'dir')), ...text].filter((r) => !given(r.name)).flatMap((r) => [`--${r.name}`, r.value]);
+  return commandLine([command, ...withOptions(args, added)], new Set(addedPlaceholders(added, 1 + optionsAt(args))));
+}
+
+// The command a fix starts from when the command name is missing or not first: that command moved first, by its own name (`commandOf`:
+// an alias such as show gives get, as every fix names the command itself), else `prime` (the agent's start).
+export function commandFirst(argv: readonly string[], commandOf: (token: string) => string | undefined): string {
+  const at = argv.findIndex((t) => commandOf(t) !== undefined);
+  return commandLine(at < 0 ? ['prime', ...argv] : [commandOf(argv[at] ?? '') ?? '', ...argv.filter((_, i) => i !== at)]);
 }
 
 // The fix shown to a CLI user: the user's command changed by the error's edit, with the bad value replaced, or with a derived option

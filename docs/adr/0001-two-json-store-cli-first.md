@@ -137,10 +137,10 @@ A concrete value is suggested only for an obvious typo (`in-progress` → `in_pr
 - Result: `structuredContent` = CLI `data`; `content[0].text` = same JSON; `content[1].text` = `{"store","prefix","warnings"}` (the CLI envelope's fields, also on errors without warnings). Error: `isError: true`, same error object as CLI in `structuredContent` and `content[0].text`. Inputs are zod `.strict()`: unknown keys rejected (`USAGE`). Fix differs from the CLI only where the CLI fix names CLI syntax: `ACTOR_REQUIRED` (pass `actor`) and generic `USAGE` (the tool's parameter list); CLI fixes rebuilt from argv stay core fixes in MCP. (0.4.1, §56 D1: `structuredContent` = `data` plus `warnings` when there are any; every CLI command of a task tool in a fix or a warning becomes a tool call.)
 - Server `instructions` = the MCP preamble (§47) + Agent rules (§7), ≤4 096 chars (Claude Code start-up limit [mcp]). (0.5.0, §58: the preamble + the MCP forms of the rules, worded with the tools, rules 12 and 14 left out; 2 786 chars.) stdout belongs to the protocol: nothing else writes it (C4). Responses capped by `limit`; Claude Code warns >10k tokens [mcp].
 
-## 7. Agent rules (skill body, `prime` output, MCP instructions; one source `src/core/agent-rules.md`, copied to `dist/core/` by `build`; the text below is a mirror, of 0.5.0: §58 changed rules 1, 3, 4, 9, 11, 12, 14, and the MCP instructions carry the MCP forms of the same file)
+## 7. Agent rules (skill body, `prime` output, MCP instructions; one source `src/core/agent-rules.md`, copied to `dist/core/` by `build`; the text below is a mirror, of 0.5.1: §58 changed rules 1, 3, 4, 9, 11, 12, 14, §59 rule 1 again, and the MCP instructions carry the MCP forms of the same file)
 ```
 laneboard agent rules (task board & CLI for AI coding agents):
-1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`laneboard prime` says how, or whom to ask); after each step: `laneboard comment <ID> "<what you did>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
+1. MANDATORY for every request, even when nobody mentions tasks and the board is empty: before your first file change, claim your task or create one (`prime` says how, or whom to ask); at once your plan, then each item or commit: `laneboard comment <ID> "<text>"`; when done: commit, then `laneboard finish <ID> --result "<result>" --json`. No untracked work.
 2. Use only `laneboard` commands (or the task_* MCP tools). Never edit .laneboard/*.json by hand.
 3. Always pass `--json`. Your name: without `--as` and LANEBOARD_AGENT writes use the session's default name (`prime` shows it). Your own: `--as <name>` on every command, one per subagent or worker; LANEBOARD_AGENT only if none (inherited).
 4. New task: `laneboard create "<title>" --status <status> --assignee <your name> --json` (subtask: `--parent <ID>`). Start work: `laneboard claim <ID> --status <status> --json`. `laneboard prime` prints both with your name.
@@ -942,7 +942,8 @@ Checks
   an earlier session across `claim --resume`; the whole history for an unassigned task) warns "no comment on <ID> since your work on it
   began …" with the command; result comments do not count; exit 0. A finish that changes nothing does not warn. Rules 1 (after each
   step: the command) and 14 (stdin) changed; 3, 4, 9, 11 and 12 got shorter within RULES_MAX_CHARS. TASK_RULE of the CLAUDE.md block
-  keeps "comment each meaningful step" (a change rewrites users' files on upgrade).
+  keeps "comment each meaningful step" (a change rewrites users' files on upgrade). (0.5.1, §59: `next` asks for the plan now, create
+  for yourself replies it too, rule 1 and TASK_RULE say "the plan at once, then each plan item or commit".)
 - finish `--add-link kind=ref` / `add_links` (`finishLinks`): links in the same write, checked like update's (foreign boards before the
   lock, §30); the first commit link is the commit to link when `--commit` is not given (HEAD is not linked next to it). Somebody else's
   finish (an acceptance, a checker) adds none and warns `links not added: … laneboard update <ID> --add-link … --json`.
@@ -957,3 +958,33 @@ Checks
   `<<'EOF' ... EOF` (`FixEdit.heredoc`).
 - Checks: test/cli/agent-ux.test.ts, test/mcp/agent-ux.test.ts, test/setup/mcp-optional.test.ts; golden claim, finish, help, prime,
   setup; `otherWarnings` (test/helpers.ts) leaves the steps warning out of tests of the other finish warnings.
+
+## 59. Release 0.5.1: the plan comment right after the claim (AB-193, PDR s2 option C+D', stage 1; supersedes §58 "claim replies next, the comment command for the task", "Rules 1 (after each step: the command)" and "TASK_RULE of the CLAUDE.md block keeps 'comment each meaningful step'", and §7's mirror of 0.5.0; each of those lines carries a pointer here)
+
+- Why: in the 0.5.0 runs (scenario s2, 24 runs) a comment came before the last file change, while the work went on, in 3; after all
+  changes in 12, none in 9, in the same call as finish in 4. `next` "after each step" was seen in 97 of 107 claim replies and read as
+  "at the end"; the finish warning came too late (a comment after it: 1 of 17). Agents run what a reply asks for now (`fix`), so the
+  request moved to the moment the work starts. A hard gate in finish (exit 4 without a comment) was rejected: it breaks scripts that
+  close tasks today and gives the same comment at the end. A Claude Code hook after an edit (B1) is stage 2, only if the repeated
+  experiment shows fewer than 12 of 24 s2 runs with a comment before the last edit.
+- `next` (update.ts `planCommand`): `laneboard comment <ID> "<now: your plan; then after each step: what you did>" [--as] --json`; the
+  human line `…; now comment your plan, then each step: <next>` (reply.ts `withPlan`); over MCP the `task_comment` call. The finish
+  warning keeps `"<what you did>"` (the work is over by then); its condition is unchanged (a plan comment counts).
+- `create` with the actor as assignee replies the same `next` (create.ts): its work starts there, as `workStartedAt` already counts;
+  not for no assignee or another name, nor right into a final status (a record of done work).
+- Rule 1: "at once your plan, then each item or commit: `laneboard comment <ID> "<text>"`" in place of "after each step: …", and
+  "(`prime` says how, …)" for "(`laneboard prime` says how, …)" to stay within RULES_MAX_CHARS (3 020; now 3 020) without touching
+  the other rules; short 1 and mcp 1 say the same (mcp 1: "a plan item, a commit"; short 1 "before your first edit").
+- TASK_RULE of the CLAUDE.md / AGENTS.md / GEMINI.md block: "comment your plan at once, then each plan item or commit" (+28
+  characters). The 0.5.0 line (the same since 0.3.x) is in md-block.ts EARLIER_LINES: `setup` recognises a block of 0.5.0 and
+  rewrites it (`updated`, one block; fixtures test/setup/fixtures/blocks/0.5.0-*); without a new `setup` the old block keeps working.
+  This reverses §58's "a change rewrites users' files on upgrade": the rewrite is the usual `setup` path, and a block that says
+  "each meaningful step" next to rules that say "the plan at once" is worse.
+- The same release closes review 044 NITs: an alias that is not the first word (`--json show LB-1`) gets a fix with the command itself
+  (argv.ts `commandFirst`); an unknown command that is another word or a typo of one gets the options that command cannot run
+  without (`suggestedCommandFix`: finish's `--result <result>` unless `--result-file`, create's `--status <first status>`);
+  `COMMAND_ALIASES` is no longer exported. `comment <ID> -- -` keeps reading stdin (0.4.x stored "-"): the heredoc fix of an empty
+  stdin and rule 14 put `--` before `-`, and a comment "-" says nothing.
+- No change to the store format, events, exit codes or the MCP tool list; README's "comments its steps" stays.
+- Checks: test/cli/agent-ux.test.ts (K1, K3, K4, K6, NITs), test/mcp/agent-ux.test.ts (K2, K3), test/setup/s6b.test.ts (K7),
+  test/cli/s5b.test.ts and s6m.test.ts (budgets, K9); golden claim, create-own, prime, error-USAGE-unknown-command.

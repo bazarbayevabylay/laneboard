@@ -29,20 +29,86 @@ async function board(): Promise<TestStore> {
 const noStepsWarning = (as: string) =>
   `no comment on LB-1 since your work on it began, so the board shows no steps of the work: comment after each step (laneboard comment LB-1 "<what you did>"${as} --json); the steps of this task can still be added`;
 
+// 0.5.1 (ADR §59, AB-193): the `next` of a write that starts the work asks for the plan now, then each step.
+const plan = (id: string, as: string) => `laneboard comment ${id} "<now: your plan; then after each step: what you did>"${as} --json`;
+
 describe('steps: claim names the comment command, finish without a comment warns', () => {
-  it('claim --json: next is the comment command for this task with your --as; the human line names it too', async () => {
+  it('claim --json: next is the comment of your plan for this task with your --as; the human line asks for the plan now', async () => {
     const s = await board();
     const r = await run(s, ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1']);
     expect(r.code).toBe(0);
-    expect(r.doc.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: 'dev-1', next: 'laneboard comment LB-1 "<what you did>" --as dev-1 --json' });
+    expect(r.doc.data).toEqual({ id: 'LB-1', rev: 2, status: 'in_progress', assignee: 'dev-1', next: plan('LB-1', ' --as dev-1') });
+    // K4: a claim of your own task again (no change) gives the same next.
     const human = await cli(['claim', 'LB-1', '--as', 'dev-1'], { cwd: s.root });
-    expect(human.stdout).toBe('LB-1 claimed (rev 2, in_progress, dev-1); after each step: laneboard comment LB-1 "<what you did>" --as dev-1 --json\n');
+    expect(human.stdout).toBe(`LB-1 claimed (rev 2, in_progress, dev-1); now comment your plan, then each step: ${plan('LB-1', ' --as dev-1')}\n`);
+    // --full shows the task, no next.
+    const full = await run(s, ['claim', 'LB-1', '--full', '--as', 'dev-1']);
+    expect(full.doc.data.next).toBeUndefined();
+    expect((await cli(['claim', 'LB-1', '--full', '--as', 'dev-1'], { cwd: s.root })).stdout).not.toContain('now comment your plan');
   });
 
   it('under the session default name the command has no --as (rule 3)', async () => {
     const s = await board();
     const r = await cli(['claim', 'LB-1', '--json'], { cwd: s.root, env: { LANEBOARD_DEFAULT_AGENT: 'claude-code@ann', CLAUDE_CODE_SESSION_ID: 'aaaa1111-1a1a-4a1a-8a1a-000000000001' } });
-    expect(JSON.parse(r.stdout).data.next).toBe('laneboard comment LB-1 "<what you did>" --json');
+    expect(JSON.parse(r.stdout).data.next).toBe(plan('LB-1', ''));
+  });
+
+  it('K4: a task somebody else holds: ALREADY_CLAIMED with its fix for the holder, no next', async () => {
+    const s = await board();
+    await run(s, ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1']);
+    const r = await run(s, ['claim', 'LB-1', '--as', 'dev-2']);
+    expect(r.code).toBe(4);
+    expect(r.doc.error.code).toBe('ALREADY_CLAIMED');
+    expect(r.doc.error.fix).toContain('laneboard comment LB-1');
+    expect(r.doc.error.fix).not.toContain('your plan');
+    expect(r.doc.data).toBeUndefined();
+  });
+
+  it('K5: two names claim one task at the same time: the first write wins with next, the other gets ALREADY_CLAIMED without it', async () => {
+    const s = await board();
+    const both = await Promise.all(['dev-1', 'dev-2'].map((name) => run(s, ['claim', 'LB-1', '--status', 'in_progress', '--as', name])));
+    const won = both.filter((r) => r.code === 0);
+    const lost = both.filter((r) => r.code !== 0);
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    const winner = won[0]?.doc.data.assignee as string;
+    expect(won[0]?.doc.data.next).toBe(plan('LB-1', ` --as ${winner}`));
+    expect(lost[0]?.code).toBe(4);
+    expect(lost[0]?.doc.error.code).toBe('ALREADY_CLAIMED');
+    expect(lost[0]?.doc.data).toBeUndefined();
+    expect(readStore(s.dir, 'active').tasks[0]?.assignee).toBe(winner);
+  });
+
+  it('K3: create with yourself as assignee replies the same next (human line too); for nobody or another name, or right into the final status, none', async () => {
+    const s = await board();
+    const own = await run(s, ['create', 'Fix typo', '--status', 'in_progress', '--assignee', 'dev-5', '--as', 'dev-5']);
+    expect(own.code).toBe(0);
+    expect(own.doc.data).toEqual({ id: 'LB-2', rev: 1, status: 'in_progress', assignee: 'dev-5', next: plan('LB-2', ' --as dev-5') });
+    const human = await cli(['create', 'Fix docs', '--status', 'todo', '--assignee', 'dev-5', '--as', 'dev-5'], { cwd: s.root });
+    expect(human.stdout).toBe(`LB-3 created (rev 1, todo, dev-5); now comment your plan, then each step: ${plan('LB-3', ' --as dev-5')}\n`);
+    expect((await run(s, ['create', 'Free one', '--status', 'todo', '--as', 'dev-5'])).doc.data.next).toBeUndefined();
+    const other = await run(s, ['create', 'For dev-6', '--status', 'todo', '--assignee', 'dev-6', '--as', 'dev-5']);
+    expect(other.doc.data.next).toBeUndefined();
+    expect(other.doc.warnings[0]).toContain('is assigned to dev-6, not to you (dev-5)');
+    // A record of done work: no work starts, no plan.
+    expect((await run(s, ['create', 'Done before', '--status', 'done', '--assignee', 'dev-5', '--as', 'dev-5'])).doc.data.next).toBeUndefined();
+    const humanOther = await cli(['create', 'For dev-7', '--status', 'todo', '--assignee', 'dev-7', '--as', 'dev-5'], { cwd: s.root });
+    expect(humanOther.stdout).toBe('LB-7 created (rev 1, todo, dev-7)\n');
+  });
+
+  it('K3: create for yourself under the session default name: next without --as', async () => {
+    const s = await board();
+    const env = { LANEBOARD_DEFAULT_AGENT: 'claude-code@ann', CLAUDE_CODE_SESSION_ID: 'aaaa1111-1a1a-4a1a-8a1a-000000000001' };
+    const name = JSON.parse((await cli(['claim', 'LB-1', '--json'], { cwd: s.root, env })).stdout).data.assignee as string;
+    const r = await cli(['create', 'Mine', '--status', 'in_progress', '--assignee', name, '--json'], { cwd: s.root, env });
+    expect(JSON.parse(r.stdout).data.next).toBe(plan('LB-2', ''));
+  });
+
+  it('K6: only the comment of the plan since the claim: finish gives no warning', async () => {
+    const s = await board();
+    await run(s, ['claim', 'LB-1', '--status', 'in_progress', '--as', 'dev-1']);
+    await run(s, ['comment', 'LB-1', 'plan: add median() to stats.py, then a test', '--as', 'dev-1']);
+    expect((await run(s, ['finish', 'LB-1', '--result', 'median added', '--no-commit', '--as', 'dev-1'])).doc.warnings).toEqual([]);
   });
 
   it('finish with no comment since the claim: the result is recorded, a warning names the comment command (exit 0)', async () => {
@@ -103,6 +169,37 @@ describe('commands and options agents made up', () => {
     expect(r.code).toBe(2);
     expect(r.doc.error.fix).toBe('laneboard get LB-1 --json');
     expect(r.doc.error.fix).not.toContain('<');
+  });
+
+  it('an alias that is not the first word (--json show LB-1): the fix moves the command itself first (review 044 NIT)', async () => {
+    const s = await board();
+    const r = await cli(['--json', 'show', 'LB-1'], { cwd: s.root });
+    expect(r.code).toBe(2);
+    expect(JSON.parse(r.stdout).error.fix).toBe('laneboard get --json LB-1');
+    const edited = await cli(['--as', 'dev-1', 'edit', 'LB-1', '--status', 'done', '--json'], { cwd: s.root });
+    expect(JSON.parse(edited.stdout).error.fix).toBe('laneboard update --as dev-1 LB-1 --status done --json');
+    // No command at all: prime, as before.
+    expect(JSON.parse((await cli(['--json', 'LB-1'], { cwd: s.root })).stdout).error.fix).toBe('laneboard prime --json LB-1');
+  });
+
+  it('close, done, complete or a typo of finish: the fix is finish with --result <result>, the option it cannot run without (review 044 NIT)', async () => {
+    const s = await board();
+    for (const word of ['close', 'done', 'complete', 'finsh']) {
+      const r = await run(s, [word, 'LB-1', '--as', 'dev-3']);
+      expect(r.code, word).toBe(2);
+      expect(r.doc.error.fix, word).toBe('laneboard finish LB-1 --as dev-3 --json --result <result>');
+    }
+    // A result given, by option or as a file, is not asked for again; text after `--` stays text.
+    expect((await run(s, ['close', 'LB-1', '--result', 'r', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard finish LB-1 --result r --as dev-3 --json');
+    expect((await run(s, ['close', 'LB-1', '--result=r', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard finish LB-1 --result=r --as dev-3 --json');
+    expect((await run(s, ['close', 'LB-1', '--result-file', '-', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard finish LB-1 --result-file - --as dev-3 --json');
+    expect((await cli(['close', 'LB-1', '--json', '--', '--result'], { cwd: s.root })).stdout).toContain('"fix":"laneboard finish LB-1 --json --result <result> -- --result"');
+  });
+
+  it('new or add: the fix is create with --status <first status> of the board (review 044 NIT, as create --title)', async () => {
+    const s = await board();
+    expect((await run(s, ['new', 'Add mode', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard create \'Add mode\' --as dev-3 --json --status todo');
+    expect((await run(s, ['add', 'Add mode', '--status', 'in_progress', '--as', 'dev-3'])).doc.error.fix).toBe('laneboard create \'Add mode\' --status in_progress --as dev-3 --json');
   });
 
   it('finish --add-link commit=<sha>: accepted, the commit is the named one (no HEAD next to it); other links are added', async () => {
@@ -192,6 +289,12 @@ describe('text from stdin', () => {
     expect((await run(s, ['comment', 'LB-1', '--text-file', '-', '--as', 'dev-1'], text)).code).toBe(0);
     const comments = events(s).filter((e) => e.type === 'commented').map((e) => e.data.text);
     expect(comments).toEqual([text, text]);
+  });
+
+  it('comment <ID> -- - reads stdin as comment <ID> - does (kept in 0.5.1: the heredoc fix and rule 14 put `--` before `-`)', async () => {
+    const s = await board();
+    expect((await cli(['comment', 'LB-1', '--as', 'dev-1', '--json', '--', '-'], { cwd: s.root, stdin: text })).code).toBe(0);
+    expect(events(s).filter((e) => e.type === 'commented').map((e) => e.data.text)).toEqual([text]);
   });
 
   it('update --append-description-file - and finish --result-file -: from stdin', async () => {

@@ -92,6 +92,8 @@ const CASES: Case[] = [
     name: 'create',
     argv: ['create', 'Fix login', '--status', 'todo', '--description', 'Users cannot log in', '--assignee', 'dev-1', '--label', 'auth', '--link', 'branch=fix/login', '--field', 'priority=1', '--as', 'a'],
   },
+  // 0.5.1 (ADR §59): your own task starts your work, so the reply asks for your plan as a claim does.
+  { name: 'create-own', argv: ['create', 'Fix login', '--status', 'in_progress', '--assignee', 'dev-1', '--as', 'dev-1'] },
   { name: 'create-description-stdin', argv: ['create', 'From stdin', '--status', 'todo', '--description-file', '-', '--as', 'a'], stdin: 'line 1\nline 2\n' },
   {
     name: 'get',

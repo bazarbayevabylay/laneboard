@@ -387,15 +387,21 @@ export async function claimTask(ctx: OpContext, input: ClaimInputT): Promise<OpR
     },
     txOptions(ctx, warnings),
   );
-  const next = commentCommand(data.id, actor, ctx);
+  const next = planCommand(data.id, actor, ctx);
   return { data, warnings, reply: resumedFrom === undefined ? { next } : { resumed_from: resumedFrom, next } };
 }
 
-// The command that comments a step of the work on task `id`: claim's next (CLI and MCP, where it reads as a task_comment call) and the
-// warning of a finish with no comment. `--as` for an explicit name only (rule 3: the session default needs none).
-function commentCommand(id: string, actor: string, ctx: OpContext): string {
+// The `next` of a write that starts the work on task `id` (claim; create with the actor as assignee): the comment of the plan, now, then
+// of each step (0.5.1, ADR §59: agents obeyed the "after each step" of 0.5.0 only at the end, so the board stayed silent during the work).
+export function planCommand(id: string, actor: string, ctx: OpContext): string {
+  return commentCommand(id, actor, ctx, '<now: your plan; then after each step: what you did>');
+}
+
+// The command that comments on task `id` with placeholder `text`: the `next` of planCommand (CLI and MCP, where it reads as a
+// task_comment call) and the warning of a finish with no comment. `--as` for an explicit name only (rule 3: the session default needs none).
+function commentCommand(id: string, actor: string, ctx: OpContext, text = '<what you did>'): string {
   const as = ctx.actorSource === 'default' ? '' : ` --as ${shellQuote(actor)}`;
-  return `laneboard comment ${id} "<what you did>"${as} --json`;
+  return `laneboard comment ${id} "${text}"${as} --json`;
 }
 
 // Did the actor comment `task` since its work began (the event that gave it the task, workStartedAt; across claim --resume an earlier
