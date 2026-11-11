@@ -1,6 +1,6 @@
 {
   "name": "laneboard",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Task board & CLI for AI coding agents: agent rules skill, SessionStart hook (laneboard prime) and the laneboard MCP server. Needs the CLI: npm i -g laneboard",
   "author": {
     "name": "laneboard maintainers"
